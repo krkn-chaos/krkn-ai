@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "krkn-ai"
+version = "0.1.0"
+description = ""
+authors = ["Tullio Sebastiani <tsebastiani@users.noreply.github.com>"]
+readme = "README.md"
+license = "Apache-2.0"
+packages = [{include = "run_krkn_ai.py", from="./"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langchain_community="^0.0.29"
+langchain="^0.1.13"
+langchain-core="^0.1.33"
+krkn-lib = "^2.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

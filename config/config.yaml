@@ -1,0 +1,7 @@
+telemetry:
+  username:
+  password:
+  api_url:
+krkn_ai:
+  llm_endpoint:
+  chroma_db_path:

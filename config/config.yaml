@@ -1,7 +1,9 @@
 telemetry:
-  username:
-  password:
-  api_url:
+  username: ''
+  password: ''
+  api_url: "http://localhost:5000"
 krkn_ai:
-  llm_endpoint:
-  chroma_db_path:
+  llm_endpoint: ""
+  chroma_db_path: ./chroma_db
+  dataset_path: /tmp
+  threads: 6

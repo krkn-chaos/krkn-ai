@@ -28,7 +28,7 @@ def update_callback(
 
 def error_callback(console: Yaspin, message: str, lock: Lock):
     with lock:
-        console.fail(message)
+        console.write(f"🚨 {message}")
 
 
 def main():
@@ -70,37 +70,38 @@ def main():
             lambda message, lock: error_callback(sp, message, lock)
         )
         sp.text = "fetching telemetry download links from API..."
-        urls = data_retriever.get_telemetry_urls()
-        sp.write(f"{len(urls)} urls fetched ✅")
+        # urls = data_retriever.get_telemetry_urls()
+        # sp.write(f"{len(urls)} urls fetched ✅")
         # data_path = data_retriever.download_telemetry_data(
         #     urls, console_lock, update_callback_download, error_callback_global
         # )
-        sp.write(f"{len(urls)} files downloaded ✅")
-        parsed_file = data_retriever.normalize_scenario_exit_code_data(
-            # data_path,
-            "/tmp/1711549998",
-            console_lock,
-            update_callback_normalize,
-            error_callback_global,
-        )
-        sp.write(f"{len(urls)} files parsed ✅")
+        # sp.write(f"{len(urls)} files downloaded ✅")
 
-        sp.text = f"parsed file: {parsed_file}"
+        for scenario in config["krkn_ai"]["scenarios"]:
 
-        # for scenario in config["krkn_ai"]["scenarios"]:
-        #
-        #     model = model_factory.get_instance(
-        #         scenario["model"]["class_name"],
-        #         scenario["model"]["package"],
-        #         scenario["model"]["endpoint"],
-        #         scenario["model"]["name"],
-        #     )
-        #     scenario = scenario_factory.get_instance(
-        #         model,
-        #         scenario["class_name"],
-        #         scenario["package"],
-        #         scenario["vector_db_path"],
-        #     )
+            model = model_factory.get_instance(
+                scenario["model"]["class_name"],
+                scenario["model"]["package"],
+                scenario["model"]["endpoint"],
+                scenario["model"]["name"],
+            )
+            scenario = scenario_factory.get_instance(
+                model,
+                scenario["class_name"],
+                scenario["package"],
+                scenario["vector_db_path"],
+            )
+            parsed_file = scenario.normalize_data(
+                # data_path,
+                "/tmp/1711549998",
+                config["krkn_ai"]["threads"],
+                console_lock,
+                update_callback_normalize,
+                error_callback_global,
+            )
+            sp.write(f" files parsed ✅")
+
+            sp.text = f"parsed file: {parsed_file}"
 
 
 if __name__ == "__main__":

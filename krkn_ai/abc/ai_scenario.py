@@ -15,6 +15,7 @@ class AIScenario(ABC):
     def normalize_data(
         self,
         data_path: str,
+        threads: int,
         console_lock: Lock = None,
         console_update_callback: Callable[[int, Lock], None] = None,
         console_error_callback: [[str, Lock], None] = None,

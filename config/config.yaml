@@ -15,7 +15,7 @@ krkn_ai:
       vector_db_path: /tmp/exit_code_scenario
       model:
         class_name: KrknOllama
-        package: krkn_ai.llms
+        package: krkn_ai.llm
         endpoint: http://192.168.0.105:11434
         name: llama2-uncensored
 

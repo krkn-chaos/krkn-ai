@@ -3,4 +3,3 @@ venv
 _trial_temp
 _trial_temp.lock
 __pycache__
-*/__pycache__

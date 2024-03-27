@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import threading
-from asyncio import Queue
+from queue import Queue
 from multiprocessing import Lock
 from typing import Callable, TextIO
 
@@ -60,6 +60,7 @@ class ExitCodeScenario(AIScenario):
     def normalize_data(
         self,
         data_path: str,
+        threads: int,
         console_lock: Lock = None,
         console_update_callback: Callable[[int, Lock], None] = None,
         console_error_callback: [[str, Lock], None] = None,
@@ -68,7 +69,8 @@ class ExitCodeScenario(AIScenario):
         file_lock = Lock()
         try:
             json_files = os.listdir(data_path)
-            [queue.put(f"{data_path}/{file}") for file in json_files]
+            for file in json_files:
+                queue.put(f"{data_path}/{file}")
             queue_size = queue.qsize()
             csv_file = f"{data_path}/scenario_exit_code_data.csv"
             with open(csv_file, "a") as output_file_stream:
@@ -83,7 +85,7 @@ class ExitCodeScenario(AIScenario):
                 output_file_stream.write(f"{csv_header}\n")
                 output_file_stream.flush()
 
-                for _ in range(self.threads):
+                for _ in range(threads):
                     worker = threading.Thread(
                         target=self.__normalize_scenario_exit_code_worker,
                         args=(
@@ -119,8 +121,8 @@ class ExitCodeScenario(AIScenario):
         error_callback: [[str, Lock], None] = None,
     ):
         while not queue.empty():
+            filename = queue.get()
             try:
-                filename = queue.get()
                 with open(filename, "r") as stream:
                     json_object = json.load(stream)
                     for scenario in json_object["scenarios"]:
@@ -129,12 +131,27 @@ class ExitCodeScenario(AIScenario):
                         if (
                             isinstance(scenario["parameters"], list)
                             and "config" in scenario["parameters"][0]
-                            and "namespace"
-                            in scenario["parameters"][0]["config"]
+                            and (
+                                "namespace"
+                                in scenario["parameters"][0]["config"]
+                                or "namespace_pattern"
+                                in scenario["parameters"][0]["config"]
+                            )
                         ):
-                            namespace = scenario["parameters"][0]["config"][
+                            if (
                                 "namespace_pattern"
-                            ]
+                                in scenario["parameters"][0]["config"]
+                            ):
+                                namespace = scenario["parameters"][0]["config"][
+                                    "namespace_pattern"
+                                ]
+                            if (
+                                "namespace"
+                                in scenario["parameters"][0]["config"]
+                            ):
+                                namespace = scenario["parameters"][0]["config"][
+                                    "namespace"
+                                ]
 
                         elif "input_list" in scenario["parameters"]:
                             if (
@@ -170,7 +187,7 @@ class ExitCodeScenario(AIScenario):
                                 update_callback(queue_size, console_lock)
 
             except Exception as e:
-                message = f"impossible to parse file: {e}"
+                message = f"impossible to parse file: {e} {filename}"
                 if error_callback and console_lock:
                     error_callback(message, console_lock)
                 else:

@@ -1,23 +1,25 @@
 import importlib
 
+from krkn_ai.abc.ai_model import AIModel
 from krkn_ai.abc.ai_scenario import AIScenario
-from krkn_ai.abc.ai_scenario_factory import AIScenarioFactory
 
 
-class ScenarioFactory(AIScenarioFactory):
-    def __init__(self, package_name: str):
-        self.package_name = package_name
+class ScenarioFactory:
 
-    def create_ai_scenario(
-        self, ai_scenario_name: str, vector_db_path: str
+    def get_instance(
+        self,
+        ai_model: AIModel,
+        ai_scenario_class_name: str,
+        ai_scenario_package: str,
+        vector_db_path: str,
     ) -> AIScenario:
         try:
-            module = importlib.import_module(self.package_name)
-            klass = getattr(module, ai_scenario_name)
-            obj = klass(vector_db_path)
+            module = importlib.import_module(ai_scenario_package)
+            klass = getattr(module, ai_scenario_class_name)
+            obj = klass(ai_model, vector_db_path)
             if not isinstance(obj, AIScenario):
                 raise Exception(
-                    f"{ai_scenario_name} not found in package {self.package_name}"
+                    f"{ai_scenario_class_name} not found in package {ai_scenario_package}"
                 )
             return obj
         except Exception as e:

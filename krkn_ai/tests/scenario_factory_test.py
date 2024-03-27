@@ -8,7 +8,5 @@ class ScenarioFactoryTest(unittest.TestCase):
     def test_create_instance(self):
         factory = ScenarioFactory("krkn_ai.tests")
 
-        instance = factory.create_ai_scenario(
-            "DummyScenario", "/tmp/vector_db_test"
-        )
+        instance = factory.get_instance("DummyScenario", "/tmp/vector_db_test")
         self.assertTrue(instance.get_vector_db_path(), "/tmp/vector_db_test")

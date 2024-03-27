@@ -6,8 +6,16 @@ krkn_ai:
   llm_endpoint: ""
   chroma_db_path: ./chroma_db
   dataset_path: /tmp
-  threads: 6
+  threads: 15
+  llms:
+
   scenarios:
-    - name: ExitCodeScenario
-      vector_db_path:
+    - class_name: ExitCodeScenario
+      package: krkn_ai.scenarios
+      vector_db_path: /tmp/exit_code_scenario
+      model:
+        class_name: KrknOllama
+        package: krkn_ai.llms
+        endpoint: http://192.168.0.105:11434
+        name: llama2-uncensored
 

@@ -145,6 +145,8 @@ class DataRetriever:
                         if (
                             isinstance(scenario["parameters"], list)
                             and "config" in scenario["parameters"][0]
+                            and "namespace"
+                            in scenario["parameters"][0]["config"]
                         ):
                             namespace = scenario["parameters"][0]["config"][
                                 "namespace_pattern"
@@ -172,7 +174,7 @@ class DataRetriever:
 
                         row = (
                             f'{scenario["scenario"]}{self.csv_separator}'
-                            f'{scenario["exit_status"]}{self.csv_separator}'
+                            f'{scenario["exit_status"] if "exit_status" in scenario else scenario["exitStatus"]}{self.csv_separator}'
                             f'{namespace if namespace else "null"}{self.csv_separator}'
                             f'{node_selector if node_selector else "null"}'
                         )

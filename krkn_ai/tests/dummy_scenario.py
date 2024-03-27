@@ -9,8 +9,8 @@ class DummyScenario(AIScenario):
     def __init__(self, vector_db_path: str):
         self.vector_db_path = vector_db_path
 
-    def train(self, normalized_data_path: str):
+    def train(self, normalized_file_path: str):
         print("training on : {vectordb_path}")
 
-    def prompt(self):
+    def interactive_prompt(self):
         print("hello!")

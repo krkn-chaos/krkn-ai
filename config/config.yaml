@@ -7,3 +7,7 @@ krkn_ai:
   chroma_db_path: ./chroma_db
   dataset_path: /tmp
   threads: 6
+  scenarios:
+    - name: ExitCodeScenario
+      vector_db_path:
+

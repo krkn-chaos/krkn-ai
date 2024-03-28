@@ -17,9 +17,11 @@ class ModelFactory:
             klass = getattr(module, ai_model_class_name)
             obj = klass(ai_endpoint, ai_model_name)
             if not isinstance(obj, AIModel):
-                raise Exception(
-                    f"{ai_model_class_name} not found in package {ai_model_package}"
+                raise TypeError(
+                    f"{ai_model_class_name} does not implement AIModel Abstract class"
                 )
             return obj
-        except Exception as e:
-            raise e
+        except AttributeError as e:
+            raise AttributeError(
+                f"{ai_model_class_name} AI Model not found in package {ai_model_package}"
+            )

@@ -18,9 +18,11 @@ class ScenarioFactory:
             klass = getattr(module, ai_scenario_class_name)
             obj = klass(ai_model, vector_db_path)
             if not isinstance(obj, AIScenario):
-                raise Exception(
-                    f"{ai_scenario_class_name} not found in package {ai_scenario_package}"
+                raise TypeError(
+                    f"{ai_scenario_class_name} does not implement AIScenario Abstract class"
                 )
             return obj
-        except Exception as e:
-            raise e
+        except AttributeError as e:
+            raise AttributeError(
+                f"{ai_scenario_class_name} scenario not found in {ai_scenario_package}"
+            )

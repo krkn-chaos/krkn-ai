@@ -3,16 +3,15 @@ telemetry:
   password: ''
   api_url: "http://localhost:5000"
 krkn_ai:
-  llm_endpoint: ""
-  chroma_db_path: ./chroma_db
   dataset_path: /tmp
   threads: 15
-  llms:
-
+  reuse_dataset: True
+  dataset_starting_timestamp:   1711449184 # 0 if want to start to the very beginning
   scenarios:
     - class_name: ExitCodeScenario
+      retrain: True
       package: krkn_ai.scenarios
-      vector_db_path: /tmp/exit_code_scenario
+      vector_db_path: /tmp/exit_code_scenario_2
       model:
         class_name: KrknOllama
         package: krkn_ai.llm

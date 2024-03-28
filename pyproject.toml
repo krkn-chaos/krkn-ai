@@ -12,10 +12,10 @@ python = "^3.11"
 langchain_community="^0.0.29"
 langchain="^0.1.13"
 langchain-core="^0.1.33"
-krkn-lib = "^2.1.0"
 yaspin="^3.0.1"
 shortuuid="^1.0.13"
-
+chromadb="^0.4.24"
+chromadb-pysqlite3 = "^0.4.15"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

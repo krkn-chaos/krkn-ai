@@ -14,6 +14,8 @@ import shortuuid
 
 
 class DataRetriever:
+    lock_file = "krkn-ai.lock"
+
     def __init__(
         self,
         api_url: str,
@@ -88,12 +90,6 @@ class DataRetriever:
             finally:
                 queue.task_done()
 
-    def get_lock_timestamp(self) -> Optional[int]:
-        pass
-
-    def lock(self):
-        pass
-
     def download_telemetry_data(
         self,
         urls: list[str],
@@ -122,4 +118,16 @@ class DataRetriever:
             worker.daemon = True
             worker.start()
         queue.join()
+        self.lock(download_path)
         return download_path
+
+    def get_lock_path(self) -> Optional[str]:
+        if not os.path.exists(self.lock_file):
+            return None
+        with open(self.lock_file, "r") as file:
+            lock = file.read()
+            return lock.strip()
+
+    def lock(self, lock_path: str):
+        with open(self.lock_file, "w") as file:
+            file.write(lock_path)

@@ -1,4 +1,6 @@
 import logging
+import os.path
+import shutil
 import sys
 import time
 from multiprocessing import Lock
@@ -53,7 +55,7 @@ def main():
         config["krkn_ai"]["dataset_path"],
     )
 
-    with yaspin(text="Noise spinner", color="red") as sp:
+    with yaspin(color="red") as sp:
         update_callback_download: Callable[[int, Lock], None] = (
             lambda total, lock: update_callback(
                 sp, "downloaded: ", download_counter, total, lock
@@ -69,39 +71,81 @@ def main():
         error_callback_global: Callable[[str, Lock], None] = (
             lambda message, lock: error_callback(sp, message, lock)
         )
-        sp.text = "fetching telemetry download links from API..."
-        # urls = data_retriever.get_telemetry_urls()
-        # sp.write(f"{len(urls)} urls fetched ✅")
-        # data_path = data_retriever.download_telemetry_data(
-        #     urls, console_lock, update_callback_download, error_callback_global
-        # )
-        # sp.write(f"{len(urls)} files downloaded ✅")
 
-        for scenario in config["krkn_ai"]["scenarios"]:
-
-            model = model_factory.get_instance(
-                scenario["model"]["class_name"],
-                scenario["model"]["package"],
-                scenario["model"]["endpoint"],
-                scenario["model"]["name"],
-            )
-            scenario = scenario_factory.get_instance(
-                model,
-                scenario["class_name"],
-                scenario["package"],
-                scenario["vector_db_path"],
-            )
-            parsed_file = scenario.normalize_data(
-                # data_path,
-                "/tmp/1711549998",
-                config["krkn_ai"]["threads"],
+        if (
+            not config["krkn_ai"]["reuse_dataset"]
+            or not data_retriever.get_lock_path()
+        ):
+            sp.text = "fetching telemetry download links from API..."
+            if not data_retriever.get_lock_path():
+                sp.write(
+                    f"lock file not found forced to download training data...."
+                )
+            if config["krkn_ai"]["dataset_starting_timestamp"] > 0:
+                urls = data_retriever.get_telemetry_urls(
+                    config["krkn_ai"]["dataset_starting_timestamp"]
+                )
+            else:
+                urls = data_retriever.get_telemetry_urls(
+                    config["krkn_ai"]["dataset_starting_timestamp"]
+                )
+            sp.ok(f"{len(urls)} urls fetched ✅")
+            data_path = data_retriever.download_telemetry_data(
+                urls,
                 console_lock,
-                update_callback_normalize,
+                update_callback_download,
                 error_callback_global,
             )
-            sp.write(f" files parsed ✅")
+            sp.ok(f"{len(urls)} files downloaded ✅")
+        else:
+            lock_path = data_retriever.get_lock_path()
+            sp.text = f"reusing dataset from lockfile {lock_path} ✅"
+            data_path = lock_path
 
-            sp.text = f"parsed file: {parsed_file}"
+        for scenario_config in config["krkn_ai"]["scenarios"]:
+            try:
+
+                model = model_factory.get_instance(
+                    scenario_config["model"]["class_name"],
+                    scenario_config["model"]["package"],
+                    scenario_config["model"]["endpoint"],
+                    scenario_config["model"]["name"],
+                )
+                scenario = scenario_factory.get_instance(
+                    model,
+                    scenario_config["class_name"],
+                    scenario_config["package"],
+                    scenario_config["vector_db_path"],
+                )
+            except (TypeError, AttributeError) as e:
+                sp.fail(
+                    f"🚨 failed to run scenario {scenario_config['class_name']} : {e}"
+                )
+                continue
+            if scenario_config["retrain"]:
+
+                if os.path.exists(scenario.get_vector_db_path()):
+                    sp.text = "deleting vector db..."
+                    shutil.rmtree(scenario.get_vector_db_path())
+                    sp.ok("vector db deleted ✅")
+
+                parsed_file = scenario.normalize_data(
+                    data_path,
+                    config["krkn_ai"]["threads"],
+                    console_lock,
+                    update_callback_normalize,
+                    error_callback_global,
+                )
+                sp.text = "creating embeddings and writing in the vectordb...."
+                scenario.train(parsed_file)
+                sp.ok(f"documents written in the vectordb ✅")
+
+            try:
+                sp.text = "starting llm interactive prompt..."
+                scenario.interactive_prompt()
+            except ValueError as e:
+                sp.fail(f"🚨 failed to start interactive prompt : {e}")
+                continue
 
 
 if __name__ == "__main__":

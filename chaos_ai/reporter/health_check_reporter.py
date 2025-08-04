@@ -112,5 +112,6 @@ class HealthCheckReporter:
         plt.tight_layout()
         
         plt.savefig(save_path, dpi=300)
+        plt.close()
 
         logger.debug("Health check graph saved to %s", save_path)

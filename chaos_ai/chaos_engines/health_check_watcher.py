@@ -88,26 +88,43 @@ class HealthCheckWatcher:
                 
         return dict(results)
 
-    def summarize_success_rate(self, results: List[HealthCheckResult]) -> float:
-        total = len(results)
+    def summarize_success_rate(self, results: Dict[str, List[HealthCheckResult]]) -> float:
+        '''
+        Overall fail score across different URL results
+        '''
+        # Flatten all results from all URLs into a single list
+        all_results = []
+        for result_list in results.values():
+            all_results.extend(result_list)
+        
+        total = len(all_results)
         if total == 0:
             return 0
-        failed = sum(1 for r in results if not r.success)
-        return failed / total
+        failed = sum(1 for r in all_results if not r.success)
+        score = (failed / total) * 10 
+        logger.debug(f"Success rate score: {score}")
+        return score
     
-    def summarize_response_time(self, results: List[HealthCheckResult]) -> float:
-        response_times = []
-        for result in results:
-            if result.success:
-                response_times.append(result.response_time)
-        
-        if len(response_times) < 4: # Not enough data to calculate outliers
-            return 0
+    def summarize_response_time(self, health_check_results: Dict[str, List[HealthCheckResult]]) -> float:
+        score = 0
+        total = 0
+        for _, results in health_check_results.items():
+            response_times = []
+            for result in results:
+                if result.success:
+                    response_times.append(result.response_time)
+            
+            if len(response_times) < 4: # Not enough data to calculate outliers
+                return 0
 
-        q1 = np.percentile(response_times, 25)
-        q3 = np.percentile(response_times, 75)
-        iqr = q3 - q1
-        upper_bound = q3 + (1.5 * iqr)
-        
-        outliers = [t for t in response_times if t > upper_bound]
-        return len(outliers)
+            q1 = np.percentile(response_times, 25)
+            q3 = np.percentile(response_times, 75)
+            iqr = q3 - q1
+            upper_bound = q3 + (1.5 * iqr)
+            
+            outliers = [t for t in response_times if t > upper_bound]
+            score += len(outliers)
+            total += len(results)
+        score = (score / total) * 10
+        logger.debug(f"Response time score: {score}")
+        return score

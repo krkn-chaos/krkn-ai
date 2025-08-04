@@ -14,6 +14,7 @@ from chaos_ai.models.base_scenario import (
     ScenarioFactory
 )
 from chaos_ai.models.config import ConfigFile
+from chaos_ai.reporter.generations_reporter import GenerationsReporter
 from chaos_ai.reporter.health_check_reporter import HealthCheckReporter
 from chaos_ai.utils.logger import get_module_logger
 from chaos_ai.chaos_engines.krkn_runner import KrknRunner
@@ -44,7 +45,8 @@ class GeneticAlgorithm:
         self.seen_population = {}  # Map between scenario and its result
         self.best_of_generation = []
 
-        self.reporter = HealthCheckReporter(self.output_dir)
+        self.health_check_reporter = HealthCheckReporter(self.output_dir)
+        self.generations_reporter = GenerationsReporter(self.output_dir, self.format)
 
         logger.debug("CONFIG")
         logger.debug("--------------------------------------------------------")
@@ -143,7 +145,7 @@ class GeneticAlgorithm:
         scenario_result = self.krkn_client.run(scenario, generation_id)
         # Save scenario result
         self.save_scenario_result(scenario_result)
-        self.reporter.plot_report(scenario_result)
+        self.health_check_reporter.plot_report(scenario_result)
         return scenario_result
 
     def mutate(self, scenario: BaseScenario):
@@ -246,8 +248,9 @@ class GeneticAlgorithm:
         '''Save run results'''
         # TODO: Create a single result file (results.json) that contains summary of all the results
         self.save_config()
-        self.save_best_generations()
-        self.save_health_check_report()
+        self.generations_reporter.save_best_generations(self.best_of_generation)
+        self.generations_reporter.save_best_generation_graph(self.best_of_generation)
+        self.health_check_reporter.save_report(self.seen_population.values())
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")
@@ -260,27 +263,6 @@ class GeneticAlgorithm:
         ) as f:
             config_data = self.config.model_dump(mode='json')
             yaml.dump(config_data, f, sort_keys=False)
-
-    def save_best_generations(self):
-        logger.info("Saving results to best_scenarios.json")
-        output_dir = self.output_dir
-        os.makedirs(output_dir, exist_ok=True)
-        with open(
-            os.path.join(output_dir, "best_scenarios.%s" % self.format),
-            "w",
-            encoding="utf-8"
-        ) as f:
-            best_generations = self.best_of_generation[:]
-            for i in range(len(best_generations)):
-                scenario_result = best_generations[i].model_dump()
-                del scenario_result['log']
-                scenario_result['start_time'] = (scenario_result['start_time']).isoformat()
-                scenario_result['end_time'] = (scenario_result['end_time']).isoformat()
-                best_generations[i] = scenario_result
-            if self.format == 'json':
-                json.dump(best_generations, f, indent=4)
-            elif self.format == 'yaml':
-                yaml.dump(best_generations, f, sort_keys=False)
 
     def save_log_file(self, job_id: str, log_data: str):
         dir_path = os.path.join(self.output_dir, 'logs')
@@ -320,6 +302,3 @@ class GeneticAlgorithm:
                     json.dump(result, file_handler, indent=4)
                 elif self.format == 'yaml':
                     yaml.dump(result, file_handler, sort_keys=False)
-
-    def save_health_check_report(self):
-        self.reporter.save_report(self.seen_population.values())

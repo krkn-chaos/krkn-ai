@@ -9,6 +9,8 @@ fitness_function:
   query: 'sum(kube_pod_container_status_restarts_total{namespace="robot-shop"})'
   type: point
   include_krkn_failure: true
+  include_health_check_failure: true
+  include_health_check_response_time: true
 
 health_checks:
   stop_watcher_on_failure: false

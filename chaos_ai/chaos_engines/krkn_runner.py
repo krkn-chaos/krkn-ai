@@ -129,11 +129,19 @@ class KrknRunner:
                 end=end_time
             )
 
+        health_check_results = health_check_watcher.get_results()
+
         # Include krkn hub run failure info to the fitness score
         if self.config.fitness_function.include_krkn_failure:
             # Status code 2 means that SLOs not met per Krkn test
             if returncode == 2:
                 fitness_result.fitness_score += KRKN_HUB_FAILURE_SCORE
+
+        # Include health check failure and response time to the fitness score
+        if self.config.fitness_function.include_health_check_failure:
+            fitness_result.fitness_score += health_check_watcher.summarize_success_rate(health_check_results)
+        if self.config.fitness_function.include_health_check_response_time:
+            fitness_result.fitness_score += health_check_watcher.summarize_response_time(health_check_results)
 
         return CommandRunResult(
             generation_id=generation_id,
@@ -144,7 +152,7 @@ class KrknRunner:
             start_time=start_time,
             end_time=end_time,
             fitness_result=fitness_result,
-            health_check_results=health_check_watcher.get_results()
+            health_check_results=health_check_results
         )
 
     def runner_command(self, scenario: Scenario):

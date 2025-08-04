@@ -71,7 +71,9 @@ class FitnessFunctionItem(BaseModel):
 class FitnessFunction(BaseModel):
     query: Union[str, None] = None  # PromQL
     type: FitnessFunctionType = FitnessFunctionType.point
-    include_krkn_failure: bool = False
+    include_krkn_failure: bool = True
+    include_health_check_failure: bool = True
+    include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
 
     @model_validator(mode='after')

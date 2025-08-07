@@ -1,13 +1,18 @@
 import logging
 import os
+
 import click
 from pydantic import ValidationError
-from chaos_ai.utils.cluster_manager import ClusterManager
-from chaos_ai.utils.fs import read_config_from_file
-from chaos_ai.utils.logger import get_module_logger, verbosity_to_level, set_global_log_level
-from chaos_ai.models.app import AppContext, KrknRunnerType
 
 from chaos_ai.algorithm.genetic import GeneticAlgorithm
+from chaos_ai.models.app import AppContext, KrknRunnerType
+from chaos_ai.utils.cluster_manager import ClusterManager
+from chaos_ai.utils.fs import read_config_from_file
+from chaos_ai.utils.logger import (
+    get_module_logger,
+    set_global_log_level,
+    verbosity_to_level,
+)
 
 
 @click.group()
@@ -90,10 +95,16 @@ def run(ctx,
 @click.option('--kubeconfig', '-k', help='Path to cluster kubeconfig file.', default=os.getenv('KUBECONFIG', None))
 @click.option('--output', '-o', help='Directory to save results.')
 @click.option('--namespace', '-n', help='Namespace(s) to discover components in. Supports Regex and comma separated values.', default='.*')
+@click.option('--pod-label', '-l', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
 @click.option('-v', '--verbose', count=True, help='Increase verbosity of output.')
 @click.pass_context
 def discover(
-    ctx, kubeconfig: str, output: str = "./", namespace: str = "*", verbose: int = 0
+    ctx,
+    kubeconfig: str,
+    output: str = "./",
+    namespace: str = "*",
+    pod_label: str = ".*",
+    verbose: int = 0
 ):
     log_level = verbosity_to_level(verbose)
     ctx.obj = AppContext(verbose=log_level)
@@ -108,6 +119,10 @@ def discover(
         exit(1)
     
     cluster_manager = ClusterManager(kubeconfig)
-    discovered_components = cluster_manager.discover_components(
-        namespace_pattern=namespace
+
+    namespace_components = cluster_manager.discover_components(
+        namespace_pattern=namespace,
+        pod_label_pattern=pod_label
     )
+
+    

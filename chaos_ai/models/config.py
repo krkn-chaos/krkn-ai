@@ -128,8 +128,8 @@ class ConfigFile(BaseModel):
     population_injection_size: int = const.POPULATION_INJECTION_SIZE    # What's the size of random samples that gets added to new population
 
     fitness_function: FitnessFunction
-    health_checks: HealthCheckConfig
+    health_checks: HealthCheckConfig = HealthCheckConfig()
 
     scenario: ScenarioConfig = ScenarioConfig()
 
-    cluster_components: Union[ClusterComponents, str]
+    cluster_components: ClusterComponents

@@ -35,8 +35,9 @@ def read_config_from_file(file_path: str, param: list[str] = None) -> ConfigFile
             config['parameters'][str(key)] = str(value)
 
         # Replace parameter in health check url string
-        for health_check in config['health_checks']['applications']:
-            health_check['url'] = preprocess_param_string(health_check['url'], config['parameters'])
+        if 'health_checks' in config and 'applications' in config['health_checks']:
+            for health_check in config['health_checks']['applications']:
+                health_check['url'] = preprocess_param_string(health_check['url'], config['parameters'])
     return ConfigFile(**config)
 
 

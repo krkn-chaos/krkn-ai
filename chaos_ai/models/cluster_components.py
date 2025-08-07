@@ -14,3 +14,6 @@ class Pod(BaseModel):
     namespace: str
     labels: Dict[str, str] = {}
     containers: List[Container] = []
+
+class ClusterComponents(BaseModel):
+    namespaces: List[Namespace] = []

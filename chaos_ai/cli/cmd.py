@@ -121,12 +121,10 @@ def discover(
     
     cluster_manager = ClusterManager(kubeconfig)
 
-    namespace_components = cluster_manager.discover_components(
+    cluster_components = cluster_manager.discover_components(
         namespace_pattern=namespace,
         pod_label_pattern=pod_label
     )
 
-    json_data = [ns.model_dump(mode='json', warnings='none') for ns in namespace_components]
-
-    save_data_to_file(json_data, output)
+    save_data_to_file(cluster_components.model_dump(mode='json', warnings='none'), output)
     logger.info("Saved component configuration to %s", output)

@@ -4,7 +4,7 @@ from typing import List
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from chaos_ai.utils.logger import get_module_logger
-from chaos_ai.models.cluster_components import Container, Namespace, Pod
+from chaos_ai.models.cluster_components import ClusterComponents, Container, Namespace, Pod
 
 logger = get_module_logger(__name__)
 
@@ -17,7 +17,7 @@ class ClusterManager:
         self.core_api = self.krkn_k8s.cli
         logger.debug("ClusterManager initialized with kubeconfig: %s", kubeconfig)
 
-    def discover_components(self, namespace_pattern: str = None, pod_label_pattern: str = None) -> List[Namespace]:
+    def discover_components(self, namespace_pattern: str = None, pod_label_pattern: str = None) -> ClusterComponents:
         namespaces = self.list_namespaces(namespace_pattern)
 
         pod_labels_patterns = self.__process_pattern(pod_label_pattern)
@@ -26,7 +26,9 @@ class ClusterManager:
             pods = self.list_pods(namespace, pod_labels_patterns)
             namespaces[i].pods = pods
 
-        return namespaces
+        return ClusterComponents(
+            namespaces=namespaces
+        )
 
 
     def list_namespaces(self, namespace_pattern: str = None) -> List[Namespace]:

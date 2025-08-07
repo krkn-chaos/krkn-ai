@@ -2,8 +2,9 @@ from os import name
 import re
 from typing import List
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
+from kubernetes.client.models import V1PodSpec
 from chaos_ai.utils.logger import get_module_logger
-from chaos_ai.models.cluster_components import Namespace, Pod
+from chaos_ai.models.cluster_components import Container, Namespace, Pod
 
 logger = get_module_logger(__name__)
 
@@ -62,10 +63,21 @@ class ClusterManager:
                     if re.match(pattern, label):
                         labels[label] = pod.metadata.labels[label]
             pod_component.labels = labels
+            pod_component.containers = self.list_containers(pod.spec)
             pod_list.append(pod_component)
 
         logger.debug("Filtered %d pods in namespace %s", len(pod_list), namespace.name)
         return pod_list
+
+    def list_containers(self, pod_spec: V1PodSpec) -> List[Container]:
+        containers = []
+        for container in pod_spec.containers:
+            containers.append(
+                Container(
+                    name=container.name,
+                )
+            )
+        return containers
 
     def __process_pattern(self, pattern_string: str) -> List[str]:
         # Check whether multiple namespaces are specified

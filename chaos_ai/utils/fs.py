@@ -1,3 +1,4 @@
+import json
 import os
 import yaml
 
@@ -46,3 +47,15 @@ def env_is_truthy(var: str):
     value = os.getenv(var, 'false')
     value = value.lower().strip()
     return value in ['yes', 'y', 'true', '1']
+
+
+def save_data_to_file(data: dict | list, file_path: str):
+    format = file_path.split('.')[-1]
+    if format == 'yaml':
+        with open(file_path, 'w') as f:
+            yaml.dump(data, f)
+    elif format == 'json':
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    else:
+        raise ValueError(f"Unsupported format: {format}")

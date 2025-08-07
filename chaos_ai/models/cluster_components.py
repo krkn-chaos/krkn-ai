@@ -6,7 +6,11 @@ class Namespace(BaseModel):
     name: str
     pods: List[str] = []
 
+class Container(BaseModel):
+    name: str
+
 class Pod(BaseModel):
     name: str
     namespace: str
     labels: Dict[str, str] = {}
+    containers: List[Container] = []

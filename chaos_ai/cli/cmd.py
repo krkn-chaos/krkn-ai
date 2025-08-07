@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -7,7 +8,7 @@ from pydantic import ValidationError
 from chaos_ai.algorithm.genetic import GeneticAlgorithm
 from chaos_ai.models.app import AppContext, KrknRunnerType
 from chaos_ai.utils.cluster_manager import ClusterManager
-from chaos_ai.utils.fs import read_config_from_file
+from chaos_ai.utils.fs import read_config_from_file, save_data_to_file
 from chaos_ai.utils.logger import (
     get_module_logger,
     set_global_log_level,
@@ -93,7 +94,7 @@ def run(ctx,
     help='Discover components for Chaos AI tests'
 )
 @click.option('--kubeconfig', '-k', help='Path to cluster kubeconfig file.', default=os.getenv('KUBECONFIG', None))
-@click.option('--output', '-o', help='Directory to save results.')
+@click.option('--output', '-o', help='Path to save config file.', default='./chaos-ai.yaml')
 @click.option('--namespace', '-n', help='Namespace(s) to discover components in. Supports Regex and comma separated values.', default='.*')
 @click.option('--pod-label', '-l', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
 @click.option('-v', '--verbose', count=True, help='Increase verbosity of output.')
@@ -125,4 +126,7 @@ def discover(
         pod_label_pattern=pod_label
     )
 
-    
+    json_data = [ns.model_dump(mode='json', warnings='none') for ns in namespace_components]
+
+    save_data_to_file(json_data, output)
+    logger.info("Saved component configuration to %s", output)

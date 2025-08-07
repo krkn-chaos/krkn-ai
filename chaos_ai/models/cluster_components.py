@@ -11,7 +11,6 @@ class Container(BaseModel):
 
 class Pod(BaseModel):
     name: str
-    namespace: str
     labels: Dict[str, str] = {}
     containers: List[Container] = []
 

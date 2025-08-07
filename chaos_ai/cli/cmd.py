@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from chaos_ai.algorithm.genetic import GeneticAlgorithm
 from chaos_ai.models.app import AppContext, KrknRunnerType
+from chaos_ai.templates.generator import create_chaos_ai_template
 from chaos_ai.utils.cluster_manager import ClusterManager
 from chaos_ai.utils.fs import read_config_from_file, save_data_to_file
 from chaos_ai.utils.logger import (
@@ -126,5 +127,11 @@ def discover(
         pod_label_pattern=pod_label
     )
 
-    save_data_to_file(cluster_components.model_dump(mode='json', warnings='none'), output)
+    cluster_components_data = cluster_components.model_dump(mode='json', warnings='none')
+
+    template = create_chaos_ai_template(kubeconfig, cluster_components_data)
+
+    with open(output, 'w') as f:
+        f.write(template)
+
     logger.info("Saved component configuration to %s", output)

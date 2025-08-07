@@ -55,7 +55,6 @@ class ClusterManager:
         for pod in pods:
             pod_component = Pod(
                 name=pod.metadata.name,
-                namespace=namespace.name,
                 labels=pod.metadata.labels,
             )
             # Filter label keys by patterns

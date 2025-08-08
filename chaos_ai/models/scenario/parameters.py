@@ -54,12 +54,12 @@ class BlockTrafficType(BaseParameter):
 
 class LabelSelectorParameter(BaseParameter):
     name: str = "LABEL_SELECTOR"
-    value: str  # Example Value: k8s-app=etcd
+    value: str = "" # Example Value: k8s-app=etcd
 
 
 class ContainerNameParameter(BaseParameter):
     name: str = "CONTAINER_NAME"
-    value: str  # Example Value: etcd
+    value: str = ""  # Example Value: etcd
 
 class ActionParameter(BaseParameter):
     name: str = "ACTION"

@@ -6,6 +6,7 @@ from chaos_ai.models.scenario.parameters import DummyParameter
 
 from chaos_ai.models.scenario.scenario_pod import PodScenario
 from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
+from chaos_ai.models.scenario.scenario_container import ContainerScenario
 
 class ScenarioFactory:
     @staticmethod
@@ -15,7 +16,7 @@ class ScenarioFactory:
         scenario_specs = [
             ("pod_scenarios", PodScenario),
             ("application_outages", AppOutageScenario),
-            ("container_scenarios", None),
+            ("container_scenarios", ContainerScenario),
             ("node_cpu_hog", None),
             ("node_memory_hog", None),
         ]

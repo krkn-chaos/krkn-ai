@@ -1,3 +1,4 @@
+import random
 from chaos_ai.models.scenario.base import BaseParameter
 
 class DummyParameter(BaseParameter):
@@ -78,16 +79,39 @@ class NodeCPUCoreParameter(BaseParameter):
 
 
 class NodeCPUPercentageParameter(BaseParameter):
+    '''
+    CPU usage percentage of the node cpu hog scenario between 20 and 100.
+    '''
     name: str = "NODE_CPU_PERCENTAGE"
     value: int = 50
 
+    def mutate(self):
+        if random.random() < 0.5:
+            self.value += random.randint(1, 35) * self.value / 100
+        else:
+            self.value -= random.randint(1, 25) * self.value / 100
+        self.value = int(self.value)
+        self.value = max(self.value, 20)
+        self.value = min(self.value, 100)
 
-class NodeMemopryPercentageParameter(BaseParameter):
+class NodeMemoryPercentageParameter(BaseParameter):
+    '''
+    Memory usage percentage of the node memory hog scenario between 20 and 100.
+    '''
     name: str = "MEMORY_CONSUMPTION_PERCENTAGE"
-    value: int = 90
+    value: int = 50
 
     def get_value(self):
         return f"{self.value}%"
+
+    def mutate(self):
+        if random.random() < 0.5:
+            self.value += random.randint(1, 35) * self.value / 100
+        else:
+            self.value -= random.randint(1, 25) * self.value / 100
+        self.value = int(self.value)
+        self.value = max(self.value, 20)
+        self.value = min(self.value, 100)
 
 
 class NumberOfWorkersParameter(BaseParameter):
@@ -96,6 +120,15 @@ class NumberOfWorkersParameter(BaseParameter):
 
 
 class NodeSelectorParameter(BaseParameter):
+    '''
+    CPU-Hog:
+    Node selector where the scenario containers will be scheduled in the format “=<selector>”. 
+    NOTE: Will be instantiated a container per each node selected with the same scenario options. 
+    If left empty a random node will be selected	
+
+    Memory-Hog:
+    defines the node selector for choosing target nodes. If not specified, one schedulable node in the cluster will be chosen at random. If multiple nodes match the selector, all of them will be subjected to stress. If number-of-nodes is specified, that many nodes will be randomly selected from those identified by the selector.	
+    '''
     name: str = "NODE_SELECTOR"
     value: str = ""
 

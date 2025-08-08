@@ -7,6 +7,8 @@ from chaos_ai.models.scenario.parameters import DummyParameter
 from chaos_ai.models.scenario.scenario_pod import PodScenario
 from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
 from chaos_ai.models.scenario.scenario_container import ContainerScenario
+from chaos_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
+from chaos_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
 
 class ScenarioFactory:
     @staticmethod
@@ -17,8 +19,8 @@ class ScenarioFactory:
             ("pod_scenarios", PodScenario),
             ("application_outages", AppOutageScenario),
             ("container_scenarios", ContainerScenario),
-            ("node_cpu_hog", None),
-            ("node_memory_hog", None),
+            ("node_cpu_hog", NodeCPUHogScenario),
+            ("node_memory_hog", NodeMemoryHogScenario),
         ]
 
         # Fetch scenarios that are set in config

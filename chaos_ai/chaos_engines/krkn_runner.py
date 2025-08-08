@@ -8,13 +8,8 @@ from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from chaos_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from chaos_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult, KrknRunnerType
 from chaos_ai.models.config import ConfigFile, FitnessFunctionType
-from chaos_ai.models.base_scenario import (
-    Scenario,
-    BaseScenario,
-    CompositeScenario,
-    CompositeDependency,
-    ScenarioFactory
-)
+from chaos_ai.models.scenario.base import Scenario, BaseScenario, CompositeDependency, CompositeScenario
+from chaos_ai.models.scenario.factory import ScenarioFactory
 from chaos_ai.utils import run_shell
 from chaos_ai.utils.fs import env_is_truthy
 from chaos_ai.utils.logger import get_module_logger

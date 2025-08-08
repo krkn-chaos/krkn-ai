@@ -6,13 +6,10 @@ import random
 from typing import List
 
 from chaos_ai.models.app import CommandRunResult, KrknRunnerType
-from chaos_ai.models.base_scenario import (
-    BaseScenario,
-    Scenario,
-    CompositeDependency,
-    CompositeScenario,
-    ScenarioFactory
-)
+
+from chaos_ai.models.scenario.base import Scenario, BaseScenario, CompositeDependency, CompositeScenario
+from chaos_ai.models.scenario.factory import ScenarioFactory
+
 from chaos_ai.models.config import ConfigFile
 from chaos_ai.reporter.generations_reporter import GenerationsReporter
 from chaos_ai.reporter.health_check_reporter import HealthCheckReporter
@@ -127,12 +124,11 @@ class GeneticAlgorithm:
         count = 0
         while count != population_size:
             scenario = ScenarioFactory.generate_random_scenario(self.config)
-            # Mutate to generate initial randomness among same tests
-            scenario = self.mutate(scenario)
             if scenario and scenario not in already_seen:
                 self.population.append(scenario)
                 already_seen.add(scenario)
                 count += 1
+
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         # If scenario has already been run, do not run it again.
@@ -153,9 +149,10 @@ class GeneticAlgorithm:
             scenario.scenario_a = self.mutate(scenario.scenario_a)
             scenario.scenario_b = self.mutate(scenario.scenario_b)
             return scenario
-        for param in scenario.parameters:
-            if random.random() < self.config.mutation_rate:
-                param.mutate()
+        if hasattr(scenario, "mutate"):
+            scenario.mutate()
+        else:
+            logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario
 
     def select_parents(self, fitness_scores: List[CommandRunResult]):
@@ -199,14 +196,24 @@ class GeneticAlgorithm:
                 scenario_b.scenario_a = scenario_a
                 return b_a, scenario_b
 
+        if not hasattr(scenario_a, "parameters") or not hasattr(scenario_b, "parameters"):
+            logger.warning("Scenario %s or %s does not have property 'parameters'", scenario_a, scenario_b)
+            return scenario_a, scenario_b
+
         common_params = set([x.name for x in scenario_a.parameters]) & set(
             [x.name for x in scenario_b.parameters]
         )
 
-        def find_param_index(scenario: Scenario, param_name):
-            for i, param in enumerate(scenario.parameters):
+        def get_param_value(scenario: Scenario, param_name):
+            for param in scenario.parameters:
                 if param_name == param.name:
-                    return i
+                    return param.value
+    
+        def set_param_value(scenario: Scenario, param_name, value):
+            for param in scenario.parameters:
+                if param_name == param.name:
+                    param.value = value
+                    return
 
         if len(common_params) == 0:
             # no common parameter, currenty we return parents as is and hope for mutation
@@ -217,15 +224,12 @@ class GeneticAlgorithm:
             for param in common_params:
                 if random.random() < self.config.crossover_rate:
                     # find index of param in list
-                    a_index = find_param_index(scenario_a, param)
-                    b_index = find_param_index(scenario_b, param)
+                    a_value = get_param_value(scenario_a, param)
+                    b_value = get_param_value(scenario_b, param)
 
                     # swap param values
-                    valueA = scenario_a.parameters[a_index].value
-                    valueB = scenario_b.parameters[b_index].value
-
-                    scenario_a.parameters[a_index].value = valueB
-                    scenario_b.parameters[b_index].value = valueA
+                    set_param_value(scenario_a, param, b_value)
+                    set_param_value(scenario_b, param, a_value)
 
             return scenario_a, scenario_b
 

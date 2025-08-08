@@ -3,8 +3,9 @@ from chaos_ai.models.config import ConfigFile
 from chaos_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import DummyParameter
-from chaos_ai.models.scenario.pod_scenario import PodScenario
 
+from chaos_ai.models.scenario.scenario_pod import PodScenario
+from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
 
 class ScenarioFactory:
     @staticmethod
@@ -13,7 +14,7 @@ class ScenarioFactory:
     ):
         scenario_specs = [
             ("pod_scenarios", PodScenario),
-            ("application_outages", None),
+            ("application_outages", AppOutageScenario),
             ("container_scenarios", None),
             ("node_cpu_hog", None),
             ("node_memory_hog", None),

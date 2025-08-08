@@ -44,12 +44,12 @@ class DurationParameter(BaseParameter):
 
 class PodSelectorParameter(BaseParameter):
     name: str = "POD_SELECTOR"
-    value: str
+    value: str = "" # Format: {app: foo}
+
 
 class BlockTrafficType(BaseParameter):
     name: str = "BLOCK_TRAFFIC_TYPE"
-    value: str = "[Ingress, Egress]"
-    # possible_values = ["[Ingress, Egress]", "[Ingress]", "[Egress]"]
+    value: str = "[Ingress, Egress]" # "[Ingress, Egress]", "[Ingress]", "[Egress]"
 
 
 class LabelSelectorParameter(BaseParameter):

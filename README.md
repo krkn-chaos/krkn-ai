@@ -1,5 +1,12 @@
 # Chaos AI 🧬⚡
 
+<br/>
+
+> [!CAUTION]  
+> __The tool is currently in under active development, use it at your own risk.__
+
+<br/>
+
 An intelligent chaos engineering framework that uses genetic algorithms to optimize chaos scenarios for Kubernetes/OpenShift applications. Chaos AI automatically evolves and discovers the most effective chaos experiments to test your system's resilience.
 
 ## 🌟 Features

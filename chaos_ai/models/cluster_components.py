@@ -14,5 +14,13 @@ class Namespace(BaseModel):
     name: str
     pods: List[Pod] = []
 
+class Node(BaseModel):
+    name: str
+    labels: Dict[str, str] = {}
+    free_cpu: float = 0
+    free_mem: float = 0
+
+
 class ClusterComponents(BaseModel):
     namespaces: List[Namespace] = []
+    nodes: List[Node] = []

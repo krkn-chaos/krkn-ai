@@ -97,7 +97,8 @@ def run(ctx,
 @click.option('--kubeconfig', '-k', help='Path to cluster kubeconfig file.', default=os.getenv('KUBECONFIG', None))
 @click.option('--output', '-o', help='Path to save config file.', default='./chaos-ai.yaml')
 @click.option('--namespace', '-n', help='Namespace(s) to discover components in. Supports Regex and comma separated values.', default='.*')
-@click.option('--pod-label', '-l', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
+@click.option('--pod-label', '-pl', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
+@click.option('--node-label', '-nl', help='Node Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
 @click.option('-v', '--verbose', count=True, help='Increase verbosity of output.')
 @click.pass_context
 def discover(
@@ -106,6 +107,7 @@ def discover(
     output: str = "./",
     namespace: str = "*",
     pod_label: str = ".*",
+    node_label: str = ".*",
     verbose: int = 0
 ):
     log_level = verbosity_to_level(verbose)
@@ -124,7 +126,8 @@ def discover(
 
     cluster_components = cluster_manager.discover_components(
         namespace_pattern=namespace,
-        pod_label_pattern=pod_label
+        pod_label_pattern=pod_label,
+        node_label_pattern=node_label
     )
 
     cluster_components_data = cluster_components.model_dump(mode='json', warnings='none')

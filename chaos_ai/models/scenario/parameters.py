@@ -103,6 +103,7 @@ class NodeMemoryPercentageParameter(BaseParameter):
     '''
     name: str = "MEMORY_CONSUMPTION_PERCENTAGE"
     value: int = 50
+    krknctl_name: str = "memory-consumption"
 
     def get_value(self):
         return f"{self.value}%"
@@ -120,6 +121,10 @@ class NodeMemoryPercentageParameter(BaseParameter):
 class NumberOfWorkersParameter(BaseParameter):
     name: str = "NUMBER_OF_WORKERS"
     value: int = 1
+    krknctl_name: str = "memory-workers"
+
+    def mutate(self):
+        self.value = random.randint(1, 10)
 
 
 class NodeSelectorParameter(BaseParameter):

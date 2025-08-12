@@ -88,7 +88,7 @@ class ClusterManager:
         return containers
 
     def list_nodes(self, node_label_pattern: str = None) -> List[Node]:
-        node_label_pattern = self.__process_pattern(node_label_pattern)
+        node_label_pattern = list(set(self.__process_pattern(node_label_pattern) + ["kubernetes.io/hostname"]))
 
         nodes = self.core_api.list_node().items
 
@@ -111,7 +111,9 @@ class ClusterManager:
                 node_component.free_cpu = alloc_cpu - usage_cpu
                 node_component.free_mem = alloc_mem - usage_mem
             except Exception as e:
-                logger.error("Failed to fetch node metrics for node %s", node.metadata.name)
+                node_component.free_cpu = -1 # -1 means not available
+                node_component.free_mem = -1 # -1 means not available
+                logger.error("Failed to fetch node metrics for node %s: %s", node.metadata.name, e)
             node_list.append(node_component)
 
         logger.debug("Filtered %d nodes", len(node_list))
@@ -142,17 +144,65 @@ class ClusterManager:
 
     @staticmethod
     def parse_cpu(cpu_str: str):
-        """Convert CPU string (e.g. '250m', '4') to cores as float."""
-        if cpu_str.endswith("m"):
-            return float(cpu_str[:-1]) / 1000
-        return float(cpu_str)
+        """
+        Parse Kubernetes cpu usage string into millicores (float).
+        Examples:
+        '363874038n' -> nanocores -> 363.874038 mCPU
+        '500u'       -> microcores -> 0.5 mCPU
+        '250m'       -> 250 mCPU
+        '1' or '0.5' -> cores -> 1000 or 500 mCPU
+        Returns float (millicores).
+        """
+        if cpu_str is None:
+            return 0.0
+        s = str(cpu_str).strip()
+        if s.endswith('n'):        # nanocores
+            n = int(s[:-1])
+            return n / 1_000_000.0
+        if s.endswith('u'):        # microcores
+            u = int(s[:-1])
+            return u / 1000.0
+        if s.endswith('m'):        # millicores
+            return float(s[:-1])
+        # plain cores: 1, 0.5, 1.25, etc
+        try:
+            cores = float(s)
+            return cores * 1000.0
+        except ValueError:
+            raise ValueError(f"Unrecognized CPU format: {cpu_str}")
 
     @staticmethod
     def parse_memory(mem_str: str):
-        """Convert memory string (e.g. '16254436Ki', '1024Mi', '1Gi') to MiB."""
-        units = {"Ki": 1/1024, "Mi": 1, "Gi": 1024}
-        for unit, factor in units.items():
-            if mem_str.endswith(unit):
-                return float(mem_str[:-len(unit)]) * factor
-        # If no unit, assume bytes
-        return float(mem_str) / (1024**2)
+        """
+        Parse Kubernetes memory strings into integer bytes.
+        Handles binary (Ki,Mi,Gi...) and SI (K,M,G...) and plain numbers (bytes).
+        Examples:
+        '4745676Ki' -> 4745676 * 1024 bytes
+        '128Mi'     -> 134217728
+        '512M'      -> 512_000_000
+        '1024'      -> 1024
+        """
+        _mem_power2 = {'Ki':1024, 'Mi':1024**2, 'Gi':1024**3, 'Ti':1024**4, 'Pi':1024**5, 'Ei':1024**6}
+        _mem_power10 = {'K':1000, 'M':1000**2, 'G':1000**3, 'T':1000**4, 'P':1000**5, 'E':1000**6}
+
+        if mem_str is None:
+            return 0
+        s = str(mem_str).strip()
+        if re.fullmatch(r'^\d+(\.\d+)?$', s):
+            return int(float(s))
+        m = re.fullmatch(r'^([0-9.]+)\s*([a-zA-Z]+)$', s)
+        if not m:
+            raise ValueError(f"Unable to parse memory string: {s}")
+        val = float(m.group(1))
+        unit = m.group(2)
+        # binary units
+        if unit in _mem_power2:
+            return int(val * _mem_power2[unit])
+        # SI units
+        if unit in _mem_power10:
+            return int(val * _mem_power10[unit])
+        # case-insensitive fallback
+        u_uc = unit.capitalize()
+        if u_uc in _mem_power2:
+            return int(val * _mem_power2[u_uc])
+        raise ValueError(f"Unknown memory unit: {unit}")

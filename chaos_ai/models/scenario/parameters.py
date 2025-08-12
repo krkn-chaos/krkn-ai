@@ -71,11 +71,13 @@ class ActionParameter(BaseParameter):
 class TotalChaosDurationParameter(BaseParameter):
     name: str = "TOTAL_CHAOS_DURATION"
     value: int = 60
+    krknctl_name: str = "chaos-duration"
 
 
 class NodeCPUCoreParameter(BaseParameter):
     name: str = "NODE_CPU_CORE"
-    value: int = 2
+    value: float = 2
+    krknctl_name: str = "cores"
 
 
 class NodeCPUPercentageParameter(BaseParameter):
@@ -84,6 +86,7 @@ class NodeCPUPercentageParameter(BaseParameter):
     '''
     name: str = "NODE_CPU_PERCENTAGE"
     value: int = 50
+    krknctl_name: str = "cpu-percentage"
 
     def mutate(self):
         if random.random() < 0.5:

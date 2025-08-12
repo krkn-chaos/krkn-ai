@@ -7,6 +7,12 @@ from typing import Any
 class BaseParameter(BaseModel):
     name: str
     value: Any
+    krknctl_name: str = ""
+
+    def get_name(self):
+        if self.krknctl_name != "":
+            return self.krknctl_name
+        return self.name
 
     def get_value(self):
         return self.value

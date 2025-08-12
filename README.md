@@ -1,11 +1,7 @@
 # Chaos AI 🧬⚡
 
-<br/>
-
 > [!CAUTION]  
 > __The tool is currently in under active development, use it at your own risk.__
-
-<br/>
 
 An intelligent chaos engineering framework that uses genetic algorithms to optimize chaos scenarios for Kubernetes/OpenShift applications. Chaos AI automatically evolves and discovers the most effective chaos experiments to test your system's resilience.
 
@@ -33,6 +29,7 @@ Chaos AI consists of several key components:
 
 ### Prerequisites
 
+- [krknctl](https://github.com/krkn-chaos/krknctl)
 - Python 3.9+
 - `uv` package manager (recommended) or `pip`
 - [podman](https://podman.io/)
@@ -79,9 +76,13 @@ oc config set-context --current --namespace=$DEMO_NAMESPACE
 export HOST="http://$(kubectl get service rs -o json | jq -r '.status.loadBalancer.ingress[0].hostname')"
 ```
 
-## 📝 Configuration
+## 📝 Generate Configuration
 
-Chaos AI uses YAML configuration files to define experiments. Here's a sample configuration:
+Chaos AI uses YAML configuration files to define experiments. You can generate a sample config file dynamically by running Chaos AI discover command.
+
+```bash
+uv run chaos_ai discover -k ./tmp/kubeconfig.yaml -n "robot-shop" -pl "service" -o /tmp/chaos.yaml
+```
 
 ```yaml
 # Path to your kubeconfig file
@@ -107,28 +108,45 @@ health_checks:
     url: "$HOST/cart/add/1/Watson/1"
   - name: catalogue
     url: "$HOST/catalogue/categories"
-  - name: shipping
-    url: "$HOST/shipping/codes"
 
 # Chaos scenarios to evolve
 scenario:
   pod-scenarios:
-    namespace:
-      - robot-shop
-    pod_label:
-      - service=mongodb
-      - service=cart
-  
+    enable: true
   application-outages:
-    namespace:
-      - robot-shop
-    pod_selector:
-      - app=web
-  
+    enable: false
+  container-scenarios:
+    enable: false
   node-cpu-hog:
-    node_selector:
-      - worker-node
+    enable: false
+  node-memory-hog:
+    enable: false
+
+# Cluster components to consider for Chaos AI testing
+cluster_components:
+  namespaces:
+  - name: robot-shop
+    pods:
+    - containers:
+      - name: cart
+      labels:
+        service: cart
+      name: cart-7cd6c77dbf-j4gsv
+    - containers:
+      - name: catalogue
+      labels:
+        service: catalogue
+      name: catalogue-94df6b9b-pjgsr
+  nodes:
+  - labels:
+      kubernetes.io/hostname: node-1
+    name: node-1
+  - labels:
+      kubernetes.io/hostname: node-2
+    name: node-2
 ```
+
+You can modify `chaos-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Chaos AI testing. 
 
 ### Configuration Options
 
@@ -141,7 +159,8 @@ scenario:
 | `population_injection_rate` | Rate of introducing new random scenarios |
 | `fitness_function` | Metrics query and evaluation method |
 | `health_checks` | Application endpoints to monitor |
-| `scenario` | Chaos scenario configurations |
+| `scenario` | Chaos scenario to be consider for chaos testing |
+| `cluster_components` | Cluster componments to include during the test |
 
 ## 🎯 Usage
 
@@ -160,8 +179,29 @@ uv run chaos_ai run -c config/robot-shop-default.yaml -o ./tmp/results/ -p HOST=
 ### CLI Options
 
 ```bash
+$ uv run chaos_ai discover --help
+Usage: chaos_ai discover [OPTIONS]
+
+  Discover components for Chaos AI tests
+
+Options:
+  -k, --kubeconfig TEXT   Path to cluster kubeconfig file.
+  -o, --output TEXT       Path to save config file.
+  -n, --namespace TEXT    Namespace(s) to discover components in. Supports
+                          Regex and comma separated values.
+  -pl, --pod-label TEXT   Pod Label Keys(s) to filter. Supports Regex and
+                          comma separated values.
+  -nl, --node-label TEXT  Node Label Keys(s) to filter. Supports Regex and
+                          comma separated values.
+  -v, --verbose           Increase verbosity of output.
+  --help                  Show this message and exit.
+
+
+
 $ uv run chaos_ai run --help
 Usage: chaos_ai run [OPTIONS]
+
+  Run Chaos AI tests
 
 Options:
   -c, --config TEXT               Path to chaos AI config file.
@@ -185,6 +225,7 @@ Chaos AI saves results in the specified output directory:
     ├── reports/
     │   ├── health_check_report.csv
     │   └── graphs/
+    │       ├── best_generation.png
     │       ├── scenario_1.png
     │       ├── scenario_2.png
     │       └── ...
@@ -205,35 +246,14 @@ Chaos AI saves results in the specified output directory:
 
 ## 🧬 How It Works
 
+The current version of Chaos AI leverages an [evolutionary algorithm](https://en.wikipedia.org/wiki/Evolutionary_algorithm), an optimization technique that uses heuristics to identify chaos scenarios and components that impact the stability of your cluster and applications.
+
 1. **Initial Population**: Creates random chaos scenarios based on your configuration
 2. **Fitness Evaluation**: Runs each scenario and measures system response using Prometheus metrics
 3. **Selection**: Identifies the most effective scenarios based on fitness scores
 4. **Evolution**: Creates new scenarios through crossover and mutation
 5. **Health Monitoring**: Continuously monitors application health during experiments
 6. **Iteration**: Repeats the process across multiple generations to find optimal scenarios
-
-## 🔧 Development
-
-### Project Structure
-
-```
-chaos_ai/
-├── algorithm/          # Genetic algorithm implementation
-├── chaos_engines/      # Krkn integration and health monitoring
-├── cli/               # Command-line interface
-├── models/            # Data models and configuration
-└── utils/             # Utilities and logging
-```
-
-### Running Tests
-
-```bash
-# Test application routes
-./tests/test-nginx-routes.sh
-
-# Run unit tests (if available)
-python -m pytest tests/
-```
 
 
 ## 🤝 Contributing
@@ -244,21 +264,3 @@ python -m pytest tests/
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Config file not found**: Ensure the path to your configuration file is correct and the file exists.
-
-**Kubeconfig issues**: Verify your kubeconfig path is correct and you have cluster access:
-```bash
-kubectl cluster-info
-```
-
-**Prometheus connection**: If using external Prometheus, ensure URL and token are correctly set:
-```bash
-export PROMETHEUS_URL='https://your-prometheus-url'
-export PROMETHEUS_TOKEN='your-token'
-```
-
-**Permission errors**: Ensure your Kubernetes user has sufficient permissions for the target namespaces.

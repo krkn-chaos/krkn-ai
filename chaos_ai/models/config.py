@@ -3,29 +3,34 @@ from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 import chaos_ai.constants as const
+from chaos_ai.models.cluster_components import ClusterComponents
 from chaos_ai.utils import id_generator
 
 
 class PodScenarioConfig(BaseModel):
-    namespace: List[str] = ["openshift-.*"]
-    pod_label: List[str] = [""]
-    name_pattern: List[str] = [".*"]
+    enable: bool = False
+    # namespace: List[str] = ["openshift-.*"]
+    # pod_label: List[str] = [""]
+    # name_pattern: List[str] = [".*"]
 
 
 class AppOutageScenarioConfig(BaseModel):
-    namespace: List[str] = []
-    pod_selector: List[str] = []
+    enable: bool = False
+    # namespace: List[str] = []
+    # pod_selector: List[str] = []
 
 
 class ContainerScenarioConfig(BaseModel):
-    namespace: List[str] = []
-    label_selector: List[str] = []
-    container_name: List[str] = []
+    enable: bool = False
+    # namespace: List[str] = []
+    # label_selector: List[str] = []
+    # container_name: List[str] = []
 
 
 class NodeHogScenarioConfig(BaseModel):
-    node_selector: List[str] = []
-    taints: List[str] = []
+    enable: bool = False
+    # node_selector: List[str] = []
+    # taints: List[str] = []
 
 
 class ScenarioConfig(BaseModel):
@@ -123,6 +128,8 @@ class ConfigFile(BaseModel):
     population_injection_size: int = const.POPULATION_INJECTION_SIZE    # What's the size of random samples that gets added to new population
 
     fitness_function: FitnessFunction
-    health_checks: HealthCheckConfig
+    health_checks: HealthCheckConfig = HealthCheckConfig()
 
     scenario: ScenarioConfig = ScenarioConfig()
+
+    cluster_components: ClusterComponents

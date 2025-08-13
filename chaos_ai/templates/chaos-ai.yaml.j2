@@ -1,0 +1,45 @@
+kubeconfig_file_path: "{{ kubeconfig_file_path }}"
+
+generations: 3
+population_size: 2
+composition_rate: 0
+population_injection_rate: 0
+
+fitness_function: 
+  query: 'sum(kube_pod_container_status_restarts_total)'
+  type: point
+  include_krkn_failure: true
+  include_health_check_failure: true
+  include_health_check_response_time: true
+
+# health_checks:
+#   stop_watcher_on_failure: false
+#   applications:
+#   - name: cart
+#     url: "$HOST/cart/add/1/Watson/1"
+#   - name: catalogue
+#     url: "$HOST/catalogue/categories"
+#   - name: shipping
+#     url: "$HOST/shipping/codes"
+#   - name: payment
+#     url: "$HOST/payment/health"
+#   - name: user
+#     url: "$HOST/user/uniqueid"
+#   - name: ratings
+#     url: "$HOST/ratings/api/fetch/Watson"
+
+
+scenario:
+  pod-scenarios:
+    enable: true
+  application-outages:
+    enable: true
+  container-scenarios:
+    enable: false
+  node-cpu-hog:
+    enable: false
+  node-memory-hog:
+    enable: false
+
+cluster_components:
+{{ cluster_components }}

@@ -1,3 +1,4 @@
+import json
 import os
 import yaml
 
@@ -34,8 +35,9 @@ def read_config_from_file(file_path: str, param: list[str] = None) -> ConfigFile
             config['parameters'][str(key)] = str(value)
 
         # Replace parameter in health check url string
-        for health_check in config['health_checks']['applications']:
-            health_check['url'] = preprocess_param_string(health_check['url'], config['parameters'])
+        if 'health_checks' in config and 'applications' in config['health_checks']:
+            for health_check in config['health_checks']['applications']:
+                health_check['url'] = preprocess_param_string(health_check['url'], config['parameters'])
     return ConfigFile(**config)
 
 
@@ -46,3 +48,15 @@ def env_is_truthy(var: str):
     value = os.getenv(var, 'false')
     value = value.lower().strip()
     return value in ['yes', 'y', 'true', '1']
+
+
+def save_data_to_file(data: dict | list, file_path: str):
+    format = file_path.split('.')[-1]
+    if format == 'yaml':
+        with open(file_path, 'w') as f:
+            yaml.dump(data, f)
+    elif format == 'json':
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
+    else:
+        raise ValueError(f"Unsupported format: {format}")

@@ -8,13 +8,8 @@ from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from chaos_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from chaos_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult, KrknRunnerType
 from chaos_ai.models.config import ConfigFile, FitnessFunctionType
-from chaos_ai.models.base_scenario import (
-    Scenario,
-    BaseScenario,
-    CompositeScenario,
-    CompositeDependency,
-    ScenarioFactory
-)
+from chaos_ai.models.scenario.base import Scenario, BaseScenario, CompositeDependency, CompositeScenario
+from chaos_ai.models.scenario.factory import ScenarioFactory
 from chaos_ai.utils import run_shell
 from chaos_ai.utils.fs import env_is_truthy
 from chaos_ai.utils.logger import get_module_logger
@@ -161,6 +156,7 @@ class KrknRunner:
             # Generate env items
             env_list = ""
             for parameter in scenario.parameters:
+                # we use parameter.name instead of parameter.get_name() because krknhub uses parameter.name
                 env_list += f' -e {parameter.name}="{parameter.get_value()}" '
 
             command = PODMAN_TEMPLATE.format(
@@ -175,7 +171,9 @@ class KrknRunner:
             # by default we use upper-casing, separated by underscore.
             env_list = ""
             for parameter in scenario.parameters:
-                param_name = (parameter.name).lower().replace("_", "-")
+                # TODO: This is a hack to make krknctl work. Probably need some unified naming convention for parameters.
+                # We use parameter.get_name() because krknctl names can be different from parameter.name which is used mainly in Krknhub
+                param_name = (parameter.get_name()).lower().replace("_", "-")
                 env_list += f'--{param_name} "{parameter.get_value()}" '
 
             command = KRKNCTL_TEMPLATE.format(

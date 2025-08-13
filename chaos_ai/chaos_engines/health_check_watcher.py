@@ -125,6 +125,8 @@ class HealthCheckWatcher:
             outliers = [t for t in response_times if t > upper_bound]
             score += len(outliers)
             total += len(results)
+        if total == 0:
+            return 0
         score = (score / total) * 10
         logger.debug(f"Response time score: {score}")
         return score

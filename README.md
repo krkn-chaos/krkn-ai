@@ -81,7 +81,7 @@ export HOST="http://$(kubectl get service rs -o json | jq -r '.status.loadBalanc
 Chaos AI uses YAML configuration files to define experiments. You can generate a sample config file dynamically by running Chaos AI discover command.
 
 ```bash
-uv run chaos_ai discover -k ./tmp/kubeconfig.yaml -n "robot-shop" -pl "service" -o /tmp/chaos.yaml
+uv run chaos_ai discover -k ./tmp/kubeconfig.yaml -n "robot-shop" -pl "service" -o ./tmp/chaos.yaml
 ```
 
 ```yaml

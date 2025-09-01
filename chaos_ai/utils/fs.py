@@ -1,6 +1,7 @@
 import json
 import os
 import yaml
+from typing import Union, Any, List, Dict
 
 from chaos_ai.models.config import ConfigFile
 from chaos_ai.utils.logger import get_module_logger
@@ -50,7 +51,7 @@ def env_is_truthy(var: str):
     return value in ['yes', 'y', 'true', '1']
 
 
-def save_data_to_file(data: dict | list, file_path: str):
+def save_data_to_file(data: Union[Dict, List], file_path: str):
     format = file_path.split('.')[-1]
     if format == 'yaml':
         with open(file_path, 'w') as f:

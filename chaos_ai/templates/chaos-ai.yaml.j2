@@ -1,6 +1,6 @@
 kubeconfig_file_path: "{{ kubeconfig_file_path }}"
 
-generations: 3
+generations: 2
 population_size: 2
 composition_rate: 0
 population_injection_rate: 0
@@ -33,13 +33,13 @@ scenario:
   pod-scenarios:
     enable: true
   application-outages:
-    enable: true
+    enable: false
   container-scenarios:
-    enable: false
+    enable: true
   node-cpu-hog:
-    enable: false
+    enable: true
   node-memory-hog:
-    enable: false
+    enable: true
   time-scenarios:
     enable: false
 

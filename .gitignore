@@ -179,3 +179,4 @@ tmp/
 
 kubeconfig.yaml
 krknctl-kubeconfig*
+chaos-ai.yaml

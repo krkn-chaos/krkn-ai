@@ -40,6 +40,7 @@ class ExpRecoveryTimeParameter(BaseParameter):
 class DurationParameter(BaseParameter):
     name: str = "DURATION"
     value: int = 60
+    krknctl_name: str = "chaos-duration"
 
 
 

@@ -17,7 +17,7 @@ from chaos_ai.utils.logger import (
 )
 
 
-@click.group()
+@click.group(context_settings={"show_default": True})
 def main():
     pass
 
@@ -97,8 +97,8 @@ def run(ctx,
 @click.option('--kubeconfig', '-k', help='Path to cluster kubeconfig file.', default=os.getenv('KUBECONFIG', None))
 @click.option('--output', '-o', help='Path to save config file.', default='./chaos-ai.yaml')
 @click.option('--namespace', '-n', help='Namespace(s) to discover components in. Supports Regex and comma separated values.', default='.*')
-@click.option('--pod-label', '-pl', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
-@click.option('--node-label', '-nl', help='Node Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*')
+@click.option('--pod-label', '-pl', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*', required=False)
+@click.option('--node-label', '-nl', help='Node Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*', required=False)
 @click.option('-v', '--verbose', count=True, help='Increase verbosity of output.')
 @click.pass_context
 def discover(

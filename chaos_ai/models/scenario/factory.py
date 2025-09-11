@@ -1,9 +1,9 @@
 import random
+from chaos_ai.models.cluster_components import ClusterComponents
 from chaos_ai.models.config import ConfigFile
 from chaos_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
-from chaos_ai.models.scenario.base import Scenario
-from chaos_ai.models.scenario.parameters import DummyParameter
 
+from chaos_ai.models.scenario.scenario_dummy import DummyScenario
 from chaos_ai.models.scenario.scenario_pod import PodScenario
 from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
 from chaos_ai.models.scenario.scenario_container import ContainerScenario
@@ -44,10 +44,4 @@ class ScenarioFactory:
 
     @staticmethod
     def create_dummy_scenario():
-        return Scenario(
-            name="dummy-scenario",
-            parameters=[
-                DummyParameter(name="END", value=10),
-                DummyParameter(name="EXIT_STATUS", value=0),
-            ]
-        )
+        return DummyScenario(cluster_components=ClusterComponents())

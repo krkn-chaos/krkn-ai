@@ -33,7 +33,7 @@ Chaos AI consists of several key components:
 - Python 3.9+
 - `uv` package manager (recommended) or `pip`
 - [podman](https://podman.io/)
-- Kubernetes or OpenShift cluster access file (kubeconfig)
+- Kubernetes cluster access file (kubeconfig)
 
 ### Setup Virtual Environment
 
@@ -168,12 +168,12 @@ You can modify `chaos-ai.yaml` as per your requirement to include/exclude any cl
 
 ```bash
 # Run chaos AI with default configuration
-uv run chaos_ai run -c config/robot-shop-default.yaml -o ./tmp/results/ -p HOST=$HOST
+uv run chaos_ai run -c ./tmp/chaos.yaml -o ./tmp/results/ -p HOST=$HOST
 
 # With custom Prometheus settings
 export PROMETHEUS_URL='https://your-prometheus-url'
 export PROMETHEUS_TOKEN='your-prometheus-token'
-uv run chaos_ai run -c config/robot-shop-default.yaml -o ./tmp/results/ -p HOST=$HOST
+uv run chaos_ai run -c ./tmp/chaos.yaml -o ./tmp/results/ -p HOST=$HOST
 ```
 
 ### CLI Options

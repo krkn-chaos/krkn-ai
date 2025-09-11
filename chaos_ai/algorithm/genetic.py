@@ -142,6 +142,7 @@ class GeneticAlgorithm:
         # Save scenario result
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)
+        self.health_check_reporter.write_fitness_result(scenario_result)
         return scenario_result
 
     def mutate(self, scenario: BaseScenario):

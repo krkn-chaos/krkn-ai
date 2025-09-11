@@ -116,3 +116,22 @@ class HealthCheckReporter:
         plt.close()
 
         logger.debug("Health check graph saved to %s", save_path)
+
+
+    def write_fitness_result(self, fitness_result: CommandRunResult):
+        '''
+        Write fitness result to a CSV file.
+        '''
+        report_path = os.path.join(self.output_dir, "all.csv")
+        file_exists = os.path.isfile(report_path)
+
+        df = pd.DataFrame([{
+            "generation_id": fitness_result.generation_id,
+            "scenario_id": fitness_result.scenario_id,
+            "scenario": fitness_result.scenario.name,
+            "fitness_score": fitness_result.fitness_result.fitness_score,
+        }])
+
+        df.to_csv(report_path, mode='a', header=not file_exists, index=False)
+        logger.debug("Fitness result updated.")
+

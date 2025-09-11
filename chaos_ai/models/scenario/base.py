@@ -55,9 +55,13 @@ class CompositeDependency(Enum):
 
 
 class CompositeScenario(BaseScenario):
+    name: str = "composite-scenario"
     scenario_a: BaseScenario
     scenario_b: BaseScenario
     dependency: CompositeDependency
+
+    def __str__(self):
+        return f"{self.name}"
 
     def __eq__(self, other):
         if not isinstance(other, CompositeScenario):

@@ -1,7 +1,7 @@
-import random
 from chaos_ai.models.cluster_components import ClusterComponents
 from chaos_ai.models.config import ConfigFile
 from chaos_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
+from chaos_ai.utils.rng import rng
 
 from chaos_ai.models.scenario.scenario_dummy import DummyScenario
 from chaos_ai.models.scenario.scenario_pod import PodScenario
@@ -37,7 +37,8 @@ class ScenarioFactory:
 
         try:
             # Unpack Scenario class and create instance
-            _, cls = random.choice(candidates)
+            print("No. of candidates: ", len(candidates))
+            _, cls = rng.choice(candidates)
             return cls(cluster_components=config.cluster_components)
         except Exception as error:
             raise ScenarioInitError("Unable to initialize scenario: %s", error)

@@ -1,6 +1,5 @@
 import os
 import json
-import random
 import datetime
 import tempfile
 
@@ -13,6 +12,7 @@ from chaos_ai.models.scenario.factory import ScenarioFactory
 from chaos_ai.utils import run_shell
 from chaos_ai.utils.fs import env_is_truthy
 from chaos_ai.utils.logger import get_module_logger
+from chaos_ai.utils.rng import rng
 
 logger = get_module_logger(__name__)
 
@@ -315,7 +315,7 @@ class KrknRunner:
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
         if env_is_truthy("MOCK_FITNESS"):
-            return random.random()
+            return rng.random()
 
         try:
             if fitness_type == FitnessFunctionType.point:

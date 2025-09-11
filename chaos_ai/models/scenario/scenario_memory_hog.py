@@ -1,6 +1,6 @@
 from collections import Counter
-import random
 
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import *
 
@@ -34,9 +34,9 @@ class NodeMemoryHogScenario(Scenario):
     def mutate(self):
         nodes = self._cluster_components.nodes
 
-        if random.random() < 0.5:
+        if rng.random() < 0.5:
             # scenario 1: Select a random node
-            node = random.choice(nodes)
+            node = rng.choice(nodes)
             self.node_selector.value = f"kubernetes.io/hostname={node.name}"
             self.number_of_nodes.value = 1
         else:
@@ -45,9 +45,9 @@ class NodeMemoryHogScenario(Scenario):
             for node in nodes:
                 for label, value in node.labels.items():
                     all_labels[f"{label}={value}"] += 1
-            label = random.choice(list(all_labels.keys()))
+            label = rng.choice(list(all_labels.keys()))
             self.node_selector.value = label
-            self.number_of_nodes.value = random.randint(1, all_labels[label])
+            self.number_of_nodes.value = rng.randint(1, all_labels[label])
 
         self.number_of_workers.mutate()
         self.node_memory_percentage.mutate()

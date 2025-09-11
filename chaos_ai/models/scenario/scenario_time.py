@@ -1,5 +1,4 @@
-import random
-
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import *
 
@@ -31,13 +30,13 @@ class TimeScenario(Scenario):
         self.action_time.mutate()
         
         if self.object_type.value == "pod":
-            namespace = random.choice(self._cluster_components.namespaces)
+            namespace = rng.choice(self._cluster_components.namespaces)
             all_labels = set()
             # select a random pod label
             for p in namespace.pods:
                 for label, value in p.labels.items():
                     all_labels.add(f"{label}={value}")
-            self.label_selector.value = random.choice(list(all_labels))
+            self.label_selector.value = rng.choice(list(all_labels))
             self.namespace.value = namespace.name
         else:
             all_labels = set()
@@ -45,6 +44,6 @@ class TimeScenario(Scenario):
             for n in self._cluster_components.nodes:
                 for label, value in n.labels.items():
                     all_labels.add(f"{label}={value}")
-            self.label_selector.value = random.choice(list(all_labels))
+            self.label_selector.value = rng.choice(list(all_labels))
             self.namespace.value = ""
 

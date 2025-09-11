@@ -1,5 +1,4 @@
-import random
-
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import *
 
@@ -29,10 +28,10 @@ class PodScenario(Scenario):
         ]
 
     def mutate(self):
-        namespace = random.choice(self._cluster_components.namespaces)
-        pod = random.choice(namespace.pods)
+        namespace = rng.choice(self._cluster_components.namespaces)
+        pod = rng.choice(namespace.pods)
         labels = pod.labels
-        label = random.choice(list(labels.keys()))
+        label = rng.choice(list(labels.keys()))
 
         self.namespace.value = namespace.name
 

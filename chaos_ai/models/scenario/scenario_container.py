@@ -1,5 +1,4 @@
-import random
-
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import *
 
@@ -29,23 +28,23 @@ class ContainerScenario(Scenario):
         ]
 
     def mutate(self):
-        namespace = random.choice(self._cluster_components.namespaces)
-        pod = random.choice(namespace.pods)
+        namespace = rng.choice(self._cluster_components.namespaces)
+        pod = rng.choice(namespace.pods)
         labels = pod.labels
-        label = random.choice(list(labels.keys()))
+        label = rng.choice(list(labels.keys()))
 
         self.namespace.value = namespace.name
 
         # pod_label is a string of the form "key=value"
         self.label_selector.value = "{}={}".format(label, labels[label])
 
-        self.disruption_count.value = random.randint(1, len(pod.containers))
+        self.disruption_count.value = rng.randint(1, len(pod.containers))
 
         if self.disruption_count.value == 1:
             # TODO: Verify whether we need to keep it empty or use regex pattern to match all container
             self.container_name.value = ".*"
         else:
             # Select specific container to kill in the pod
-            self.container_name.value = random.choice([x.name for x in pod.containers])
+            self.container_name.value = rng.choice([x.name for x in pod.containers])
 
-        self.action.value = random.choice(["1", "9"])
+        self.action.value = rng.choice(["1", "9"])

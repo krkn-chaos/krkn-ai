@@ -2,7 +2,6 @@ import os
 import copy
 import json
 import yaml
-import random
 from typing import List
 
 from chaos_ai.models.app import CommandRunResult, KrknRunnerType
@@ -15,6 +14,7 @@ from chaos_ai.reporter.generations_reporter import GenerationsReporter
 from chaos_ai.reporter.health_check_reporter import HealthCheckReporter
 from chaos_ai.utils.logger import get_module_logger
 from chaos_ai.chaos_engines.krkn_runner import KrknRunner
+from chaos_ai.utils.rng import rng
 
 logger = get_module_logger(__name__)
 
@@ -87,7 +87,7 @@ class GeneticAlgorithm:
             for _ in range(self.config.population_size // 2):
                 parent1, parent2 = self.select_parents(fitness_scores)
                 child1, child2 = None, None
-                if random.random() < self.config.composition_rate:
+                if rng.random() < self.config.composition_rate:
                     # componention crossover to generate 1 scenario
                     child1 = self.composition(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
@@ -112,7 +112,7 @@ class GeneticAlgorithm:
                     self.population.append(child2)
 
             # Inject random members to population to diversify scenarios
-            if random.random() < self.config.population_injection_rate:
+            if rng.random() < self.config.population_injection_rate:
                 self.create_population(self.config.population_injection_size)
 
     def create_population(self, population_size):
@@ -166,14 +166,14 @@ class GeneticAlgorithm:
         scenarios = [x.scenario for x in fitness_scores]
 
         if total_fitness == 0:  # Handle case where all fitness scores are zero
-            return random.choice(scenarios), random.choice(scenarios)
+            return rng.choice(scenarios), rng.choice(scenarios)
 
         # Normalize fitness scores to get probabilities
         probabilities = [x.fitness_result.fitness_score / total_fitness for x in fitness_scores]
 
         # Select parents based on probabilities
-        parent1 = random.choices(scenarios, weights=probabilities, k=1)[0]
-        parent2 = random.choices(scenarios, weights=probabilities, k=1)[0]
+        parent1 = rng.choices(items=scenarios, weights=probabilities, k=1)[0]
+        parent2 = rng.choices(items=scenarios, weights=probabilities, k=1)[0]
         return parent1, parent2
 
     def crossover(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
@@ -223,7 +223,7 @@ class GeneticAlgorithm:
         else:
             # if there are common params, lets switch values between them
             for param in common_params:
-                if random.random() < self.config.crossover_rate:
+                if rng.random() < self.config.crossover_rate:
                     # find index of param in list
                     a_value = get_param_value(scenario_a, param)
                     b_value = get_param_value(scenario_b, param)
@@ -236,7 +236,7 @@ class GeneticAlgorithm:
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         # combines two scenario to create a single composite scenario
-        dependency = random.choice([
+        dependency = rng.choice([
             CompositeDependency.NONE,
             CompositeDependency.A_ON_B,
             CompositeDependency.B_ON_A

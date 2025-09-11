@@ -15,6 +15,8 @@ class RNG:
         return list(self.rng.choice(items, p=weights, size=k))
 
     def randint(self, low: int, high: int):
+        if low == high:
+            return low
         return self.rng.integers(low, high)
 
 rng = RNG()

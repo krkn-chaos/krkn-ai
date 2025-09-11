@@ -15,6 +15,7 @@ from chaos_ai.reporter.health_check_reporter import HealthCheckReporter
 from chaos_ai.utils.logger import get_module_logger
 from chaos_ai.chaos_engines.krkn_runner import KrknRunner
 from chaos_ai.utils.rng import rng
+from chaos_ai.models.custom_errors import PopulationSizeError
 
 logger = get_module_logger(__name__)
 
@@ -44,6 +45,14 @@ class GeneticAlgorithm:
 
         self.health_check_reporter = HealthCheckReporter(self.output_dir)
         self.generations_reporter = GenerationsReporter(self.output_dir, self.format)
+
+        if self.config.population_size < 2:
+            raise PopulationSizeError("Population size should be at least 2")
+
+        # Population size should be even
+        if self.config.population_size % 2 != 0:
+            logger.debug("Population size is odd, making it even for the genetic algorithm.")
+            self.config.population_size += 1
 
         logger.debug("CONFIG")
         logger.debug("--------------------------------------------------------")
@@ -262,7 +271,7 @@ class GeneticAlgorithm:
         output_dir = self.output_dir
         os.makedirs(output_dir, exist_ok=True)
         with open(
-            os.path.join(output_dir, "config.yaml"),
+            os.path.join(output_dir, "chaos-ai.yaml"),
             "w",
             encoding="utf-8"
         ) as f:

@@ -34,6 +34,10 @@ class GenerationsReporter:
         plt.title('Best Generation Fitness Score')
         plt.xlabel('Generation')
         plt.ylabel('Fitness Score')
+        
+        # Force x-axis to show only integer values
+        plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+        
         plt.tight_layout()
         plt.savefig(save_path, dpi=300)
         plt.close()

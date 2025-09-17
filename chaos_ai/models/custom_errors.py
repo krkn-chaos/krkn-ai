@@ -3,3 +3,6 @@ class MissingScenarioError(Exception):
 
 class ScenarioInitError(Exception):
     pass
+
+class PopulationSizeError(Exception):
+    pass

@@ -1,4 +1,4 @@
-import random
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import BaseParameter
 
 class DummyParameter(BaseParameter):
@@ -40,6 +40,7 @@ class ExpRecoveryTimeParameter(BaseParameter):
 class DurationParameter(BaseParameter):
     name: str = "DURATION"
     value: int = 60
+    krknctl_name: str = "chaos-duration"
 
 
 
@@ -89,10 +90,10 @@ class NodeCPUPercentageParameter(BaseParameter):
     krknctl_name: str = "cpu-percentage"
 
     def mutate(self):
-        if random.random() < 0.5:
-            self.value += random.randint(1, 35) * self.value / 100
+        if rng.random() < 0.5:
+            self.value += rng.randint(1, 35) * self.value / 100
         else:
-            self.value -= random.randint(1, 25) * self.value / 100
+            self.value -= rng.randint(1, 25) * self.value / 100
         self.value = int(self.value)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
@@ -109,10 +110,10 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
-        if random.random() < 0.5:
-            self.value += random.randint(1, 35) * self.value / 100
+        if rng.random() < 0.5:
+            self.value += rng.randint(1, 35) * self.value / 100
         else:
-            self.value -= random.randint(1, 25) * self.value / 100
+            self.value -= rng.randint(1, 25) * self.value / 100
         self.value = int(self.value)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
@@ -124,7 +125,7 @@ class NumberOfWorkersParameter(BaseParameter):
     krknctl_name: str = "memory-workers"
 
     def mutate(self):
-        self.value = random.randint(1, 10)
+        self.value = rng.randint(1, 10)
 
 
 class NodeSelectorParameter(BaseParameter):
@@ -160,11 +161,11 @@ class ObjectTypeParameter(BaseParameter):
     value: str = ""  # Available Types: pod, node
 
     def mutate(self):
-        self.value = random.choice(["pod", "node"])
+        self.value = rng.choice(["pod", "node"])
  
 class ActionTimeParameter(BaseParameter):
     name: str = "ACTION"
     value: str = "skew_date" # Available Types: skew_date, skew_time
 
     def mutate(self):
-        self.value = random.choice(["skew_date", "skew_time"])
+        self.value = rng.choice(["skew_date", "skew_time"])

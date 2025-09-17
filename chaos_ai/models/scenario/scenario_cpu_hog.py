@@ -1,6 +1,6 @@
 from collections import Counter
-import random
 
+from chaos_ai.utils.rng import rng
 from chaos_ai.models.scenario.base import Scenario
 from chaos_ai.models.scenario.parameters import *
 
@@ -35,8 +35,8 @@ class NodeCPUHogScenario(Scenario):
         nodes = self._cluster_components.nodes
 
         # scenario 1: Select a random node
-        if random.random() < 0.5:
-            node = random.choice(nodes)
+        if rng.random() < 0.5:
+            node = rng.choice(nodes)
             self.node_selector.value = f"kubernetes.io/hostname={node.name}"
             self.number_of_nodes.value = 1
             # self.node_cpu_core.value = node.free_cpu * 0.001  # convert to cores from millicores
@@ -46,9 +46,9 @@ class NodeCPUHogScenario(Scenario):
             for node in nodes:
                 for label, value in node.labels.items():
                     all_labels[f"{label}={value}"] += 1
-            label = random.choice(list(all_labels.keys()))
+            label = rng.choice(list(all_labels.keys()))
             self.node_selector.value = label
-            self.number_of_nodes.value = random.randint(1, all_labels[label])
+            self.number_of_nodes.value = rng.randint(1, all_labels[label])
 
             # get the minimum free cpu core for the selected label
             # min_cpu_core_milli = float('inf')

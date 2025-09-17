@@ -24,7 +24,11 @@ class FitnessScoreResult(BaseModel):
 
 class FitnessResult(BaseModel):
     scores: List[FitnessScoreResult] = []
+    health_check_failure_score: float = 0.0 # Health check failure score
+    health_check_response_time_score: float = 0.0 # Health check response time score
+    krkn_failure_score: float = 0.0 # Krkn failure score
     fitness_score: float = 0.0    # Overall fitness score
+
 
 
 class CommandRunResult(BaseModel):

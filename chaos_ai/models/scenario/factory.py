@@ -37,7 +37,6 @@ class ScenarioFactory:
 
         try:
             # Unpack Scenario class and create instance
-            print("No. of candidates: ", len(candidates))
             _, cls = rng.choice(candidates)
             return cls(cluster_components=config.cluster_components)
         except Exception as error:

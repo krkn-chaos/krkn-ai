@@ -115,9 +115,7 @@ class KrknRunner:
                 query=self.config.fitness_function.query,
                 fitness_type=self.config.fitness_function.type
             )
-            fitness_result = FitnessResult(
-                fitness_score=fitness_value
-            )
+            fitness_result.fitness_score = fitness_value
         elif len(self.config.fitness_function.items) > 0:
             fitness_result = self.calculate_fitness_score_for_items(
                 start=start_time,
@@ -130,13 +128,21 @@ class KrknRunner:
         if self.config.fitness_function.include_krkn_failure:
             # Status code 2 means that SLOs not met per Krkn test
             if returncode == 2:
-                fitness_result.fitness_score += KRKN_HUB_FAILURE_SCORE
+                fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
 
         # Include health check failure and response time to the fitness score
         if self.config.fitness_function.include_health_check_failure:
-            fitness_result.fitness_score += health_check_watcher.summarize_success_rate(health_check_results)
+            fitness_result.health_check_failure_score = health_check_watcher.summarize_success_rate(health_check_results)
         if self.config.fitness_function.include_health_check_response_time:
-            fitness_result.fitness_score += health_check_watcher.summarize_response_time(health_check_results)
+            fitness_result.health_check_response_time_score = health_check_watcher.summarize_response_time(health_check_results)
+
+        # Calculate overall fitness score
+        fitness_result.fitness_score = sum([
+            fitness_result.fitness_score,
+            fitness_result.krkn_failure_score,
+            fitness_result.health_check_failure_score,
+            fitness_result.health_check_response_time_score
+        ])
 
         return CommandRunResult(
             generation_id=generation_id,
@@ -358,7 +364,7 @@ class KrknRunner:
         """Takes difference between fitness function at start/end intervals of test.
         Helpful to measure values for counter based metric like restarts.
         """
-        logger.info("Calculating Point Fitness")
+        logger.debug("Calculating Point Fitness")
         result_at_beginning = self.prom_client.process_prom_query_in_range(
             query,
             start_time=start,
@@ -383,7 +389,7 @@ class KrknRunner:
         config.fitness_function.query can specify a dynamic "$range$" parameter that will be replaced
         when calling below function.
         """
-        logger.info("Calculating Range Fitness")
+        logger.debug("Calculating Range Fitness")
 
         # Calculate number of minutes between test run
         if "$range$" in query:

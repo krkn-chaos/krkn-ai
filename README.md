@@ -167,13 +167,12 @@ You can modify `chaos-ai.yaml` as per your requirement to include/exclude any cl
 ### Basic Usage
 
 ```bash
-# Run chaos AI with default configuration
-uv run chaos_ai run -c ./tmp/chaos.yaml -o ./tmp/results/ -p HOST=$HOST
-
-# With custom Prometheus settings
+# Configure custom Prometheus Querier endpoint and token
 export PROMETHEUS_URL='https://your-prometheus-url'
 export PROMETHEUS_TOKEN='your-prometheus-token'
-uv run chaos_ai run -c ./tmp/chaos.yaml -o ./tmp/results/ -p HOST=$HOST
+
+# Run Chaos AI
+uv run chaos_ai run -c ./tmp/chaos-ai.yaml -o ./tmp/results/ -p HOST=$HOST
 ```
 
 ### CLI Options

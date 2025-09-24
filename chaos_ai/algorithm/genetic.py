@@ -159,11 +159,57 @@ class GeneticAlgorithm:
             scenario.scenario_a = self.mutate(scenario.scenario_a)
             scenario.scenario_b = self.mutate(scenario.scenario_b)
             return scenario
+        
+        # Scenario mutation (new scenario, try to preserve properties)
+        if rng.random() < self.config.scenario_mutation_rate:
+            success, new_scenario = self.scenario_mutation(scenario)
+            if success:
+                # logger.debug("Scenario mutation successful")
+                return new_scenario
+
+        # Parameter mutation (current scenario, try to change properties)
         if hasattr(scenario, "mutate"):
             scenario.mutate()
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario
+
+    def scenario_mutation(self, scenario: BaseScenario):
+        '''
+        Create a new scenario of different type while trying to preserve properties.
+        '''
+        possible_scenarios = ScenarioFactory.list_scenarios(self.config)
+
+        # check scenarios for common parameters
+        common_scenarios = []
+        for _, scenario_cls in possible_scenarios:
+            # instantiate new scenario for a scenario type
+            new_scenario = scenario_cls(cluster_components=self.config.cluster_components)
+
+            common_params = set([x.name for x in new_scenario.parameters]) & set(
+                [x.name for x in scenario.parameters]
+            )
+            # Do not consider the same scenario type for scenario mutation
+            if len(common_params) > 0 and type(new_scenario) != type(scenario):
+                common_scenarios.append(new_scenario)
+        if len(common_scenarios) == 0:
+            logger.warning("No common scenarios found, returning original scenario")
+            return False, scenario
+
+        # create a new scenario with the same parameters
+        new_scenario = rng.choice(common_scenarios)
+
+        # Identify common parameters and set them to the new scenario
+        common_params = set([x.name for x in new_scenario.parameters]) & set([x.name for x in scenario.parameters])
+        for param in common_params:
+            # Get parameter value from original scenario
+            param_value = self.__get_param_value(scenario, param)
+
+            # Set parameter value for new scenario
+            self.__set_param_value(new_scenario, param, param_value)
+
+        return True, new_scenario
+
 
     def select_parents(self, fitness_scores: List[CommandRunResult]):
         """
@@ -214,17 +260,6 @@ class GeneticAlgorithm:
             [x.name for x in scenario_b.parameters]
         )
 
-        def get_param_value(scenario: Scenario, param_name):
-            for param in scenario.parameters:
-                if param_name == param.name:
-                    return param.value
-    
-        def set_param_value(scenario: Scenario, param_name, value):
-            for param in scenario.parameters:
-                if param_name == param.name:
-                    param.value = value
-                    return
-
         if len(common_params) == 0:
             # no common parameter, currenty we return parents as is and hope for mutation
             # adopt some different strategy
@@ -234,12 +269,12 @@ class GeneticAlgorithm:
             for param in common_params:
                 if rng.random() < self.config.crossover_rate:
                     # find index of param in list
-                    a_value = get_param_value(scenario_a, param)
-                    b_value = get_param_value(scenario_b, param)
+                    a_value = self.__get_param_value(scenario_a, param)
+                    b_value = self.__get_param_value(scenario_b, param)
 
                     # swap param values
-                    set_param_value(scenario_a, param, b_value)
-                    set_param_value(scenario_b, param, a_value)
+                    self.__set_param_value(scenario_a, param, b_value)
+                    self.__set_param_value(scenario_b, param, a_value)
 
             return scenario_a, scenario_b
 
@@ -316,3 +351,15 @@ class GeneticAlgorithm:
                     json.dump(result, file_handler, indent=4)
                 elif self.format == 'yaml':
                     yaml.dump(result, file_handler, sort_keys=False)
+
+    def __get_param_value(self, scenario: Scenario, param_name):
+        for param in scenario.parameters:
+            if param_name == param.name:
+                return param.value
+        raise ValueError(f"Parameter {param_name} not found in scenario {scenario}")
+
+    def __set_param_value(self, scenario: Scenario, param_name, value):
+        for param in scenario.parameters:
+            if param_name == param.name:
+                param.value = value
+                return

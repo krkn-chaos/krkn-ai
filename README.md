@@ -172,7 +172,7 @@ export PROMETHEUS_URL='https://your-prometheus-url'
 export PROMETHEUS_TOKEN='your-prometheus-token'
 
 # Run Chaos AI
-uv run chaos_ai run -c ./tmp/chaos-ai.yaml -o ./tmp/results/ -p HOST=$HOST
+uv run chaos_ai run -vv -c ./tmp/chaos-ai.yaml -o ./tmp/results/ -p HOST=$HOST
 ```
 
 ### CLI Options

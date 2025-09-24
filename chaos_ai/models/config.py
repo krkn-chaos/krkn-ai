@@ -116,6 +116,7 @@ class ConfigFile(BaseModel):
     population_size: int = 10  # Initial population size
 
     mutation_rate: float = const.MUTATION_RATE  # How often mutation should occur for each scenario parameter (0.0-1.0)
+    scenario_mutation_rate: float = const.SCENARIO_MUTATION_RATE  # How often scenario mutation should occur (0.0-1.0)
     crossover_rate: float = const.CROSSOVER_RATE    # How often crossover should occur for each scenario parameter (0.0-1.0)
     composition_rate: float = const.CROSSOVER_COMPOSITION_RATE  # How often a crossover would lead to composition (0.0-1.0)
 

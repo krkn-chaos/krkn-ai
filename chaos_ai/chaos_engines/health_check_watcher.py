@@ -73,7 +73,7 @@ class HealthCheckWatcher:
             time.sleep(health_check.interval)
 
     def stop(self):
-        logger.info(f"Stopping health check watcher")
+        logger.debug(f"Stopping health check watcher")
         self._stop_event.set()
         for t in self._threads:
             t.join()

@@ -5,12 +5,12 @@ import os
 import click
 from pydantic import ValidationError
 
-from chaos_ai.algorithm.genetic import GeneticAlgorithm
-from chaos_ai.models.app import AppContext, KrknRunnerType
-from chaos_ai.templates.generator import create_chaos_ai_template
-from chaos_ai.utils.cluster_manager import ClusterManager
-from chaos_ai.utils.fs import read_config_from_file, save_data_to_file
-from chaos_ai.utils.logger import (
+from krkn_ai.algorithm.genetic import GeneticAlgorithm
+from krkn_ai.models.app import AppContext, KrknRunnerType
+from krkn_ai.templates.generator import create_krkn_ai_template
+from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.utils.fs import read_config_from_file, save_data_to_file
+from krkn_ai.utils.logger import (
     get_module_logger,
     set_global_log_level,
     verbosity_to_level,
@@ -22,9 +22,9 @@ def main():
     pass
 
 @main.command(
-    help='Run Chaos AI tests'
+    help='Run Krkn-AI tests'
 )
-@click.option('--config', '-c', help='Path to chaos AI config file.')
+@click.option('--config', '-c', help='Path to krkn-ai config file.')
 @click.option('--output', '-o', help='Directory to save results.')
 @click.option('--format', '-f', help='Format of the output file.',
     type=click.Choice(['json', 'yaml'], case_sensitive=False),
@@ -92,10 +92,10 @@ def run(ctx,
 
 
 @main.command(
-    help='Discover components for Chaos AI tests'
+    help='Discover components for Krkn-AI tests'
 )
 @click.option('--kubeconfig', '-k', help='Path to cluster kubeconfig file.', default=os.getenv('KUBECONFIG', None))
-@click.option('--output', '-o', help='Path to save config file.', default='./chaos-ai.yaml')
+@click.option('--output', '-o', help='Path to save config file.', default='./krkn-ai.yaml')
 @click.option('--namespace', '-n', help='Namespace(s) to discover components in. Supports Regex and comma separated values.', default='.*')
 @click.option('--pod-label', '-pl', help='Pod Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*', required=False)
 @click.option('--node-label', '-nl', help='Node Label Keys(s) to filter. Supports Regex and comma separated values.', default='.*', required=False)
@@ -132,7 +132,7 @@ def discover(
 
     cluster_components_data = cluster_components.model_dump(mode='json', warnings='none')
 
-    template = create_chaos_ai_template(kubeconfig, cluster_components_data)
+    template = create_krkn_ai_template(kubeconfig, cluster_components_data)
 
     with open(output, 'w') as f:
         f.write(template)

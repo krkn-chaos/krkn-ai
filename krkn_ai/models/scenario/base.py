@@ -1,6 +1,6 @@
 from enum import Enum
 from pydantic import BaseModel, PrivateAttr
-from chaos_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.cluster_components import ClusterComponents
 from typing import Any
 
 

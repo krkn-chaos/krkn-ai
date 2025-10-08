@@ -1,9 +1,9 @@
-# Chaos AI 🧬⚡
+# Krkn-AI 🧬⚡
 
 > [!CAUTION]  
 > __The tool is currently in under active development, use it at your own risk.__
 
-An intelligent chaos engineering framework that uses genetic algorithms to optimize chaos scenarios for Kubernetes/OpenShift applications. Chaos AI automatically evolves and discovers the most effective chaos experiments to test your system's resilience.
+An intelligent chaos engineering framework that uses genetic algorithms to optimize chaos scenarios for Kubernetes/OpenShift applications. Krkn-AI automatically evolves and discovers the most effective chaos experiments to test your system's resilience.
 
 ## 🌟 Features
 
@@ -17,7 +17,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 
 ## 🔧 Architecture
 
-Chaos AI consists of several key components:
+Krkn-AI consists of several key components:
 
 - **Genetic Algorithm Engine**: Core optimization logic that evolves chaos scenarios
 - **Krkn Runner**: Integration with [Krkn](https://github.com/krkn-chaos/krkn) chaos engineering framework
@@ -45,8 +45,11 @@ pip install uv
 uv venv --python 3.9
 source .venv/bin/activate
 
-# Install Chaos AI in development mode
+# Install Krkn-AI in development mode
 uv pip install -e .
+
+# Check Installation
+uv run krkn_ai --help
 ```
 
 ### Deploy Sample Microservice
@@ -78,10 +81,10 @@ export HOST="http://$(kubectl get service rs -o json | jq -r '.status.loadBalanc
 
 ## 📝 Generate Configuration
 
-Chaos AI uses YAML configuration files to define experiments. You can generate a sample config file dynamically by running Chaos AI discover command.
+Krkn-AI uses YAML configuration files to define experiments. You can generate a sample config file dynamically by running Krkn-AI discover command.
 
 ```bash
-uv run chaos_ai discover -k ./tmp/kubeconfig.yaml -n "robot-shop" -pl "service" -o ./tmp/chaos.yaml
+uv run krkn_ai discover -k ./tmp/kubeconfig.yaml -n "robot-shop" -pl "service" -o ./tmp/krkn-ai.yaml
 ```
 
 ```yaml
@@ -122,7 +125,7 @@ scenario:
   node-memory-hog:
     enable: false
 
-# Cluster components to consider for Chaos AI testing
+# Cluster components to consider for Krkn-AI testing
 cluster_components:
   namespaces:
   - name: robot-shop
@@ -146,7 +149,7 @@ cluster_components:
     name: node-2
 ```
 
-You can modify `chaos-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Chaos AI testing. 
+You can modify `krkn-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Krkn-AI testing.
 
 ### Configuration Options
 
@@ -171,17 +174,17 @@ You can modify `chaos-ai.yaml` as per your requirement to include/exclude any cl
 export PROMETHEUS_URL='https://your-prometheus-url'
 export PROMETHEUS_TOKEN='your-prometheus-token'
 
-# Run Chaos AI
-uv run chaos_ai run -vv -c ./tmp/chaos-ai.yaml -o ./tmp/results/ -p HOST=$HOST
+# Run Krkn-AI
+uv run krkn_ai run -vv -c ./tmp/krkn-ai.yaml -o ./tmp/results/ -p HOST=$HOST
 ```
 
 ### CLI Options
 
 ```bash
-$ uv run chaos_ai discover --help
-Usage: chaos_ai discover [OPTIONS]
+$ uv run krkn_ai discover --help
+Usage: krkn_ai discover [OPTIONS]
 
-  Discover components for Chaos AI tests
+  Discover components for Krkn-AI tests
 
 Options:
   -k, --kubeconfig TEXT   Path to cluster kubeconfig file.
@@ -197,17 +200,17 @@ Options:
 
 
 
-$ uv run chaos_ai run --help
-Usage: chaos_ai run [OPTIONS]
+$ uv run krkn_ai run --help
+Usage: krkn_ai run [OPTIONS]
 
-  Run Chaos AI tests
+  Run Krkn-AI tests
 
 Options:
-  -c, --config TEXT               Path to chaos AI config file.
+  -c, --config TEXT               Path to Krkn-AI config file.
   -o, --output TEXT               Directory to save results.
   -f, --format [json|yaml]        Format of the output file.
   -r, --runner-type [krknctl|krknhub]
-                                  Type of chaos engine to use.
+                                  Type of krkn engine to use.
   -p, --param TEXT                Additional parameters for config file in
                                   key=value format.
   -v, --verbose                   Increase verbosity of output.
@@ -216,7 +219,7 @@ Options:
 
 ### Understanding Results
 
-Chaos AI saves results in the specified output directory:
+Krkn-AI saves results in the specified output directory:
 
 ```
 .
@@ -245,7 +248,7 @@ Chaos AI saves results in the specified output directory:
 
 ## 🧬 How It Works
 
-The current version of Chaos AI leverages an [evolutionary algorithm](https://en.wikipedia.org/wiki/Evolutionary_algorithm), an optimization technique that uses heuristics to identify chaos scenarios and components that impact the stability of your cluster and applications.
+The current version of Krkn-AI leverages an [evolutionary algorithm](https://en.wikipedia.org/wiki/Evolutionary_algorithm), an optimization technique that uses heuristics to identify chaos scenarios and components that impact the stability of your cluster and applications.
 
 1. **Initial Population**: Creates random chaos scenarios based on your configuration
 2. **Fitness Evaluation**: Runs each scenario and measures system response using Prometheus metrics

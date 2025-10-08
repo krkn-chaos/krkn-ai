@@ -11,9 +11,9 @@ DESCRIPTION = (HERE / "README.md").read_text()
 REQUIRE = (HERE / "requirements.txt").read_text()
 
 setup(
-    name='chaos_ai',
+    name='krkn_ai',
     version='0.1',
-    description='Chaos AI',
+    description='Krkn-AI',
     long_description=DESCRIPTION,
     long_description_content_type="text/markdown",
     platforms='any',
@@ -23,12 +23,12 @@ setup(
         "Programming Language :: Python :: 3",
         "Intended Audience :: Developers",
     ],
-    packages=['chaos_ai'],
+    packages=['krkn_ai'],
     include_package_data=True,
     install_requires=REQUIRE,
     entry_points={
         "console_scripts": [
-            "chaos_ai = chaos_ai.cli:main",
+            "krkn_ai = krkn_ai.cli:main",
         ]
     },
 )

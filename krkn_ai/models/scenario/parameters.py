@@ -169,3 +169,18 @@ class ActionTimeParameter(BaseParameter):
 
     def mutate(self):
         self.value = rng.choice(["skew_date", "skew_time"])
+
+class VMNameParameter(BaseParameter):
+    name: str = "VM_NAME"
+    value: str = ""
+
+class NamespaceParameter(BaseParameter):
+    name: str = "NAMESPACE"
+    value: str = ""
+
+class KillCountParameter(BaseParameter):
+    name: str = "KILL_COUNT"
+    value: int = 1  
+
+    def mutate(self):
+        self.value = rng.randint(1, 10)

@@ -8,3 +8,4 @@ click
 krkn-lib@git+https://github.com/krkn-chaos/krkn-lib
 pyyaml
 seaborn
+uv

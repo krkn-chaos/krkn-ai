@@ -5,13 +5,14 @@ from krkn_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.utils.rng import rng
 
-from krkn_ai.models.scenario.scenario_dummy import DummyScenario
-from krkn_ai.models.scenario.scenario_pod import PodScenario
-from krkn_ai.models.scenario.scenario_app_outage import AppOutageScenario
-from krkn_ai.models.scenario.scenario_container import ContainerScenario
-from krkn_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
-from krkn_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
-from krkn_ai.models.scenario.scenario_time import TimeScenario
+from chaos_ai.models.scenario.scenario_dummy import DummyScenario
+from chaos_ai.models.scenario.scenario_pod import PodScenario
+from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
+from chaos_ai.models.scenario.scenario_container import ContainerScenario
+from chaos_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
+from chaos_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
+from chaos_ai.models.scenario.scenario_time import TimeScenario
+from chaos_ai.models.scenario.scenario_kubevirt import KubevirtScenario
 
 scenario_specs = [
     ("pod_scenarios", PodScenario),
@@ -20,6 +21,7 @@ scenario_specs = [
     ("node_cpu_hog", NodeCPUHogScenario),
     ("node_memory_hog", NodeMemoryHogScenario),
     ("time_scenarios", TimeScenario),
+    ("kubevirt_scenarios", KubevirtScenario),
 ]
 
 class ScenarioFactory:

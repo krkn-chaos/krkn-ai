@@ -1,17 +1,17 @@
 from typing import List, Tuple
-from chaos_ai.models.cluster_components import ClusterComponents
-from chaos_ai.models.config import ConfigFile
-from chaos_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
-from chaos_ai.models.scenario.base import Scenario
-from chaos_ai.utils.rng import rng
+from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
+from krkn_ai.models.scenario.base import Scenario
+from krkn_ai.utils.rng import rng
 
-from chaos_ai.models.scenario.scenario_dummy import DummyScenario
-from chaos_ai.models.scenario.scenario_pod import PodScenario
-from chaos_ai.models.scenario.scenario_app_outage import AppOutageScenario
-from chaos_ai.models.scenario.scenario_container import ContainerScenario
-from chaos_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
-from chaos_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
-from chaos_ai.models.scenario.scenario_time import TimeScenario
+from krkn_ai.models.scenario.scenario_dummy import DummyScenario
+from krkn_ai.models.scenario.scenario_pod import PodScenario
+from krkn_ai.models.scenario.scenario_app_outage import AppOutageScenario
+from krkn_ai.models.scenario.scenario_container import ContainerScenario
+from krkn_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
+from krkn_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
+from krkn_ai.models.scenario.scenario_time import TimeScenario
 
 scenario_specs = [
     ("pod_scenarios", PodScenario),

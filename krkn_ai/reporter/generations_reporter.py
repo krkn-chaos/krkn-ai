@@ -9,8 +9,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
-from chaos_ai.models.app import CommandRunResult
-from chaos_ai.utils.logger import get_module_logger
+from krkn_ai.models.app import CommandRunResult
+from krkn_ai.utils.logger import get_module_logger
 
 logger = get_module_logger(__name__)
 

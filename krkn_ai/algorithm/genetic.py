@@ -4,18 +4,18 @@ import json
 import yaml
 from typing import List
 
-from chaos_ai.models.app import CommandRunResult, KrknRunnerType
+from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
-from chaos_ai.models.scenario.base import Scenario, BaseScenario, CompositeDependency, CompositeScenario
-from chaos_ai.models.scenario.factory import ScenarioFactory
+from krkn_ai.models.scenario.base import Scenario, BaseScenario, CompositeDependency, CompositeScenario
+from krkn_ai.models.scenario.factory import ScenarioFactory
 
-from chaos_ai.models.config import ConfigFile
-from chaos_ai.reporter.generations_reporter import GenerationsReporter
-from chaos_ai.reporter.health_check_reporter import HealthCheckReporter
-from chaos_ai.utils.logger import get_module_logger
-from chaos_ai.chaos_engines.krkn_runner import KrknRunner
-from chaos_ai.utils.rng import rng
-from chaos_ai.models.custom_errors import PopulationSizeError
+from krkn_ai.models.config import ConfigFile
+from krkn_ai.reporter.generations_reporter import GenerationsReporter
+from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
+from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.chaos_engines.krkn_runner import KrknRunner
+from krkn_ai.utils.rng import rng
+from krkn_ai.models.custom_errors import PopulationSizeError
 
 logger = get_module_logger(__name__)
 
@@ -306,7 +306,7 @@ class GeneticAlgorithm:
         output_dir = self.output_dir
         os.makedirs(output_dir, exist_ok=True)
         with open(
-            os.path.join(output_dir, "chaos-ai.yaml"),
+            os.path.join(output_dir, "krkn-ai.yaml"),
             "w",
             encoding="utf-8"
         ) as f:

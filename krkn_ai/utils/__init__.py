@@ -2,7 +2,7 @@ import shlex
 import subprocess
 from typing import Iterator
 
-from chaos_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_module_logger
 
 logger = get_module_logger(__name__)
 

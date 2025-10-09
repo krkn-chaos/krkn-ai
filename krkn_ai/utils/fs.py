@@ -3,8 +3,8 @@ import os
 import yaml
 from typing import Union, Any, List, Dict
 
-from chaos_ai.models.config import ConfigFile
-from chaos_ai.utils.logger import get_module_logger
+from krkn_ai.models.config import ConfigFile
+from krkn_ai.utils.logger import get_module_logger
 
 logger = get_module_logger(__name__)
 

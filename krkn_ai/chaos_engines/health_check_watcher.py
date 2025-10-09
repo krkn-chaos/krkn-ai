@@ -15,8 +15,8 @@ import requests
 from typing import List, Dict
 import numpy as np
 
-from chaos_ai.utils.logger import get_module_logger
-from chaos_ai.models.config import HealthCheckApplicationConfig, HealthCheckConfig, HealthCheckResult
+from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.models.config import HealthCheckApplicationConfig, HealthCheckConfig, HealthCheckResult
 
 logger = get_module_logger(__name__)
 

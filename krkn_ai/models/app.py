@@ -5,9 +5,9 @@ from typing import Dict, List
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
-from chaos_ai.models.scenario.base import BaseScenario
-from chaos_ai.models.config import HealthCheckResult
-from chaos_ai.utils import id_generator
+from krkn_ai.models.scenario.base import BaseScenario
+from krkn_ai.models.config import HealthCheckResult
+from krkn_ai.utils import id_generator
 
 
 auto_id = id_generator()

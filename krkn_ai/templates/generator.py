@@ -9,11 +9,11 @@ environment = jinja2.Environment()
 environment.globals['enumerate'] = enumerate
 
 
-def create_chaos_ai_template(kubeconfig_file_path:str, cluster_component_data: dict) -> str:
-    """Create chaos-ai.yaml from template with proper indentation"""
+def create_krkn_ai_template(kubeconfig_file_path:str, cluster_component_data: dict) -> str:
+    """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
     current_dir = os.path.dirname(__file__)
-    template_path = os.path.join(current_dir, "chaos-ai.yaml.j2")
+    template_path = os.path.join(current_dir, "krkn-ai.yaml.j2")
     
     template_str = open(template_path).read()
     template = environment.from_string(template_str)

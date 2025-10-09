@@ -1,5 +1,5 @@
-from chaos_ai.utils.rng import rng
-from chaos_ai.models.scenario.base import BaseParameter
+from krkn_ai.utils.rng import rng
+from krkn_ai.models.scenario.base import BaseParameter
 
 class DummyParameter(BaseParameter):
     name: str

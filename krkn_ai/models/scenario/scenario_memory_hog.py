@@ -1,8 +1,8 @@
 from collections import Counter
 
-from chaos_ai.utils.rng import rng
-from chaos_ai.models.scenario.base import Scenario
-from chaos_ai.models.scenario.parameters import *
+from krkn_ai.utils.rng import rng
+from krkn_ai.models.scenario.base import Scenario
+from krkn_ai.models.scenario.parameters import *
 
 
 class NodeMemoryHogScenario(Scenario):

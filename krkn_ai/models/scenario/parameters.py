@@ -30,6 +30,10 @@ class KillTimeoutParameter(BaseParameter):
     name: str = "KILL_TIMEOUT"
     value: int = 60
 
+class TimeoutParameter(BaseParameter):
+    name: str = "TIMEOUT"
+    value: int = 60
+
 
 class ExpRecoveryTimeParameter(BaseParameter):
     name: str = "EXPECTED_RECOVERY_TIME"

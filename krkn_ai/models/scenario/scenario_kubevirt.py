@@ -1,19 +1,16 @@
 from collections import Counter
 
-from chaos_ai.utils.rng import rng
-from chaos_ai.models.scenario.base import Scenario
-from chaos_ai.models.scenario.parameters import *
+from krkn_ai.utils.rng import rng
+from krkn_ai.models.scenario.base import Scenario
+from krkn_ai.models.scenario.parameters import *
 
 
 class KubevirtDisruptionScenario(Scenario):
-    name: str = "node-memory-hog"
-    chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
-    node_memory_percentage: NodeMemoryPercentageParameter = NodeMemoryPercentageParameter()
-    number_of_workers: NumberOfWorkersParameter = NumberOfWorkersParameter()
-    node_selector: NodeSelectorParameter = NodeSelectorParameter()
-    taint: TaintParameter = TaintParameter()
-    number_of_nodes: NumberOfNodesParameter = NumberOfNodesParameter()
-    hog_scenario_image: HogScenarioImageParameter = HogScenarioImageParameter()
+    name: str = "kubevirt-outage"
+    timeout: TimeoutParameter = TimeoutParameter()
+    vm_name: VMNameParameter = VMNameParameter()
+    namespace: NamespaceParameter = NamespaceParameter()
+    kill_count: KillCountParameter = KillCountParameter()
 
     def __init__(self, **data):
         super().__init__(**data)

@@ -5,7 +5,7 @@ from typing import List
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils.logger import get_module_logger
-from krkn_ai.models.cluster_components import ClusterComponents, Container, Namespace, Node, Pod
+from krkn_ai.models.cluster_components import ClusterComponents, Container, Namespace, Node, Pod, VM
 
 logger = get_module_logger(__name__)
 
@@ -29,6 +29,9 @@ class ClusterManager:
         for i, namespace in enumerate(namespaces):
             pods = self.list_pods(namespace, pod_label_pattern)
             namespaces[i].pods = pods
+
+            vms = self.list_vms(namespace)
+            namespaces[i].vms = vms
 
         return ClusterComponents(
             namespaces=namespaces,
@@ -86,6 +89,21 @@ class ClusterManager:
                 )
             )
         return containers
+
+
+    def list_vms(self, namespace: Namespace) -> List[VM]:
+
+        vms = self.custom_obj_api.list_namespaced_custom_object("kubevirt.io","v1",namespace.name,"virtualmachines").items
+        vm_list = []
+
+        for vm in vms:
+            vm_component = VM(
+                name=vm.metadata.name
+            )
+            vm_list.append(vm_component)
+
+        logger.debug("Filtered %d vms in namespace %s", len(vm_list), namespace.name)
+        return vm_list
 
     def list_nodes(self, node_label_pattern: str = None) -> List[Node]:
         node_label_pattern = list(set(self.__process_pattern(node_label_pattern) + ["kubernetes.io/hostname"]))

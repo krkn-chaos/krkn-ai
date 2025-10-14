@@ -93,12 +93,16 @@ class ClusterManager:
 
     def list_vms(self, namespace: Namespace) -> List[VM]:
 
-        vms = self.custom_obj_api.list_namespaced_custom_object("kubevirt.io","v1",namespace.name,"virtualmachines").items
+        vms_response = self.custom_obj_api.list_namespaced_custom_object("kubevirt.io","v1",namespace.name,"virtualmachines")
+        vms = vms_response.get("items", [])
         vm_list = []
-
+        if vms:
+            logger.debug("Found %d vms in namespace %s", len(vms), vms[0]["metadata"]["name"])
+        else:
+            logger.debug("No VMs found in namespace %s", namespace.name)
         for vm in vms:
             vm_component = VM(
-                name=vm.metadata.name
+                name=vm["metadata"]["name"]
             )
             vm_list.append(vm_component)
 

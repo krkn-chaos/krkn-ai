@@ -124,6 +124,8 @@ scenario:
     enable: false
   node-memory-hog:
     enable: false
+  kubevirt-outage:
+    enable: false
 
 # Cluster components to consider for Krkn-AI testing
 cluster_components:

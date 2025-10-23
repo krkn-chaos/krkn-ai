@@ -34,34 +34,26 @@ class TimeoutParameter(BaseParameter):
     name: str = "TIMEOUT"
     value: int = 60
 
-
 class ExpRecoveryTimeParameter(BaseParameter):
     name: str = "EXPECTED_RECOVERY_TIME"
     value: int = 60
-
-
 
 class DurationParameter(BaseParameter):
     name: str = "DURATION"
     value: int = 60
     krknctl_name: str = "chaos-duration"
 
-
-
 class PodSelectorParameter(BaseParameter):
     name: str = "POD_SELECTOR"
     value: str = "" # Format: {app: foo}
-
 
 class BlockTrafficType(BaseParameter):
     name: str = "BLOCK_TRAFFIC_TYPE"
     value: str = "[Ingress, Egress]" # "[Ingress, Egress]", "[Ingress]", "[Egress]"
 
-
 class LabelSelectorParameter(BaseParameter):
     name: str = "LABEL_SELECTOR"
     value: str = "" # Example Value: k8s-app=etcd
-
 
 class ContainerNameParameter(BaseParameter):
     name: str = "CONTAINER_NAME"
@@ -72,18 +64,15 @@ class ActionParameter(BaseParameter):
     value: str = "1"
     # possible_values = ["1", "9"]
 
-
 class TotalChaosDurationParameter(BaseParameter):
     name: str = "TOTAL_CHAOS_DURATION"
     value: int = 60
     krknctl_name: str = "chaos-duration"
 
-
 class NodeCPUCoreParameter(BaseParameter):
     name: str = "NODE_CPU_CORE"
     value: float = 2
     krknctl_name: str = "cores"
-
 
 class NodeCPUPercentageParameter(BaseParameter):
     '''
@@ -178,13 +167,6 @@ class VMNameParameter(BaseParameter):
     name: str = "VM_NAME"
     value: str = ""
 
-class NamespaceParameter(BaseParameter):
-    name: str = "NAMESPACE"
-    value: str = ""
-
 class KillCountParameter(BaseParameter):
     name: str = "KILL_COUNT"
-    value: int = 1  
-
-    def mutate(self):
-        self.value = rng.randint(1, 10)
+    value: int = 1

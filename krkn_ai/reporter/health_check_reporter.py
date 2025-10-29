@@ -11,6 +11,7 @@ from matplotlib.ticker import MaxNLocator
 from typing import List
 
 from krkn_ai.models.app import CommandRunResult
+from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.utils.logger import get_module_logger
 
 logger = get_module_logger(__name__)
@@ -125,13 +126,31 @@ class HealthCheckReporter:
         report_path = os.path.join(self.output_dir, "all.csv")
         file_exists = os.path.isfile(report_path)
 
+        # Parse scenario params
+        params = []
+        if isinstance(fitness_result.scenario, Scenario):
+            params = [
+                f"{param.get_name().lower()}={param.get_value()}" 
+                for param in fitness_result.scenario.parameters
+            ]
+
         df = pd.DataFrame([{
             "generation_id": fitness_result.generation_id,
             "scenario_id": fitness_result.scenario_id,
             "scenario": fitness_result.scenario.name,
+            "parameters": " ".join(params),
             "fitness_score": fitness_result.fitness_result.fitness_score,
         }])
 
         df.to_csv(report_path, mode='a', header=not file_exists, index=False)
         logger.debug("Fitness result updated.")
 
+
+    def sort_fitness_result_csv(self):
+        """Read the CSV file, sort it by fitness_score, and write it back"""
+        report_path = os.path.join(self.output_dir, "all.csv")
+        if os.path.exists(report_path):
+            df = pd.read_csv(report_path)
+            df = df.sort_values(by="fitness_score", ascending=False)
+            df.to_csv(report_path, index=False)
+            logger.debug("Fitness result CSV sorted by fitness_score")

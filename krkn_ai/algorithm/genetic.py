@@ -300,6 +300,7 @@ class GeneticAlgorithm:
         self.generations_reporter.save_best_generations(self.best_of_generation)
         self.generations_reporter.save_best_generation_graph(self.best_of_generation)
         self.health_check_reporter.save_report(self.seen_population.values())
+        self.health_check_reporter.sort_fitness_result_csv()
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")

@@ -11,10 +11,11 @@ from krkn_ai.models.scenario.base import Scenario, BaseScenario, CompositeDepend
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.fs import env_is_truthy
-from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
 
-logger = get_module_logger(__name__)
+logger = get_logger(__name__)
 
 # TODO: Cleanup of temp kubeconfig after running the script
 
@@ -35,7 +36,7 @@ class KrknRunner:
         runner_type: KrknRunnerType = None,
     ):
         self.config = config
-        self.prom_client = self.__connect_prom_client()
+        self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
         self.output_dir = output_dir
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()
@@ -70,7 +71,7 @@ class KrknRunner:
             return KrknRunnerType.HUB_RUNNER
 
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
-        logger.debug("Running scenario %s", scenario)
+        logger.info("Running scenario: %s", scenario)
 
         start_time = datetime.datetime.now()
 
@@ -97,7 +98,7 @@ class KrknRunner:
             health_check_watcher.run()
 
             # Run command
-            log, returncode = run_shell(command)
+            log, returncode = run_shell(command, do_not_log=True)
             
             # Stop watching application urls for health checks
             health_check_watcher.stop()
@@ -143,6 +144,7 @@ class KrknRunner:
             fitness_result.health_check_failure_score,
             fitness_result.health_check_response_time_score
         ])
+        logger.info("Fitness score: %s", fitness_result.fitness_score)
 
         return CommandRunResult(
             generation_id=generation_id,
@@ -294,29 +296,6 @@ class KrknRunner:
         if depends_on is not None:
             result["depends_on"] = depends_on
         return result
-
-    def __connect_prom_client(self):
-        # Fetch Prometheus query endpoint
-        url = os.getenv("PROMETHEUS_URL", "")
-        if url == "":
-            prom_spec_json, _ = run_shell(
-                f"kubectl --kubeconfig={self.config.kubeconfig_file_path} -n openshift-monitoring get route -l app.kubernetes.io/name=thanos-query -o json",
-                do_not_log=True,
-            )
-            prom_spec_json = json.loads(prom_spec_json)
-            url = prom_spec_json["items"][0]["spec"]["host"]
-
-        # Fetch K8s token to access internal service
-        token = os.getenv("PROMETHEUS_TOKEN", "")
-        if token == "":
-            token, _ = run_shell(
-                f"oc --kubeconfig={self.config.kubeconfig_file_path} whoami -t",
-                do_not_log=True,
-            )
-
-        logger.debug("Prometheus URL: %s", url)
-
-        return KrknPrometheus(f"https://{url}", token.strip())
 
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""

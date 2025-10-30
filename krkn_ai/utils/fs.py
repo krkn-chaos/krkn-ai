@@ -4,9 +4,9 @@ import yaml
 from typing import Union, Any, List, Dict
 
 from krkn_ai.models.config import ConfigFile
-from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_logger
 
-logger = get_module_logger(__name__)
+logger = get_logger(__name__)
 
 
 def preprocess_param_string(data: str, params: dict) -> str:

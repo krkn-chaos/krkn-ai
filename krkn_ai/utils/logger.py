@@ -1,51 +1,71 @@
-import click
+# logger_setup.py
 import logging
+import os
 from typing import Optional
 
-# Global variable to store the current log level
-_GLOBAL_LOG_LEVEL = logging.INFO
+_LOGGER_INITIALIZED = False
+_LOG_DIR: Optional[str] = None
 
-def verbosity_to_level(verbosity: int) -> int:
-    if verbosity == 0:
-        return logging.INFO
+def init_logger(output_dir: Optional[str] = None, verbose: bool = False):
+    """Initialize global logger configuration once."""
+
+    global _LOGGER_INITIALIZED, _LOG_DIR
+    if _LOGGER_INITIALIZED:
+        return
+
+    _LOG_DIR = output_dir
+    log_level = logging.DEBUG if verbose else logging.INFO
+
+    # Create root-safe parent logger name
+    parent_name = "krkn-ai"
+    parent = logging.getLogger(parent_name)
+
+    # Set root logger to critical level to avoid logging to console
+    logging.getLogger().setLevel(logging.CRITICAL)
+
+    # Avoid re-adding handlers if already configured
+    if parent.handlers:
+        _LOGGER_INITIALIZED = True
+        return
+
+    # Configure parent logger: handlers live here, children will propagate to it
+    parent.setLevel(logging.DEBUG)         # accept all levels; handler controls output
+    parent.propagate = False               # don't let messages go to root
+
+    # Console handler
+    console = logging.StreamHandler()
+    console.setLevel(log_level)
+    console.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+    parent.addHandler(console)
+
+    # Optional file handler
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, "run.log")
+        fh = logging.FileHandler(file_path)
+        fh.setLevel(logging.DEBUG)   # capture everything in file
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+        parent.addHandler(fh)
+
+    _LOGGER_INITIALIZED = True
+
+
+def get_logger(name: str) -> logging.Logger:
+    """
+    Return a named logger under the 'krkn-ai' namespace so it inherits parent's handlers.
+    Example: get_logger(__name__) -> logger name "krkn-ai.mypackage.module"
+    """
+    # Ensure calling code doesn't accidentally use the root logger
+    base = "krkn-ai"
+    if name and not name.startswith(base):
+        fullname = f"{base}.{name}"
     else:
-        return logging.DEBUG
+        fullname = name or base
+    return logging.getLogger(fullname)
 
-def set_global_log_level(level: int):
-    """Set the global log level that will be used by all loggers"""
-    global _GLOBAL_LOG_LEVEL
-    _GLOBAL_LOG_LEVEL = level
-    
-    # Update all existing loggers
-    for name in logging.Logger.manager.loggerDict:
-        logger = logging.getLogger(name)
-        if logger.handlers:  # Only update loggers that have been configured by us
-            logger.setLevel(level)
 
-def get_module_logger(mod_name: str, log_level: Optional[int] = None):
-    '''Main Logging module'''
-    global _GLOBAL_LOG_LEVEL
-    
-    # Try to get log level from various sources in order of priority
-    if log_level is not None:
-        level = log_level
-    else:
-        try:
-            ctx = click.get_current_context()
-            level = ctx.obj.verbose if ctx and hasattr(ctx.obj, 'verbose') else _GLOBAL_LOG_LEVEL
-        except RuntimeError:
-            level = _GLOBAL_LOG_LEVEL
-
-    logger = logging.getLogger(mod_name)
-    
-    # Only add handler if logger doesn't already have one
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.propagate = False  # Prevent duplicate messages
-    
-    logger.setLevel(level)
-    return logger
+def get_log_dir() -> Optional[str]:
+    return _LOG_DIR

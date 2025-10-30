@@ -4,10 +4,10 @@ import ssl
 from typing import List
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
-from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.cluster_components import ClusterComponents, Container, Namespace, Node, Pod
 
-logger = get_module_logger(__name__)
+logger = get_logger(__name__)
 
 class ClusterManager:
     def __init__(self, kubeconfig: str):

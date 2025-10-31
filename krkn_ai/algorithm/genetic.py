@@ -12,12 +12,12 @@ from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
-from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.custom_errors import PopulationSizeError
 
-logger = get_module_logger(__name__)
+logger = get_logger(__name__)
 
 
 class GeneticAlgorithm:
@@ -53,6 +53,8 @@ class GeneticAlgorithm:
         if self.config.population_size % 2 != 0:
             logger.debug("Population size is odd, making it even for the genetic algorithm.")
             self.config.population_size += 1
+
+        self.save_config()
 
         logger.debug("CONFIG")
         logger.debug("--------------------------------------------------------")
@@ -296,7 +298,6 @@ class GeneticAlgorithm:
     def save(self):
         '''Save run results'''
         # TODO: Create a single result file (results.json) that contains summary of all the results
-        self.save_config()
         self.generations_reporter.save_best_generations(self.best_of_generation)
         self.generations_reporter.save_best_generation_graph(self.best_of_generation)
         self.health_check_reporter.save_report(self.seen_population.values())

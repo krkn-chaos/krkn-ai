@@ -1,20 +1,15 @@
-import json
-import logging
 import os
 
 import click
 from pydantic import ValidationError
+from krkn_ai.utils.logger import init_logger, get_logger
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import AppContext, KrknRunnerType
+from krkn_ai.models.custom_errors import PrometheusConnectionError
+from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
-from krkn_ai.utils.fs import read_config_from_file, save_data_to_file
-from krkn_ai.utils.logger import (
-    get_module_logger,
-    set_global_log_level,
-    verbosity_to_level,
-)
 
 
 @click.group(context_settings={"show_default": True})
@@ -49,25 +44,19 @@ def run(ctx,
     param: list[str] = None,
     verbose: int = 0       # Default to INFO level
 ):
-    log_level = verbosity_to_level(verbose)
-    ctx.obj = AppContext(verbose=log_level)
-    
-    # Set global log level so all modules use the correct verbosity
-    set_global_log_level(log_level)
-
-    logger = get_module_logger(__name__)
+    init_logger(output, verbose >= 2)
+    logger = get_logger(__name__)
 
     if config == '' or config is None:
-        logger.warning("Config file invalid.")
+        logger.error("Config file invalid.")
         exit(1)
     if not os.path.exists(config):
-        logger.warning("Config file not found.")
+        logger.error("Config file not found.")
         exit(1)
 
     try:
-        logger.debug("Config File: %s", config)
         parsed_config = read_config_from_file(config, param)
-        logger.debug("Successfully parsed config!")
+        logger.info("Initialized config: %s", config)
     except ValidationError as err:
         logger.error("Unable to parse config file: %s", err)
         exit(1)
@@ -80,15 +69,24 @@ def run(ctx,
         elif runner_type.lower() == 'krknhub':
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
-    genetic = GeneticAlgorithm(
-        parsed_config,
-        output_dir=output,
-        format=format,
-        runner_type=enum_runner_type
-    )
-    genetic.simulate()
+    try:
+        genetic = GeneticAlgorithm(
+            parsed_config,
+            output_dir=output,
+            format=format,
+            runner_type=enum_runner_type
+        )
+        genetic.simulate()
 
-    genetic.save()
+        genetic.save()
+    except PrometheusConnectionError as e:
+        logger.error("%s", e)
+        exit(1)
+    except Exception as e:
+        logger.exception("Something went wrong: %s", e)
+        exit(1)
+    finally:
+        logger.info("Check run.log file in '%s' for more details.", output)
 
 
 @main.command(
@@ -110,18 +108,13 @@ def discover(
     node_label: str = ".*",
     verbose: int = 0
 ):
-    log_level = verbosity_to_level(verbose)
-    ctx.obj = AppContext(verbose=log_level)
-    
-    # Set global log level so all modules use the correct verbosity
-    set_global_log_level(log_level)
-
-    logger = get_module_logger(__name__)
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
 
     if kubeconfig == '' or kubeconfig is None:
         logger.warning("Kubeconfig file not found.")
         exit(1)
-    
+
     cluster_manager = ClusterManager(kubeconfig)
 
     cluster_components = cluster_manager.discover_components(

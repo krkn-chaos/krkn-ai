@@ -15,10 +15,10 @@ import requests
 from typing import List, Dict
 import numpy as np
 
-from krkn_ai.utils.logger import get_module_logger
+from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.config import HealthCheckApplicationConfig, HealthCheckConfig, HealthCheckResult
 
-logger = get_module_logger(__name__)
+logger = get_logger(__name__)
 
 class HealthCheckWatcher:
     def __init__(self, config: HealthCheckConfig):
@@ -102,7 +102,7 @@ class HealthCheckWatcher:
             return 0
         failed = sum(1 for r in all_results if not r.success)
         score = (failed / total) * 10 
-        logger.debug(f"Success rate score: {score}")
+        logger.debug(f"Health check failure rate score: {score}")
         return score
     
     def summarize_response_time(self, health_check_results: Dict[str, List[HealthCheckResult]]) -> float:
@@ -128,5 +128,5 @@ class HealthCheckWatcher:
         if total == 0:
             return 0
         score = (score / total) * 10
-        logger.debug(f"Response time score: {score}")
+        logger.debug(f"Response time outlier score: {score}")
         return score

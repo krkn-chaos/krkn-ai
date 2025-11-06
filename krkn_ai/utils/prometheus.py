@@ -2,6 +2,7 @@ import os
 import json
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils import run_shell
+from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
@@ -58,6 +59,8 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     # Try connecting to Prometheus
     try:
         client = KrknPrometheus(url, token.strip())
+        if env_is_truthy("MOCK_FITNESS"):
+            return client
         client.process_query("1")
         logger.debug("Successfully connected to Prometheus")
         return client

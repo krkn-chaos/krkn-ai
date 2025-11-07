@@ -3,6 +3,7 @@ from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
 from krkn_ai.models.scenario.base import Scenario
+from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.utils.rng import rng
 
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
@@ -20,6 +21,7 @@ scenario_specs = [
     ("node_cpu_hog", NodeCPUHogScenario),
     ("node_memory_hog", NodeMemoryHogScenario),
     ("time_scenarios", TimeScenario),
+    ("network_scenarios", NetworkScenario),
 ]
 
 class ScenarioFactory:

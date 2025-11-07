@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
 
@@ -169,3 +170,80 @@ class ActionTimeParameter(BaseParameter):
 
     def mutate(self):
         self.value = rng.choice(["skew_date", "skew_time"])
+
+
+class NetworkScenarioTypeParameter(BaseParameter):
+    name: str = "NETWORK_SCENARIO_TYPE"
+    value: str = "ingress"
+    krknctl_name: str = "traffic-type"
+
+    def mutate(self):
+        self.value = rng.choice(["ingress", "egress"])
+
+class NetworkScenarioImageParameter(BaseParameter):
+    name: str = "IMAGE"
+    value: str = "quay.io/krkn-chaos/krkn:tools"
+
+class NetworkScenarioDurationParameter(BaseParameter):
+    name: str = "DURATION"
+    value: int = 300
+
+class NetworkScenarioLabelSelectorParameter(BaseParameter):
+    name: str = "LABEL_SELECTOR"
+    value: str = ""
+
+class NetworkScenarioExecutionParameter(BaseParameter):
+    name: str = "EXECUTION"
+    value: str = "parallel"
+
+    def mutate(self):
+        self.value = rng.choice(["serial", "parallel"])
+
+class NetworkScenarioNodeNameParameter(BaseParameter):
+    name: str = "NODE_NAME"
+    value: str = ""
+
+class NetworkScenarioInterfacesParameter(BaseParameter):
+    # TODO: Understand the format and values of the interfaces parameter
+    name: str = "INTERFACES"
+    value: str = "[]"
+
+class NetworkParamData(BaseModel):
+    latency: int = 50 # ms
+    loss: float = 0.02  # %
+    bandwidth: int = 100 # mbit
+
+
+class NetworkScenarioNetworkParamsParameter(BaseParameter):
+    name: str = "NETWORK_PARAMS"
+    value: NetworkParamData = NetworkParamData()
+
+    def mutate(self):
+        self.value.latency = rng.randint(1, 10000)
+        self.value.loss = rng.uniform(0.0, 0.1)
+        self.value.bandwidth = rng.randint(100, 10000)
+
+    def get_value(self):
+        return "{" + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit" + "}"
+
+class NetworkScenarioEgressParamsParameter(BaseParameter):
+    name: str = "EGRESS"
+    value: NetworkParamData = NetworkParamData()
+
+    def mutate(self):
+        self.value.latency = rng.randint(1, 10000)
+        self.value.loss = round(rng.uniform(0.01, 0.4), 2)
+        self.value.bandwidth = rng.randint(100, 10000)
+
+    def get_value(self):
+        return "{" + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit" + "}"
+
+class NetworkScenarioTargetNodeInterfaceParameter(BaseParameter):
+    # TODO: Understand the format and values of the target-node-interface parameter
+    name: str = "TARGET_NODE_AND_INTERFACE"
+    value: str = "{}"
+    krknctl_name: str = "target-node-interface"
+
+class NetworkScenarioWaitDurationParameter(BaseParameter):
+    name: str = "WAIT_DURATION"
+    value: int = 300

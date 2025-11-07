@@ -25,6 +25,9 @@ class NodeHogScenarioConfig(BaseModel):
 class TimeScenarioConfig(BaseModel):
     enable: bool = False
 
+class NetworkScenarioConfig(BaseModel):
+    enable: bool = False
+
 class ScenarioConfig(BaseModel):
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
@@ -43,6 +46,9 @@ class ScenarioConfig(BaseModel):
     )
     time_scenarios: Optional[TimeScenarioConfig] = Field(
         alias="time-scenarios", default=None
+    )
+    network_scenarios: Optional[NetworkScenarioConfig] = Field(
+        alias="network-scenarios", default=None
     )
 
 

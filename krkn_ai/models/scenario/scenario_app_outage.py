@@ -5,6 +5,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class AppOutageScenario(Scenario):
     name: str = "application-outages"
+    krknctl_name: str = "application-outages"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:application-outages"
+
     namespace: NamespaceParameter = NamespaceParameter()
     duration: DurationParameter = DurationParameter()
     pod_selector: PodSelectorParameter = PodSelectorParameter()

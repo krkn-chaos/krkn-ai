@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 # TODO: Cleanup of temp kubeconfig after running the script
 
-PODMAN_TEMPLATE = 'podman run --env-host=true -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION=0 {env_list} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z containers.krkn-chaos.dev/krkn-chaos/krkn-hub:{name}'
+PODMAN_TEMPLATE = 'podman run --env-host=true -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION=0 {env_list} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
 
 KRKNCTL_TEMPLATE = "krknctl run {name} --telemetry-prometheus-backup False --wait-duration 0 --kubeconfig {kubeconfig} {env_list}"
 
@@ -170,7 +170,7 @@ class KrknRunner:
             command = PODMAN_TEMPLATE.format(
                 env_list=env_list,
                 kubeconfig=self.config.kubeconfig_file_path,
-                name=scenario.name,
+                image=scenario.krknhub_image,
             )
             return command
         elif self.runner_type == KrknRunnerType.CLI_RUNNER:
@@ -187,7 +187,7 @@ class KrknRunner:
             command = KRKNCTL_TEMPLATE.format(
                 env_list=env_list,
                 kubeconfig=self.config.kubeconfig_file_path,
-                name=scenario.name,
+                name=scenario.krknctl_name,
             )
             return command
         raise Exception("Unsupported runner type")
@@ -289,7 +289,7 @@ class KrknRunner:
         # generate a json based on https://krkn-chaos.dev/docs/krknctl/randomized-chaos-testing/#example
         env = {param.name: str(param.get_value()) for param in scenario.parameters}
         result = {
-            "image": f"containers.krkn-chaos.dev/krkn-chaos/krkn-hub:{scenario.name}",
+            "image": scenario.krknhub_image,
             "name": scenario.name,
             "env": env,
         }

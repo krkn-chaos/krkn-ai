@@ -18,5 +18,8 @@ class RNG:
         if low == high:
             return low
         return self.rng.integers(low, high)
+    
+    def uniform(self, low: float, high: float):
+        return self.rng.uniform(low, high)
 
 rng = RNG()

@@ -133,12 +133,21 @@ class HealthCheckReporter:
                 f"{param.get_name().lower()}={param.get_value()}" 
                 for param in fitness_result.scenario.parameters
             ]
+        
+        # SLO breakdown
+        fitness_function_slos = {}
+        for fitness_function_item in fitness_result.fitness_result.scores:
+            fitness_function_slos[f"slo_{fitness_function_item.id}"] = fitness_function_item.fitness_score
 
         df = pd.DataFrame([{
             "generation_id": fitness_result.generation_id,
             "scenario_id": fitness_result.scenario_id,
             "scenario": fitness_result.scenario.name,
             "parameters": " ".join(params),
+            **fitness_function_slos,
+            "health_check_failure_score": fitness_result.fitness_result.health_check_failure_score,
+            "health_check_response_time_score": fitness_result.fitness_result.health_check_response_time_score,
+            "krkn_failure_score": fitness_result.fitness_result.krkn_failure_score,
             "fitness_score": fitness_result.fitness_result.fitness_score,
         }])
 

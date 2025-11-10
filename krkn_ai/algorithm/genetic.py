@@ -195,7 +195,7 @@ class GeneticAlgorithm:
             if len(common_params) > 0 and type(new_scenario) != type(scenario):
                 common_scenarios.append(new_scenario)
         if len(common_scenarios) == 0:
-            logger.warning("No common scenarios found, returning original scenario")
+            logger.debug("No common scenarios found, returning original scenario")
             return False, scenario
 
         # create a new scenario with the same parameters

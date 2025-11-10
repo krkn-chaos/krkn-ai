@@ -7,6 +7,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class NodeMemoryHogScenario(Scenario):
     name: str = "node-memory-hog"
+    krknctl_name: str = "node-memory-hog"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:node-memory-hog"
+
     chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
     node_memory_percentage: NodeMemoryPercentageParameter = NodeMemoryPercentageParameter()
     number_of_workers: NumberOfWorkersParameter = NumberOfWorkersParameter()

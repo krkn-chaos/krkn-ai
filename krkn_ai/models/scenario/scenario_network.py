@@ -6,6 +6,8 @@ from krkn_ai.models.scenario.parameters import *
 
 class NetworkScenario(Scenario):
     name: str = "network-chaos"
+    krknctl_name: str = "network-chaos"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:network-chaos"
 
     traffic_type: NetworkScenarioTypeParameter = NetworkScenarioTypeParameter()
     image: NetworkScenarioImageParameter = NetworkScenarioImageParameter()

@@ -247,3 +247,31 @@ class NetworkScenarioTargetNodeInterfaceParameter(BaseParameter):
 class NetworkScenarioWaitDurationParameter(BaseParameter):
     name: str = "WAIT_DURATION"
     value: int = 300
+
+
+class DNSOutageDurationParameter(BaseParameter):
+    name: str = "TEST_DURATION"
+    value: int = 60
+    krknctl_name: str = "chaos-duration"
+
+class DNSOutageProtocolParameter(BaseParameter):
+    name: str = "PROTOCOL"
+    value: str = "tcp,udp"
+
+class DNSPortParameter(BaseParameter):
+    name: str = "PORTS"
+    value: str = ""
+
+
+class PodNameParameter(BaseParameter):
+    name: str = "POD_NAME"
+    value: str = ""
+
+class IngressParameter(BaseParameter):
+    name: str = "INGRESS"
+    value: str = "false"
+
+class EgressParameter(BaseParameter):
+    name: str = "EGRESS"
+    value: str = "true"
+

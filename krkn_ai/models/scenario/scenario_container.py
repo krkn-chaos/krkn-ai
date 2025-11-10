@@ -5,6 +5,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class ContainerScenario(Scenario):
     name: str = "container-scenarios"
+    krknctl_name: str = "container-scenarios"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:container-scenarios"
+
     namespace: NamespaceParameter = NamespaceParameter()
     label_selector: LabelSelectorParameter = LabelSelectorParameter()
     disruption_count: DisruptionCountParameter = DisruptionCountParameter()

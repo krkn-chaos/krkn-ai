@@ -5,6 +5,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class PodScenario(Scenario):
     name: str = "pod-scenarios"
+    krknctl_name: str = "pod-scenarios"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:pod-scenarios"
+
     namespace: NamespaceParameter = NamespaceParameter()
     pod_label: PodLabelParameter = PodLabelParameter()
     name_pattern: NamePatternParameter = NamePatternParameter()

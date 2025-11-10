@@ -20,6 +20,8 @@ class BaseParameter(BaseModel):
 
 class BaseScenario(BaseModel):
     name: str
+    krknctl_name: str  # Name of the scenario in krknctl
+    krknhub_image: str  # Image of the scenario in krknhub
 
 
 class Scenario(BaseScenario):
@@ -56,6 +58,9 @@ class CompositeDependency(Enum):
 
 class CompositeScenario(BaseScenario):
     name: str = "composite-scenario"
+    # No associated krknctl and krknhub images as these are custom composite scenarios.
+    krknctl_name: str = ""  
+    krknhub_image: str = ""
     scenario_a: BaseScenario
     scenario_b: BaseScenario
     dependency: CompositeDependency

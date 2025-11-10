@@ -7,6 +7,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class NodeCPUHogScenario(Scenario):
     name: str = "node-cpu-hog"
+    krknctl_name: str = "node-cpu-hog"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:node-cpu-hog"
+
     chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
     # node_cpu_core: NodeCPUCoreParameter = NodeCPUCoreParameter()
     node_cpu_percentage: NodeCPUPercentageParameter = NodeCPUPercentageParameter()

@@ -5,6 +5,9 @@ from krkn_ai.models.scenario.parameters import *
 
 class TimeScenario(Scenario):
     name: str = "time-scenarios"
+    krknctl_name: str = "time-scenarios"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:time-scenarios"
+
     object_type: ObjectTypeParameter = ObjectTypeParameter()
     label_selector: LabelSelectorParameter = LabelSelectorParameter()
     action_time: ActionTimeParameter = ActionTimeParameter()

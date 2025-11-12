@@ -34,11 +34,11 @@ class NetworkScenario(Scenario):
             self.label_selector,
             self.execution,
             self.node_name,
-            self.interfaces,
             self.network_params,
             self.egress_params,
-            #self.target_node_interface,
-            self.wait_duration
+            self.wait_duration,
+            self.interfaces,
+            # self.target_node_interface,
         ]
 
     def mutate(self):

@@ -28,7 +28,10 @@ class AppOutageScenario(Scenario):
         ]
 
     def mutate(self):
-        namespace = rng.choice(self._cluster_components.namespaces)
+        namespace = rng.choice([
+            namespace for namespace in self._cluster_components.namespaces 
+            if len(namespace.pods) > 0
+        ])
         pod = rng.choice(namespace.pods)
         labels = pod.labels
         label = rng.choice(list(labels.keys()))

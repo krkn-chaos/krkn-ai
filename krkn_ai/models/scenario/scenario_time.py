@@ -33,7 +33,10 @@ class TimeScenario(Scenario):
         self.action_time.mutate()
         
         if self.object_type.value == "pod":
-            namespace = rng.choice(self._cluster_components.namespaces)
+            namespace = rng.choice([
+                namespace for namespace in self._cluster_components.namespaces 
+                if len(namespace.pods) > 0
+            ])
             all_labels = set()
             # select a random pod label
             for p in namespace.pods:

@@ -159,7 +159,10 @@ class HealthCheckReporter:
         """Read the CSV file, sort it by fitness_score, and write it back"""
         report_path = os.path.join(self.output_dir, "all.csv")
         if os.path.exists(report_path):
-            df = pd.read_csv(report_path)
-            df = df.sort_values(by="fitness_score", ascending=False)
-            df.to_csv(report_path, index=False)
-            logger.debug("Fitness result CSV sorted by fitness_score")
+            try:
+                df = pd.read_csv(report_path)
+                df = df.sort_values(by="fitness_score", ascending=False)
+                df.to_csv(report_path, index=False)
+                logger.debug("Fitness result CSV sorted by fitness_score")
+            except Exception as e:
+                logger.warning("Unable to sort fitness results")

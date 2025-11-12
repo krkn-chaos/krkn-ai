@@ -4,6 +4,7 @@ import ssl
 from typing import List
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
+from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.cluster_components import ClusterComponents, Container, Namespace, Node, Pod
 
@@ -62,14 +63,14 @@ class ClusterManager:
         for pod in pods:
             pod_component = Pod(
                 name=pod.metadata.name,
-                labels=pod.metadata.labels,
             )
             # Filter label keys by patterns
             labels = {}
             for pattern in pod_labels_patterns:
-                for label in pod.metadata.labels:
-                    if re.match(pattern, label):
-                        labels[label] = pod.metadata.labels[label]
+                if pod.metadata.labels is not None:
+                    for label in pod.metadata.labels:
+                        if re.match(pattern, label):
+                            labels[label] = pod.metadata.labels[label]
             pod_component.labels = labels
             pod_component.containers = self.list_containers(pod.spec)
             pod_list.append(pod_component)
@@ -97,13 +98,20 @@ class ClusterManager:
         for node in nodes:
             labels = {}
             for pattern in node_label_pattern:
-                for label in node.metadata.labels:
-                    if re.match(pattern, label):
-                        labels[label] = node.metadata.labels[label]
+                if node.metadata.labels is not None:
+                    for label in node.metadata.labels:
+                        if re.match(pattern, label):
+                            labels[label] = node.metadata.labels[label]
             node_component = Node(
                 name=node.metadata.name,
                 labels=labels
             )
+
+            try:
+                node_component.interfaces = self.list_node_interfaces(node.metadata.name)
+            except Exception as e:
+                logger.error("Failed to list node interfaces for node %s: %s", node.metadata.name, e)
+            
             try:
                 alloc_cpu = self.parse_cpu(node.status.allocatable["cpu"])
                 alloc_mem = self.parse_memory(node.status.allocatable["memory"])
@@ -118,6 +126,29 @@ class ClusterManager:
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list
+
+    def list_node_interfaces(self, node: str) -> List[str]:
+        # List all the interfaces on the node
+        logger.debug("Listing node interfaces for node %s", node)
+        log, code = run_shell(f"oc debug -q node/{node} -- chroot /host ls /sys/class/net", do_not_log=True)
+        if code != 0:
+            logger.error("Failed to list node interfaces for node %s", node)
+            return []
+        
+        interfaces = []
+        interfaces_list = [x.strip() for x in log.splitlines()]
+
+        # TODO: Check which interfaces to consider for network chaos
+        # For now, consider specific interfaces like ens5, eth0, etc.
+
+        for intf in interfaces_list:
+            # TODO: Check which interfaces to consider for network chaos
+            # ens5, eth0, br-ex, br-int, etc. as well as other interfaces like lo, ovs-system, etc.
+            # Krkn validation doesn't work with interfaces with name like ABC-XYZ 
+            if intf.startswith("ens") or intf.startswith("eth"):
+                interfaces.append(intf)
+
+        return interfaces
 
     def __process_pattern(self, pattern_string: str) -> List[str]:
         # Check whether multiple namespaces are specified

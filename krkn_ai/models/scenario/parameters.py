@@ -186,7 +186,7 @@ class NetworkScenarioImageParameter(BaseParameter):
 
 class NetworkScenarioDurationParameter(BaseParameter):
     name: str = "DURATION"
-    value: int = 300
+    value: int = 120
 
 class NetworkScenarioLabelSelectorParameter(BaseParameter):
     name: str = "LABEL_SELECTOR"

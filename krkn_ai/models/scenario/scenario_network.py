@@ -36,13 +36,14 @@ class NetworkScenario(Scenario):
             self.node_name,
             self.network_params,
             self.egress_params,
-            self.wait_duration,
-            self.interfaces,
-            # self.target_node_interface,
+            # self.interfaces,
+            self.target_node_interface,
+            # self.wait_duration,
         ]
 
     def mutate(self):
-        self.traffic_type.mutate()
+        # TODO: Add support for ingress traffic type
+        self.traffic_type.value = "egress"
         self.execution.mutate()
 
         if self.traffic_type.value == "ingress":
@@ -52,11 +53,7 @@ class NetworkScenario(Scenario):
 
         nodes = self._cluster_components.nodes
 
-        all_labels = set([""])
-        for node in nodes:
-            for label, _ in node.labels.items():
-                all_labels.add(label)
-        self.label_selector.value = rng.choice(list(all_labels))
-
-        if self.label_selector == "":
-            self.node_name.value = rng.choice(nodes).name
+        node = rng.choice(nodes)        
+        self.node_name.value = node.name
+        self.interfaces.value = f"[{rng.choice(node.interfaces)}]"
+        self.target_node_interface.value = "{" + f"{node.name}: [{rng.choice(node.interfaces)}]" + " }"

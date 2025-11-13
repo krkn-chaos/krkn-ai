@@ -19,6 +19,7 @@ class Node(BaseModel):
     labels: Dict[str, str] = {}
     free_cpu: float = 0
     free_mem: float = 0
+    interfaces: List[str] = []
 
 
 class ClusterComponents(BaseModel):

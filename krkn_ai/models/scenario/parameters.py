@@ -186,7 +186,7 @@ class NetworkScenarioImageParameter(BaseParameter):
 
 class NetworkScenarioDurationParameter(BaseParameter):
     name: str = "DURATION"
-    value: int = 300
+    value: int = 120
 
 class NetworkScenarioLabelSelectorParameter(BaseParameter):
     name: str = "LABEL_SELECTOR"
@@ -219,9 +219,9 @@ class NetworkScenarioNetworkParamsParameter(BaseParameter):
     value: NetworkParamData = NetworkParamData()
 
     def mutate(self):
-        self.value.latency = rng.randint(1, 10000)
-        self.value.loss = rng.uniform(0.0, 0.1)
-        self.value.bandwidth = rng.randint(100, 10000)
+        self.value.latency = rng.randint(1, 1000)
+        self.value.loss = round(rng.uniform(0.01, 0.1), 2)
+        self.value.bandwidth = rng.randint(100, 1000)
 
     def get_value(self):
         return "{" + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit" + "}"
@@ -231,9 +231,9 @@ class NetworkScenarioEgressParamsParameter(BaseParameter):
     value: NetworkParamData = NetworkParamData()
 
     def mutate(self):
-        self.value.latency = rng.randint(1, 10000)
-        self.value.loss = round(rng.uniform(0.01, 0.4), 2)
-        self.value.bandwidth = rng.randint(100, 10000)
+        self.value.latency = rng.randint(1, 1000)
+        self.value.loss = round(rng.uniform(0.01, 0.1), 2)
+        self.value.bandwidth = rng.randint(100, 1000)
 
     def get_value(self):
         return "{" + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit" + "}"

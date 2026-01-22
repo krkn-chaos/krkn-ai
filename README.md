@@ -11,6 +11,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 ## 🌟 Features
 
 - **Genetic Algorithm Optimization**: Automatically evolves chaos scenarios to find optimal testing strategies
+- **ML-Based Scenario Recommendations**: Get intelligent scenario recommendations based on cluster telemetry data
 - **Multi-Scenario Support**: Pod failures, container scenarios, node resource exhaustion, and application outages
 - **Kubernetes/OpenShift Integration**: Native support for both platforms
 - **Health Monitoring**: Continuous monitoring of application health during chaos experiments
@@ -234,6 +235,12 @@ Options:
                                   key=value format.
   -v, --verbose                   Increase verbosity of output.
   --help                          Show this message and exit.
+```
+
+## 🤖 ML Recommendations
+
+```bash
+krkn_ai recommend -k ./kubeconfig.yaml
 ```
 
 > **Note:** You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).

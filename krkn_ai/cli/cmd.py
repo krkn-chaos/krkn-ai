@@ -142,3 +142,26 @@ def discover(
         f.write(template)
 
     logger.info("Saved component configuration to %s", output)
+
+@main.command(help='Get scenario recommendations')
+@click.option('--kubeconfig', '-k', default=os.getenv('KUBECONFIG'))
+@click.option('--timerange', '-t', default='15m')
+@click.option('--top-n', '-n', default=3)
+def recommend(kubeconfig, timerange, top_n):
+    from krkn_ai.algorithm.recommender import ScenarioRecommender
+    init_logger(None, False)
+    logger = get_logger(__name__)
+    if not kubeconfig:
+        logger.error("Need kubeconfig")
+        exit(1)
+    try:
+        rec = ScenarioRecommender(kubeconfig)
+        results = rec.recommend(timerange, top_n)
+        print("\n" + "="*50)
+        print("RECOMMENDATIONS")
+        print("="*50)
+        for i, r in enumerate(results, 1):
+            print(f"{i}. {r['scenario']} ({r['confidence']:.0%}) - {r['reason']}")
+    except Exception as e:
+        logger.error(f"Failed: {e}")
+        exit(1)

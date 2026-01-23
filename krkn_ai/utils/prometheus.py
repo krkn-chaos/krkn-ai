@@ -37,14 +37,22 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     url = os.getenv("PROMETHEUS_URL", "")
     if url == "":
         if is_openshift(kubeconfig):
-            prom_spec_json, _ = run_shell(
-                f"kubectl --kubeconfig={kubeconfig} -n openshift-monitoring get route -l app.kubernetes.io/name=thanos-query -o json",
-                do_not_log=True,
-            )
-            prom_spec_json = json.loads(prom_spec_json)
-            url = prom_spec_json["items"][0]["spec"]["host"]
+            try:
+                prom_spec_json_str, return_code = run_shell(
+                    f"kubectl --kubeconfig={kubeconfig} -n openshift-monitoring get route -l app.kubernetes.io/name=thanos-query -o json",
+                    do_not_log=True,
+                )
+                if return_code == 0:
+                    prom_spec_json = json.loads(prom_spec_json_str)
+                    url = prom_spec_json["items"][0]["spec"]["host"]
+                else:
+                    logger.warning(
+                        "Failed to auto-discover Prometheus URL: %s", prom_spec_json_str
+                    )
+            except Exception as e:
+                logger.warning("Failed to parse Prometheus discovery output: %s", e)
 
-    if not (url.startswith("http://") or url.startswith("https://")):
+    if url and not (url.startswith("http://") or url.startswith("https://")):
         url = f"https://{url}"
 
     # Fetch K8s token to access internal service

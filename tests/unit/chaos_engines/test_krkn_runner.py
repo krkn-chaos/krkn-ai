@@ -126,6 +126,7 @@ class TestKrknRunnerRun:
                 assert result.fitness_result.fitness_score == -1.0
                 assert result.fitness_result.krkn_failure_score == -1.0
 
+
     def test_run_raises_for_unsupported_scenario_type(
         self, minimal_config, temp_output_dir
     ):
@@ -142,6 +143,94 @@ class TestKrknRunnerRun:
 
             with pytest.raises(NotImplementedError, match="Scenario unable to run"):
                 runner.run(unsupported_scenario, generation_id=0)
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_point_fitness_handles_empty_query_result(
+        self, mock_env, minimal_config, temp_output_dir
+    ):
+        """Test that point fitness query check gracefully handles empty list"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="test_query", type=FitnessFunctionType.point
+        )
+
+        # Mock Prometheus client
+        mock_prom_client = Mock()
+        # Simulate empty result from Prometheus query
+        mock_prom_client.process_prom_query_in_range.return_value = []
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client", return_value=mock_prom_client):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+            # This should NOT raise exception anymore, instead return 0.0
+            result = runner.calculate_fitness_value(
+                start=None,
+                end=None,
+                query="test",
+                fitness_type=FitnessFunctionType.point
+            )
+            assert result == 0.0
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_range_fitness_handles_empty_query_result(
+        self, mock_env, minimal_config, temp_output_dir
+    ):
+        """Test that range fitness query gracefully handles empty list"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="test_query", type=FitnessFunctionType.range
+        )
+
+        # Mock Prometheus client
+        mock_prom_client = Mock()
+        # Simulate empty result from Prometheus query
+        mock_prom_client.process_prom_query_in_range.return_value = []
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client", return_value=mock_prom_client):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+            # This should NOT raise exception anymore, instead return 0.0
+            result = runner.calculate_fitness_value(
+                start=None,
+                end=None,
+                query="test",
+                fitness_type=FitnessFunctionType.range
+            )
+            assert result == 0.0
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_point_fitness_handles_empty_values(
+        self, mock_env, minimal_config, temp_output_dir
+    ):
+        """Test that point fitness query gracefully handles empty values"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="test_query", type=FitnessFunctionType.point
+        )
+
+        mock_prom_client = Mock()
+        # Simulate result with empty values
+        mock_prom_client.process_prom_query_in_range.return_value = [{"values": []}]
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client", return_value=mock_prom_client):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+            result = runner.calculate_fitness_value(
+                start=None,
+                end=None,
+                query="test",
+                fitness_type=FitnessFunctionType.point
+            )
+            assert result == 0.0
 
 
 class TestKrknRunnerCommandGeneration:

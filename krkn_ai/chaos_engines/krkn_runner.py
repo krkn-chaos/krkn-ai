@@ -434,19 +434,44 @@ class KrknRunner:
         Helpful to measure values for counter based metric like restarts.
         """
         logger.debug("Calculating Point Fitness")
-        result_at_beginning = self.prom_client.process_prom_query_in_range(
+        results_at_beginning = self.prom_client.process_prom_query_in_range(
             query,
             start_time=start,
             end_time=start,
             granularity=100,
-        )[0]["values"][-1][1]
+        )
+        if (
+            not results_at_beginning
+            or len(results_at_beginning) == 0
+            or "values" not in results_at_beginning[0]
+            or len(results_at_beginning[0]["values"]) == 0
+        ):
+            logger.warning(
+                "No data found for query %s at start time. Returning 0.0", query
+            )
+            return 0.0
 
-        result_at_end = self.prom_client.process_prom_query_in_range(
+        result_at_beginning = results_at_beginning[0]["values"][-1][1]
+
+        results_at_end = self.prom_client.process_prom_query_in_range(
             query,
             start_time=end,
             end_time=end,
             granularity=100,
-        )[0]["values"][-1][1]
+        )
+
+        if (
+            not results_at_end
+            or len(results_at_end) == 0
+            or "values" not in results_at_end[0]
+            or len(results_at_end[0]["values"]) == 0
+        ):
+            logger.warning(
+                "No data found for query %s at end time. Returning 0.0", query
+            )
+            return 0.0
+
+        result_at_end = results_at_end[0]["values"][-1][1]
 
         return float(result_at_end) - float(result_at_beginning)
 
@@ -471,12 +496,23 @@ class KrknRunner:
                 "You are missing $range$ in config.fitness_function.query to specify dynamic range. Fitness function will use specified range"
             )
 
-        result = self.prom_client.process_prom_query_in_range(
+        results = self.prom_client.process_prom_query_in_range(
             query,
             start_time=start,
             end_time=end,
             granularity=100,
-        )[0]["values"][-1][1]
+        )
+
+        if (
+            not results
+            or len(results) == 0
+            or "values" not in results[0]
+            or len(results[0]["values"]) == 0
+        ):
+            logger.warning("No data found for query %s. Returning 0.0", query)
+            return 0.0
+
+        result = results[0]["values"][-1][1]
 
         return float(result)
 

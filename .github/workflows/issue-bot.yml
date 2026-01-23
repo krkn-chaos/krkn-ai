@@ -1,0 +1,435 @@
+name: Issue Command Bot
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  process-commands:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process issue commands
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { comment, issue, repository } = context.payload;
+            const owner = repository.owner.login;
+            const repo = repository.name;
+            const issueNumber = issue.number;
+            const commenter = comment.user.login;
+
+            // Ignore bot comments
+            if (comment.user.type === "Bot") return;
+
+            const rawBody = comment.body.trim();
+            const lines = rawBody
+              .split('\n')
+              .map(line => line.trim())
+              .filter(Boolean);
+
+            // Check if any line looks like a command
+            const hasCommands = lines.some(line => line.startsWith('/'));
+            if (!hasCommands) return;
+
+            const isCommand = (line, cmd) =>
+              new RegExp(`^/${cmd}(\\s|$)`, "i").test(line);
+
+            // Known commands that are NOT label shortcuts
+            const knownCommands = new Set([
+              'assign', 'unassign', 'label', 'unlabel', 
+              'close', 'reopen', 'help'
+            ]);
+
+            // Lazy-loaded labels - only fetched when needed (with pagination)
+            let repoLabels = null;
+            let labelMap = null;
+
+            async function ensureLabelsLoaded() {
+              if (labelMap !== null) return;
+              
+              // Paginate to fetch all labels (handles repos with >100 labels)
+              repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner,
+                repo,
+                per_page: 100
+              });
+              
+              labelMap = new Map();
+              for (const label of repoLabels) {
+                const commandName = label.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                labelMap.set(label.name.toLowerCase(), label.name);
+                labelMap.set(commandName, label.name);
+              }
+            }
+
+            // Resolve label name using labelMap (handles normalization)
+            async function resolveLabelName(input) {
+              await ensureLabelsLoaded();
+              const key = input.toLowerCase();
+              const hyphenated = key.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+              return labelMap.get(key) || labelMap.get(hyphenated) || null;
+            }
+
+            // Cached permission check - only one API call per comment
+            let cachedPermission = null;
+
+            async function hasWritePermission(username) {
+              if (cachedPermission !== null) return cachedPermission;
+              
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
+                  username
+                });
+                cachedPermission = ['admin', 'write'].includes(data.permission);
+              } catch {
+                cachedPermission = false;
+              }
+              return cachedPermission;
+            }
+
+            // Get current labels on the issue
+            async function getIssueLabels() {
+              const { data } = await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number: issueNumber
+              });
+              return new Set(data.labels.map(l => l.name.toLowerCase()));
+            }
+
+            // Aggregate responses to post a single comment
+            const responses = [];
+
+            try {
+              // Check if commenter is the issue author (they can always self-assign)
+              const isIssueAuthor = issue.user.login.toLowerCase() === commenter.toLowerCase();
+
+              for (const line of lines) {
+
+                // --------------------
+                // /assign [@user]
+                // Users can assign themselves to their own issues.
+                // Contributors with write access can assign themselves to any issue.
+                // Maintainers can assign anyone to any issue.
+                // --------------------
+                if (isCommand(line, "assign")) {
+                  let assignee = commenter;
+                  const match = line.match(/^\/assign\s+@(\S+)/i);
+                  if (match) {
+                    assignee = match[1];
+                  }
+
+                  const isSelfAssign = assignee.toLowerCase() === commenter.toLowerCase();
+
+                  // Only allow self-assign unless maintainer
+                  if (!isSelfAssign) {
+                    const canAssignOthers = await hasWritePermission(commenter);
+                    if (!canAssignOthers) {
+                      responses.push("You can only assign yourself. Use `/assign` without arguments.");
+                      continue;
+                    }
+                  }
+
+                  try {
+                    await github.rest.issues.addAssignees({
+                      owner,
+                      repo,
+                      issue_number: issueNumber,
+                      assignees: [assignee]
+                    });
+                    // Assignment is visible in UI - no need to announce
+                  } catch (error) {
+                    // GitHub returns 422 when user cannot be assigned (no write access and not issue author)
+                    if (error.status === 422 && isSelfAssign) {
+                      if (isIssueAuthor) {
+                        responses.push(`Failed to assign. Please try again or contact a maintainer.`);
+                      } else {
+                        responses.push(`@${commenter} GitHub does not allow assigning users without write access to issues they didn't create. A maintainer will assign you shortly.`);
+                      }
+                    } else {
+                      responses.push(`Failed to assign @${assignee}: ${error.message}`);
+                    }
+                  }
+                  continue;
+                }
+
+                // --------------------
+                // /unassign [@user]
+                // Users can only unassign themselves.
+                // Maintainers can unassign anyone.
+                // --------------------
+                if (isCommand(line, "unassign")) {
+                  let assignee = commenter;
+                  const match = line.match(/^\/unassign\s+@(\S+)/i);
+                  if (match) {
+                    assignee = match[1];
+                  }
+
+                  // Only allow self-unassign unless maintainer
+                  if (assignee.toLowerCase() !== commenter.toLowerCase()) {
+                    const canUnassignOthers = await hasWritePermission(commenter);
+                    if (!canUnassignOthers) {
+                      responses.push("You cannot unassign others.");
+                      continue;
+                    }
+                  }
+
+                  await github.rest.issues.removeAssignees({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    assignees: [assignee]
+                  });
+
+                  // Unassignment is visible in UI - no need to announce
+                  continue;
+                }
+
+                // --------------------
+                // /label <name>
+                // Maintainers only - auto-creates label if it doesn't exist
+                // --------------------
+                if (isCommand(line, "label")) {
+                  // Only maintainers can add labels
+                  const canLabel = await hasWritePermission(commenter);
+                  if (!canLabel) {
+                    responses.push("Only maintainers and collaborators can add labels.");
+                    continue;
+                  }
+
+                  const match = line.match(/^\/label\s+(.+)/i);
+                  if (!match) {
+                    responses.push("`/label` requires a label name.");
+                    continue;
+                  }
+
+                  const inputLabel = match[1].trim();
+                  let actualLabel = await resolveLabelName(inputLabel);
+
+                  // If label doesn't exist, create it
+                  if (!actualLabel) {
+                    // Create the label with a random color
+                    const randomColor = Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name: inputLabel,
+                      color: randomColor
+                    });
+
+                    actualLabel = inputLabel;
+                    
+                    // Invalidate cache so the new label is available
+                    labelMap = null;
+                    repoLabels = null;
+                  }
+
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    labels: [actualLabel]
+                  });
+
+                  // Labels are visible in UI - no need to announce
+                  continue;
+                }
+
+                // --------------------
+                // /unlabel <name>
+                // Maintainers only
+                // --------------------
+                if (isCommand(line, "unlabel")) {
+                  // Only maintainers can remove labels
+                  const canUnlabel = await hasWritePermission(commenter);
+                  if (!canUnlabel) {
+                    responses.push("Only maintainers and collaborators can remove labels.");
+                    continue;
+                  }
+
+                  const match = line.match(/^\/unlabel\s+(.+)/i);
+                  if (!match) {
+                    responses.push("`/unlabel` requires a label name.");
+                    continue;
+                  }
+
+                  const inputLabel = match[1].trim();
+                  const actualLabel = await resolveLabelName(inputLabel);
+
+                  if (!actualLabel) {
+                    responses.push(`Label \`${inputLabel}\` does not exist in this repository.`);
+                    continue;
+                  }
+
+                  // Check if label is actually on the issue (idempotent)
+                  const currentLabels = await getIssueLabels();
+                  if (!currentLabels.has(actualLabel.toLowerCase())) {
+                    responses.push(`Label \`${actualLabel}\` is not applied to this issue.`);
+                    continue;
+                  }
+
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    name: actualLabel
+                  });
+
+                  // Labels are visible in UI - no need to announce
+                  continue;
+                }
+
+                // --------------------
+                // /close (requires write permission OR issue author)
+                // --------------------
+                if (isCommand(line, "close")) {
+                  const isIssueAuthor = issue.user.login.toLowerCase() === commenter.toLowerCase();
+                  const hasMaintainerAccess = await hasWritePermission(commenter);
+                  
+                  if (!isIssueAuthor && !hasMaintainerAccess) {
+                    responses.push("Only maintainers or the issue author can close this issue.");
+                    continue;
+                  }
+
+                  await github.rest.issues.update({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    state: "closed"
+                  });
+
+                  responses.push("Closed this issue.");
+                  continue;
+                }
+
+                // --------------------
+                // /reopen (requires write permission)
+                // --------------------
+                if (isCommand(line, "reopen")) {
+                  const canReopen = await hasWritePermission(commenter);
+                  if (!canReopen) {
+                    responses.push("Only maintainers and collaborators can reopen issues.");
+                    continue;
+                  }
+
+                  await github.rest.issues.update({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    state: "open"
+                  });
+
+                  responses.push("Reopened this issue.");
+                  continue;
+                }
+
+                // --------------------
+                // /help
+                // --------------------
+                if (isCommand(line, "help")) {
+                  await ensureLabelsLoaded();
+
+                  const labelCommands = repoLabels
+                    .slice(0, 15)
+                    .map(l => {
+                      const cmd = l.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                      return `| \`/${cmd}\` | Add label \`${l.name}\` |`;
+                    })
+                    .join('\n');
+
+                  const moreLabelsNote = repoLabels.length > 15
+                    ? `\n\n> _Note: ${repoLabels.length - 15} additional labels are available. Use \`/label <name>\` for any label._`
+                    : '';
+
+                  responses.push([
+                    "### Available Commands",
+                    "",
+                    "#### General Commands",
+                    "| Command | Description |",
+                    "|---------|-------------|",
+                    "| `/assign` | Assign yourself to this issue |",
+                    "| `/assign @user` | Assign another user (maintainers only) |",
+                    "| `/unassign` | Remove yourself from this issue |",
+                    "| `/unassign @user` | Remove another user (maintainers only) |",
+                    "| `/label <name>` | Apply a label (maintainers only) |",
+                    "| `/unlabel <name>` | Remove a label (maintainers only) |",
+                    "| `/close` | Close this issue (maintainers only) |",
+                    "| `/reopen` | Reopen this issue (maintainers only) |",
+                    "| `/help` | Display this help message |",
+                    "",
+                    "#### Label Shortcuts",
+                    "| Command | Description |",
+                    "|---------|-------------|",
+                    labelCommands,
+                    moreLabelsNote,
+                    "",
+                    "> **Note:** Issue authors can always assign themselves. For other issues, GitHub requires write access for assignment.",
+                    "> Multiple commands may be used on separate lines."
+                  ].join("\n"));
+                  continue;
+                }
+
+                // --------------------
+                // Dynamic label commands: /<label-name>
+                // Maintainers only
+                // --------------------
+                const cmdMatch = line.match(/^\/([a-z0-9-]+)$/i);
+                if (cmdMatch) {
+                  const cmdName = cmdMatch[1].toLowerCase();
+
+                  // Skip if it's a known command (already handled or typo)
+                  if (knownCommands.has(cmdName)) {
+                    continue;
+                  }
+
+                  await ensureLabelsLoaded();
+
+                  if (labelMap.has(cmdName)) {
+                    // Only maintainers can add labels
+                    const canLabel = await hasWritePermission(commenter);
+                    if (!canLabel) {
+                      responses.push("Only maintainers and collaborators can add labels.");
+                      continue;
+                    }
+
+                    const actualLabelName = labelMap.get(cmdName);
+
+                    await github.rest.issues.addLabels({
+                      owner,
+                      repo,
+                      issue_number: issueNumber,
+                      labels: [actualLabelName]
+                    });
+
+                    // Labels are visible in UI - no need to announce
+                  } else {
+                    // Unknown command - notify user
+                    responses.push(`Unknown command \`/${cmdName}\`. Use \`/help\` to see available commands.`);
+                  }
+                }
+              }
+
+              // Post aggregated response as a single comment
+              if (responses.length > 0) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  body: responses.join('\n\n')
+                });
+              }
+
+            } catch (error) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                body: `Error: ${error.message}`
+              });
+            }

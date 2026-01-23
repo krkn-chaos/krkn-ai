@@ -40,7 +40,7 @@ jobs:
 
             // Known commands that are NOT label shortcuts
             const knownCommands = new Set([
-              'assign', 'unassign', 'label', 'unlabel', 
+              'assign', 'unassign', 'label', 'unlabel',
               'close', 'reopen', 'help'
             ]);
 
@@ -50,14 +50,14 @@ jobs:
 
             async function ensureLabelsLoaded() {
               if (labelMap !== null) return;
-              
+
               // Paginate to fetch all labels (handles repos with >100 labels)
               repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
                 owner,
                 repo,
                 per_page: 100
               });
-              
+
               labelMap = new Map();
               for (const label of repoLabels) {
                 const commandName = label.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -79,7 +79,7 @@ jobs:
 
             async function hasWritePermission(username) {
               if (cachedPermission !== null) return cachedPermission;
-              
+
               try {
                 const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
                   owner,
@@ -224,7 +224,7 @@ jobs:
                     });
 
                     actualLabel = inputLabel;
-                    
+
                     // Invalidate cache so the new label is available
                     labelMap = null;
                     repoLabels = null;
@@ -291,7 +291,7 @@ jobs:
                 if (isCommand(line, "close")) {
                   const isIssueAuthor = issue.user.login.toLowerCase() === commenter.toLowerCase();
                   const hasMaintainerAccess = await hasWritePermission(commenter);
-                  
+
                   if (!isIssueAuthor && !hasMaintainerAccess) {
                     responses.push("Only maintainers or the issue author can close this issue.");
                     continue;

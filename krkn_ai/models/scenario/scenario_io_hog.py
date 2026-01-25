@@ -1,7 +1,3 @@
-from collections import Counter
-import json
-
-from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
     HogScenarioImageParameter,
@@ -15,7 +11,7 @@ from krkn_ai.models.scenario.parameters import (
     TaintParameter,
     TotalChaosDurationParameter,
 )
-from krkn_ai.models.custom_errors import ScenarioParameterInitError
+from krkn_ai.utils.node_selector import select_nodes
 
 
 class NodeIOHogScenario(Scenario):
@@ -54,46 +50,13 @@ class NodeIOHogScenario(Scenario):
         ]
 
     def mutate(self):
+        """Mutate scenario parameters with random node selection."""
         nodes = self._cluster_components.nodes
+        selection = select_nodes(nodes, scenario_name=self.name)
 
-        if len(nodes) == 0:
-            raise ScenarioParameterInitError(
-                "No nodes found in cluster components for node-io-hog scenario"
-            )
-
-        all_labels = Counter()
-        for node in nodes:
-            for label, value in node.labels.items():
-                all_labels[f"{label}={value}"] += 1
-
-        # scenario 1: Select a random node
-        if rng.random() < 0.5 or len(all_labels) == 0:
-            node = rng.choice(nodes)
-            self.node_selector.value = f"kubernetes.io/hostname={node.name}"
-            self.number_of_nodes.value = 1
-            # Set taints for the selected node
-            self.taint.value = json.dumps(node.taints) if node.taints else "[]"
-        else:
-            # scenario 2: Select a label
-            label = rng.choice(list(all_labels.keys()))
-            self.node_selector.value = label
-            self.number_of_nodes.value = rng.randint(1, all_labels[label])
-
-            # Get taints from matching nodes
-            key, value = label.split("=", 1)
-            matching_nodes = [n for n in nodes if n.labels.get(key) == value]
-
-            # Collect all unique taints from matching nodes
-            all_taints = []
-            seen = set()
-            for node in matching_nodes:
-                if node.taints:
-                    for taint in node.taints:
-                        if taint not in seen:
-                            seen.add(taint)
-                            all_taints.append(taint)
-
-            self.taint.value = json.dumps(all_taints) if all_taints else "[]"
+        self.node_selector.value = selection.node_selector
+        self.number_of_nodes.value = selection.number_of_nodes
+        self.taint.value = selection.taints_json
 
         self.io_workers.mutate()
         self.io_write_bytes.mutate()

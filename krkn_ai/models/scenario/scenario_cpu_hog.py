@@ -1,17 +1,14 @@
-from collections import Counter
-import json
-
-from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
     HogScenarioImageParameter,
-    NodeCPUPercentageParameter,
     NamespaceParameter,
+    NodeCPUPercentageParameter,
     NodeSelectorParameter,
     NumberOfNodesParameter,
     TaintParameter,
     TotalChaosDurationParameter,
 )
+from krkn_ai.utils.node_selector import select_nodes
 
 
 class NodeCPUHogScenario(Scenario):
@@ -46,49 +43,12 @@ class NodeCPUHogScenario(Scenario):
         ]
 
     def mutate(self):
+        """Mutate scenario parameters with random node selection."""
         nodes = self._cluster_components.nodes
+        selection = select_nodes(nodes, scenario_name=self.name)
 
-        # scenario 1: Select a random node
-        if rng.random() < 0.5:
-            node = rng.choice(nodes)
-            self.node_selector.value = f"kubernetes.io/hostname={node.name}"
-            self.number_of_nodes.value = 1
-            # Set taints for the selected node
-            self.taint.value = json.dumps(node.taints) if node.taints else "[]"
-            # self.node_cpu_core.value = node.free_cpu * 0.001  # convert to cores from millicores
-        else:
-            # scenario 2: Select a label
-            all_labels = Counter()
-            for node in nodes:
-                for label, value in node.labels.items():
-                    all_labels[f"{label}={value}"] += 1
-            label = rng.choice(list(all_labels.keys()))
-            self.node_selector.value = label
-            self.number_of_nodes.value = rng.randint(1, all_labels[label])
-
-            # Get taints from matching nodes
-            key, value = label.split("=", 1)
-            matching_nodes = [n for n in nodes if n.labels.get(key) == value]
-
-            # Collect all unique taints from matching nodes
-            all_taints = []
-            seen = set()
-            for node in matching_nodes:
-                if node.taints:
-                    for taint in node.taints:
-                        if taint not in seen:
-                            seen.add(taint)
-                            all_taints.append(taint)
-
-            self.taint.value = json.dumps(all_taints) if all_taints else "[]"
-
-            # get the minimum free cpu core for the selected label
-            # min_cpu_core_milli = float('inf')
-            # for node in nodes:
-            #     if label in node.labels and node.labels[label] == label.split("=")[1]:
-            #         min_cpu_core_milli = min(min_cpu_core_milli, node.free_cpu)
-            # if min_cpu_core_milli == float('inf'):
-            #     min_cpu_core_milli = 2000 # 2000m CPU
-            # self.node_cpu_core.value = min_cpu_core_milli * 0.001  # convert to cores from millicores
+        self.node_selector.value = selection.node_selector
+        self.number_of_nodes.value = selection.number_of_nodes
+        self.taint.value = selection.taints_json
 
         self.node_cpu_percentage.mutate()

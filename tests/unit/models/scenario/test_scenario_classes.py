@@ -127,6 +127,13 @@ class TestNodeCPUHogScenario:
         assert scenario.node_cpu_percentage.value <= 100
         assert scenario.number_of_nodes.value >= 1
 
+    def test_node_cpu_hog_scenario_raises_error_when_no_nodes(self):
+        """Test that NodeCPUHogScenario raises error when no nodes exist"""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No nodes found"):
+            NodeCPUHogScenario(cluster_components=cluster)
+
 
 class TestAppOutageScenario:
     """Test AppOutageScenario class"""

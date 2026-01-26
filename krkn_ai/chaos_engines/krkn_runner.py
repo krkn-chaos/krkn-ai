@@ -292,13 +292,12 @@ class KrknRunner:
             suffix=".json",
             dir=graph_json_directory,
             mode="w",
-            delete=False,  # Don't auto-delete; we'll manage cleanup
+            encoding="utf-8",
+            delete=False,  # Don't auto-delete
         ) as f:
-            json.dump(scenario_json, f, ensure_ascii=False, indent=4)
             json_file = f.name
-
-        # Track this temp file for cleanup after scenario execution
-        self._temp_files.append(json_file)
+            self._temp_files.append(json_file)
+            json.dump(scenario_json, f, ensure_ascii=False, indent=4)
         logger.info("Created scenario json in path: %s", json_file)
 
         # Run Json graph
@@ -572,13 +571,13 @@ class KrknRunner:
 
     def __cleanup_temp_files(self):
         """Remove temporary files created during scenario runs."""
-        for temp_file in self._temp_files:
+        files_to_remove = self._temp_files
+        self._temp_files = []  # Clear list for next run immediately
+
+        for temp_file in files_to_remove:
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
                     logger.debug("Cleaned up temporary file: %s", temp_file)
             except Exception as e:
                 logger.warning("Failed to cleanup temporary file %s: %s", temp_file, e)
-
-        # Clear the list for next run
-        self._temp_files.clear()

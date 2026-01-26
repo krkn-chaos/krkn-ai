@@ -52,7 +52,6 @@ class TestKrknRunnerCleanup:
             config, temp_output_dir, runner_type=KrknRunnerType.CLI_RUNNER
         )
 
-        # Create some temporary files and track them
         temp_file1 = os.path.join(temp_output_dir, "temp1.json")
         temp_file2 = os.path.join(temp_output_dir, "temp2.json")
 
@@ -61,22 +60,17 @@ class TestKrknRunnerCleanup:
         with open(temp_file2, "w") as f:
             f.write("test content 2")
 
-        # Verify files exist
         assert os.path.exists(temp_file1)
         assert os.path.exists(temp_file2)
 
-        # Track files for cleanup
         runner._temp_files.append(temp_file1)
         runner._temp_files.append(temp_file2)
 
-        # Call cleanup
         runner._KrknRunner__cleanup_temp_files()
 
-        # Verify files were removed
         assert not os.path.exists(temp_file1)
         assert not os.path.exists(temp_file2)
 
-        # Verify temp files list is cleared
         assert runner._temp_files == []
 
     @patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client")
@@ -88,14 +82,11 @@ class TestKrknRunnerCleanup:
             config, temp_output_dir, runner_type=KrknRunnerType.CLI_RUNNER
         )
 
-        # Track non-existent files
         runner._temp_files.append("/nonexistent/file1.json")
         runner._temp_files.append("/nonexistent/file2.json")
 
-        # Call cleanup - should not raise error
         runner._KrknRunner__cleanup_temp_files()
 
-        # Verify temp files list is cleared
         assert runner._temp_files == []
 
     @patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client")
@@ -105,17 +96,13 @@ class TestKrknRunnerCleanup:
             config, temp_output_dir, runner_type=KrknRunnerType.CLI_RUNNER
         )
 
-        # Create a temp file and track it
         temp_file = os.path.join(temp_output_dir, "temp.json")
         with open(temp_file, "w") as f:
             f.write("test content")
 
         runner._temp_files.append(temp_file)
 
-        # Mock os.remove to raise an exception
         with patch("os.remove", side_effect=PermissionError("Mock permission error")):
-            # Should not raise error despite removal failure
             runner._KrknRunner__cleanup_temp_files()
 
-        # Verify temp files list is cleared
         assert runner._temp_files == []

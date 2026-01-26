@@ -533,16 +533,40 @@ class KrknRunner:
             json_str = "\n".join(json_lines)
             chaos_data = json.loads(json_str)
 
-            # Extract exit_status from first scenario
+            # Extract exit_status from all scenarios (for composite scenarios)
+            # Return the worst exit status: misconfiguration errors (!=0,!=2) > SLO failures (2) > success (0)
             scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
             if scenarios and len(scenarios) > 0:
-                exit_status = scenarios[0].get("exit_status", default_returncode)
                 run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-                logger.debug("Extracted exit_status: %s", exit_status)
-                logger.debug("Extracted run_uuid: %s", run_uuid)
-                return exit_status, run_uuid
 
-            logger.warning("No exit_status found in telemetry data")
+                worst_exit_status = 0
+                failed_scenarios = []
+
+                for scenario in scenarios:
+                    exit_status = scenario.get("exit_status", 0)
+                    scenario_name = scenario.get("name", "unknown")
+
+                    if exit_status != 0:
+                        failed_scenarios.append((scenario_name, exit_status))
+                        # Prioritize misconfiguration errors over SLO failures
+                        if worst_exit_status == 0:
+                            worst_exit_status = exit_status
+                        elif exit_status != 2 and worst_exit_status == 2:
+                            # Misconfiguration error takes precedence over SLO failure
+                            worst_exit_status = exit_status
+
+                if failed_scenarios:
+                    logger.warning(
+                        "Scenario failures detected in composite run: %s",
+                        failed_scenarios
+                    )
+
+                logger.debug("Extracted worst exit_status: %s from %d scenarios",
+                           worst_exit_status, len(scenarios))
+                logger.debug("Extracted run_uuid: %s", run_uuid)
+                return worst_exit_status, run_uuid
+
+            logger.warning("No scenarios found in telemetry data")
             return default_returncode, None
 
         except Exception as e:

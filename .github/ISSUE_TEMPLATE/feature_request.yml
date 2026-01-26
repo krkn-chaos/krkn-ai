@@ -1,0 +1,128 @@
+---
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A brief summary of the feature request.
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a detailed description of the proposed feature.
+      placeholder: Explain what the feature is and how it would work.
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: Background and Context
+      description: Provide any relevant background information or context.
+      placeholder: Why is this feature needed? What problem does it solve?
+    validations:
+      required: false
+  - type: textarea
+    id: current_analysis
+    attributes:
+      label: Current Code Analysis
+      description: If applicable, analyze the current implementation.
+      placeholder: Describe how things currently work and what needs to change.
+    validations:
+      required: false
+  - type: textarea
+    id: issues_identified
+    attributes:
+      label: Issues Identified
+      description: List any issues or limitations with the current approach.
+      placeholder: |
+        1. Issue 1
+        2. Issue 2
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve? Why is it needed?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: implementation_steps
+    attributes:
+      label: Implementation Steps
+      description: Outline the steps needed to implement this feature.
+      placeholder: |
+        - [ ] Step 1
+        - [ ] Step 2
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What criteria must be met for this feature to be considered complete?
+      placeholder: |
+        - [ ] Criteria 1
+        - [ ] Criteria 2
+    validations:
+      required: false
+  - type: textarea
+    id: testing_checklist
+    attributes:
+      label: Testing Checklist
+      description: Outline the tests needed to verify the feature.
+      placeholder: |
+        - [ ] Test case 1
+        - [ ] Test case 2
+    validations:
+      required: false
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: What are the benefits of implementing this feature?
+      placeholder: How will this improve the project or user experience?
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or features?
+    validations:
+      required: false
+  - type: textarea
+    id: related_docs
+    attributes:
+      label: Related Documentation
+      description: Links to relevant documentation or references.
+      placeholder: |
+        - [Link 1](url)
+        - [Link 2](url)
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots about the feature request here.
+    validations:
+      required: false

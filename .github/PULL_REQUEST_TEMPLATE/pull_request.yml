@@ -1,0 +1,61 @@
+---
+name: Pull Request
+description: Create a pull request
+title: "[PR]: "
+labels: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing to Krkn AI! Please fill out the details below.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the changes made in this PR.
+      placeholder: What does this PR do? Why is it needed?
+    validations:
+      required: true
+  - type: textarea
+    id: type
+    attributes:
+      label: Type of Change
+      description: What type of change does this PR introduce?
+      placeholder: |
+        - [ ] Bug fix (non-breaking change which fixes an issue)
+        - [ ] New feature (non-breaking change which adds functionality)
+        - [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+        - [ ] Documentation update
+        - [ ] Other (please describe)
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing
+      description: How have you tested these changes?
+      placeholder: Describe the tests you ran, including any relevant commands or scripts.
+    validations:
+      required: true
+  - type: textarea
+    id: checklist
+    attributes:
+      label: Checklist
+      description: Please check all that apply.
+      value: |
+        - [ ] I have read the [CONTRIBUTING](https://github.com/krkn-chaos/krkn/blob/main/CONTRIBUTING.md) guidelines
+        - [ ] My code follows the project's style guidelines
+        - [ ] I have added tests that prove my fix is effective or that my feature works
+        - [ ] New and existing unit tests pass locally with my changes
+        - [ ] I have updated the documentation accordingly
+        - [ ] My changes generate no new warnings or errors
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Notes
+      description: Any additional information or context?
+    validations:
+      required: false

@@ -1,0 +1,151 @@
+---
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+      placeholder: Describe what happened, what you expected to happen, and any relevant context.
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: Background and Context
+      description: Provide any relevant background information or context.
+      placeholder: Include links to documentation, related issues, or design decisions.
+    validations:
+      required: false
+  - type: textarea
+    id: current_code
+    attributes:
+      label: Current Problematic Code
+      description: If applicable, include the problematic code snippet.
+      placeholder: |
+        ```python
+        # Paste the relevant code here
+        ```
+      render: python
+    validations:
+      required: false
+  - type: textarea
+    id: issues_identified
+    attributes:
+      label: Issues Identified
+      description: List the specific issues or problems you've identified.
+      placeholder: |
+        1. Issue 1
+        2. Issue 2
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Describe the impact of this bug.
+      placeholder: How does this affect users or the system?
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: false
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: If you have a proposed fix, describe it here.
+      placeholder: Describe the solution you'd like to see implemented.
+    validations:
+      required: false
+  - type: textarea
+    id: implementation_steps
+    attributes:
+      label: Implementation Steps
+      description: If applicable, outline the steps needed to fix this bug.
+      placeholder: |
+        - [ ] Step 1
+        - [ ] Step 2
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What criteria must be met for this bug to be considered fixed?
+      placeholder: |
+        - [ ] Criteria 1
+        - [ ] Criteria 2
+    validations:
+      required: false
+  - type: textarea
+    id: testing_checklist
+    attributes:
+      label: Testing Checklist
+      description: Outline the tests needed to verify the fix.
+      placeholder: |
+        - [ ] Test case 1
+        - [ ] Test case 2
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please provide details about your environment.
+      placeholder: |
+        - OS: [e.g., Linux, macOS]
+        - Python version: [e.g., 3.9]
+        - Krkn version: [e.g., v1.0.0]
+        - Kubernetes version: [e.g., v1.24]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: If applicable, add logs to help explain your problem.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: related_docs
+    attributes:
+      label: Related Documentation
+      description: Links to relevant documentation or references.
+      placeholder: |
+        - [Link 1](url)
+        - [Link 2](url)
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here.
+    validations:
+      required: false

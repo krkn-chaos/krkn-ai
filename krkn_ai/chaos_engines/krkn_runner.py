@@ -29,8 +29,6 @@ from krkn_ai.utils.rng import rng
 
 logger = get_logger(__name__)
 
-# TODO: Cleanup of temp kubeconfig after running the script
-
 PODMAN_TEMPLATE = 'podman run --env-host=true -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
 
 PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER="{server}" -e ES_PORT="{port}" -e ES_USERNAME="{username}" -e ES_PASSWORD="{password}" -e ES_VERIFY_CERTS="{verify_certs}" '
@@ -54,6 +52,7 @@ class KrknRunner:
         self.config = config
         self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
         self.output_dir = output_dir
+        self._temp_files: list[str] = []  # Track temporary files for cleanup
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()
         else:
@@ -95,102 +94,114 @@ class KrknRunner:
         # Generate command krkn executor command
         log, returncode, run_uuid = None, None, None
         command = ""
-        if isinstance(scenario, CompositeScenario):
-            command = self.graph_command(scenario)
-        elif isinstance(scenario, Scenario):
-            command = self.runner_command(scenario)
-        else:
-            raise NotImplementedError("Scenario unable to run")
+        try:
+            if isinstance(scenario, CompositeScenario):
+                command = self.graph_command(scenario)
+            elif isinstance(scenario, Scenario):
+                command = self.runner_command(scenario)
+            else:
+                raise NotImplementedError("Scenario unable to run")
 
-        health_check_watcher = HealthCheckWatcher(self.config.health_checks)
+            health_check_watcher = HealthCheckWatcher(self.config.health_checks)
 
-        # Run command and fetch result
-        if env_is_truthy("MOCK_RUN"):
-            # Used for running mock tests
-            time.sleep(rng.randint(1, 3))
-            log, returncode = "", 0
-        else:
-            # TODO: How to capture logs from composite run scenario
+            # Run command and fetch result
+            if env_is_truthy("MOCK_RUN"):
+                # Used for running mock tests
+                time.sleep(rng.randint(1, 3))
+                log, returncode = "", 0
+            else:
+                # TODO: How to capture logs from composite run scenario
 
-            # Start watching application urls for health checks
-            health_check_watcher.run()
+                # Start watching application urls for health checks
+                health_check_watcher.run()
 
-            # Run command (show logs when verbose mode is enabled)
-            log, returncode = run_shell(
-                self.process_es_env_string(command, True), do_not_log=not is_verbose()
-            )
-
-            # Extract return code from run log which is part of telemetry data present in the log
-            returncode, run_uuid = self.__extract_returncode_from_run(log, returncode)
-            logger.info("Krkn scenario return code: %d", returncode)
-
-            # Stop watching application urls for health checks
-            health_check_watcher.stop()
-
-        end_time = datetime.datetime.now()
-
-        # calculate fitness scores
-        fitness_result: FitnessResult = FitnessResult()
-
-        health_check_results = health_check_watcher.get_results()
-
-        # Check if krkn scenario failed due to misconfiguration (non-zero and not status code 2)
-        # Status code 2 means that SLOs not met per Krkn test (valid failure)
-        # Other non-zero status codes indicate misconfiguration errors
-        if returncode != 0 and returncode != 2:
-            # Misconfiguration failure - skip fitness calculation and set failure marker
-            logger.warning(
-                "Krkn scenario failed with return code %d (misconfiguration). "
-                "Skipping fitness calculation to avoid data pollution.",
-                returncode,
-            )
-            if self.config.fitness_function.include_krkn_failure:
-                fitness_result.krkn_failure_score = -1.0
-            fitness_result.fitness_score = -1.0
-            logger.info("Fitness score set to -1 due to misconfiguration failure")
-        else:
-            # Normal execution path - calculate fitness scores
-            # If user provided fitness_function.query, then we use the default function to calculate
-            if self.config.fitness_function.query is not None:
-                fitness_value = self.calculate_fitness_value(
-                    start=start_time,
-                    end=end_time,
-                    query=self.config.fitness_function.query,
-                    fitness_type=self.config.fitness_function.type,
-                )
-                fitness_result.fitness_score = fitness_value
-            elif len(self.config.fitness_function.items) > 0:
-                fitness_result = self.calculate_fitness_score_for_items(
-                    start=start_time, end=end_time
+                # Run command (show logs when verbose mode is enabled)
+                log, returncode = run_shell(
+                    self.process_es_env_string(command, True),
+                    do_not_log=not is_verbose(),
                 )
 
-            # Include krkn hub run failure info to the fitness score
-            if self.config.fitness_function.include_krkn_failure:
-                # Status code 2 means that SLOs not met per Krkn test
-                if returncode == 2:
-                    fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
-
-            # Include health check failure and response time to the fitness score
-            if self.config.fitness_function.include_health_check_failure:
-                fitness_result.health_check_failure_score = (
-                    health_check_watcher.summarize_success_rate(health_check_results)
+                # Extract return code from run log which is part of telemetry data present in the log
+                returncode, run_uuid = self.__extract_returncode_from_run(
+                    log, returncode
                 )
-            if self.config.fitness_function.include_health_check_response_time:
-                fitness_result.health_check_response_time_score = (
-                    health_check_watcher.summarize_response_time(health_check_results)
-                )
+                logger.info("Krkn scenario return code: %d", returncode)
 
-            # Calculate overall fitness score
-            logger.debug("Fitness result: %s", fitness_result)
-            fitness_result.fitness_score = sum(
-                [
-                    fitness_result.fitness_score,
-                    fitness_result.krkn_failure_score,
-                    fitness_result.health_check_failure_score,
-                    fitness_result.health_check_response_time_score,
-                ]
-            )
-            logger.info("Fitness score: %s", fitness_result.fitness_score)
+                # Stop watching application urls for health checks
+                health_check_watcher.stop()
+
+            end_time = datetime.datetime.now()
+
+            # calculate fitness scores
+            fitness_result: FitnessResult = FitnessResult()
+
+            health_check_results = health_check_watcher.get_results()
+
+            # Check if krkn scenario failed due to misconfiguration (non-zero and not status code 2)
+            # Status code 2 means that SLOs not met per Krkn test (valid failure)
+            # Other non-zero status codes indicate misconfiguration errors
+            if returncode != 0 and returncode != 2:
+                # Misconfiguration failure - skip fitness calculation and set failure marker
+                logger.warning(
+                    "Krkn scenario failed with return code %d (misconfiguration). "
+                    "Skipping fitness calculation to avoid data pollution.",
+                    returncode,
+                )
+                if self.config.fitness_function.include_krkn_failure:
+                    fitness_result.krkn_failure_score = -1.0
+                fitness_result.fitness_score = -1.0
+                logger.info("Fitness score set to -1 due to misconfiguration failure")
+            else:
+                # Normal execution path - calculate fitness scores
+                # If user provided fitness_function.query, then we use the default function to calculate
+                if self.config.fitness_function.query is not None:
+                    fitness_value = self.calculate_fitness_value(
+                        start=start_time,
+                        end=end_time,
+                        query=self.config.fitness_function.query,
+                        fitness_type=self.config.fitness_function.type,
+                    )
+                    fitness_result.fitness_score = fitness_value
+                elif len(self.config.fitness_function.items) > 0:
+                    fitness_result = self.calculate_fitness_score_for_items(
+                        start=start_time, end=end_time
+                    )
+
+                # Include krkn hub run failure info to the fitness score
+                if self.config.fitness_function.include_krkn_failure:
+                    # Status code 2 means that SLOs not met per Krkn test
+                    if returncode == 2:
+                        fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
+
+                # Include health check failure and response time to the fitness score
+                if self.config.fitness_function.include_health_check_failure:
+                    fitness_result.health_check_failure_score = (
+                        health_check_watcher.summarize_success_rate(
+                            health_check_results
+                        )
+                    )
+                if self.config.fitness_function.include_health_check_response_time:
+                    fitness_result.health_check_response_time_score = (
+                        health_check_watcher.summarize_response_time(
+                            health_check_results
+                        )
+                    )
+
+                # Calculate overall fitness score
+                logger.debug("Fitness result: %s", fitness_result)
+                fitness_result.fitness_score = sum(
+                    [
+                        fitness_result.fitness_score,
+                        fitness_result.krkn_failure_score,
+                        fitness_result.health_check_failure_score,
+                        fitness_result.health_check_response_time_score,
+                    ]
+                )
+                logger.info("Fitness score: %s", fitness_result.fitness_score)
+
+        finally:
+            # Cleanup temporary files created during scenario run
+            self.__cleanup_temp_files()
 
         return CommandRunResult(
             generation_id=generation_id,
@@ -275,9 +286,19 @@ class KrknRunner:
 
         # Create JSON for krknctl graph runner
         scenario_json = self.__expand_composite_json(scenario)
-        json_file = tempfile.mktemp(suffix=".json", dir=graph_json_directory)
-        with open(json_file, "w", encoding="utf-8") as f:
+
+        # Use NamedTemporaryFile instead of deprecated mktemp for security
+        with tempfile.NamedTemporaryFile(
+            suffix=".json",
+            dir=graph_json_directory,
+            mode="w",
+            delete=False,  # Don't auto-delete; we'll manage cleanup
+        ) as f:
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
+            json_file = f.name
+
+        # Track this temp file for cleanup after scenario execution
+        self._temp_files.append(json_file)
         logger.info("Created scenario json in path: %s", json_file)
 
         # Run Json graph
@@ -548,3 +569,16 @@ class KrknRunner:
         except Exception as e:
             logger.error("Failed to extract return code from run log: %s", e)
             return default_returncode, None
+
+    def __cleanup_temp_files(self):
+        """Remove temporary files created during scenario runs."""
+        for temp_file in self._temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    logger.debug("Cleaned up temporary file: %s", temp_file)
+            except Exception as e:
+                logger.warning("Failed to cleanup temporary file %s: %s", temp_file, e)
+
+        # Clear the list for next run
+        self._temp_files.clear()

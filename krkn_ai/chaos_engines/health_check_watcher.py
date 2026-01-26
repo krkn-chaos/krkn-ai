@@ -39,7 +39,9 @@ class HealthCheckWatcher:
             f"Starting health check watcher for {len(self.config.applications)} applications"
         )
         for health_check in self.config.applications:
-            t = threading.Thread(target=self.run_health_check, args=(health_check,))
+            t = threading.Thread(
+                target=self.run_health_check, args=(health_check,), daemon=True
+            )
             t.start()
             self._threads.append(t)
 

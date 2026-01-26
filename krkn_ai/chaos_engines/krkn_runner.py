@@ -115,17 +115,19 @@ class KrknRunner:
             # Start watching application urls for health checks
             health_check_watcher.run()
 
-            # Run command (show logs when verbose mode is enabled)
-            log, returncode = run_shell(
-                self.process_es_env_string(command, True), do_not_log=not is_verbose()
-            )
+            try:
+                # Run command (show logs when verbose mode is enabled)
+                log, returncode = run_shell(
+                    self.process_es_env_string(command, True), do_not_log=not is_verbose()
+                )
 
-            # Extract return code from run log which is part of telemetry data present in the log
-            returncode, run_uuid = self.__extract_returncode_from_run(log, returncode)
-            logger.info("Krkn scenario return code: %d", returncode)
-
-            # Stop watching application urls for health checks
-            health_check_watcher.stop()
+                # Extract return code from run log which is part of telemetry data present in the log
+                returncode, run_uuid = self.__extract_returncode_from_run(log, returncode)
+                logger.info("Krkn scenario return code: %d", returncode)
+            finally:
+                # Stop watching application urls for health checks
+                # Must be in finally block to prevent thread leak on exceptions
+                health_check_watcher.stop()
 
         end_time = datetime.datetime.now()
 

@@ -116,8 +116,12 @@ class KrknRunner:
             health_check_watcher.run()
 
             # Run command (show logs when verbose mode is enabled)
+            # Timeout = wait_duration + 120 seconds buffer for initialization/teardown
+            execution_timeout = self.config.wait_duration + 120
             log, returncode = run_shell(
-                self.process_es_env_string(command, True), do_not_log=not is_verbose()
+                self.process_es_env_string(command, True),
+                do_not_log=not is_verbose(),
+                timeout=execution_timeout,
             )
 
             # Extract return code from run log which is part of telemetry data present in the log
@@ -136,14 +140,22 @@ class KrknRunner:
 
         # Check if krkn scenario failed due to misconfiguration (non-zero and not status code 2)
         # Status code 2 means that SLOs not met per Krkn test (valid failure)
+        # Return code -1 indicates execution timeout
         # Other non-zero status codes indicate misconfiguration errors
         if returncode != 0 and returncode != 2:
-            # Misconfiguration failure - skip fitness calculation and set failure marker
-            logger.warning(
-                "Krkn scenario failed with return code %d (misconfiguration). "
-                "Skipping fitness calculation to avoid data pollution.",
-                returncode,
-            )
+            # Misconfiguration or timeout failure - skip fitness calculation and set failure marker
+            if returncode == -1:
+                logger.error(
+                    "Krkn scenario execution timed out. "
+                    "This may indicate Kubernetes API unreachability or network issues. "
+                    "Skipping fitness calculation to avoid data pollution."
+                )
+            else:
+                logger.warning(
+                    "Krkn scenario failed with return code %d (misconfiguration). "
+                    "Skipping fitness calculation to avoid data pollution.",
+                    returncode,
+                )
             if self.config.fitness_function.include_krkn_failure:
                 fitness_result.krkn_failure_score = -1.0
             fitness_result.fitness_score = -1.0

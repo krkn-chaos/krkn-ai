@@ -113,8 +113,9 @@ class TestPrometheusUtils:
             with pytest.raises(PrometheusConnectionError):
                 create_prometheus_client("/tmp/test-kubeconfig")
 
+    @patch("krkn_ai.utils.prometheus.env_is_truthy", return_value=False)
     @patch("krkn_ai.utils.prometheus.KrknPrometheus")
-    def test_create_client_connection_test_failure(self, mock_prom_class):
+    def test_create_client_connection_test_failure(self, mock_prom_class, _):
         """Should raise connection error if the connection test (process_query) fails."""
         env = {"PROMETHEUS_URL": "http://localhost", "PROMETHEUS_TOKEN": "tok"}
         with patch.dict(os.environ, env):

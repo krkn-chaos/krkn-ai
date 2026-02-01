@@ -15,6 +15,8 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.recommendation import ScenarioRecommender
+from krkn_ai.utils.prometheus import create_prometheus_client
 
 
 @click.group(context_settings={"show_default": True})
@@ -201,3 +203,79 @@ def discover(
         f.write(template)
 
     logger.info("Saved component configuration to %s", output)
+    logger.info("Saved component configuration to %s", output)
+
+
+@main.command(help="Recommend a Krkn chaos scenario based on telemetry")
+@click.option(
+    "--prometheus-url",
+    help="Prometheus URL to fetch telemetry from.",
+    envvar="PROMETHEUS_URL",
+    required=False,
+)
+@click.option(
+    "--prometheus-token",
+    help="Prometheus Token.",
+    envvar="PROMETHEUS_TOKEN",
+    required=False,
+)
+@click.option(
+    "--kubeconfig",
+    "-k",
+    help="Path to cluster kubeconfig file.",
+    default=os.getenv("KUBECONFIG", None),
+)
+@click.option(
+    "--model-path",
+    "-m",
+    help="Path to the trained ML model.",
+    default="krkn_model.pkl",
+)
+@click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.pass_context
+def recommend(
+    ctx,
+    prometheus_url: str,
+    prometheus_token: str,
+    kubeconfig: str,
+    model_path: str,
+    verbose: int = 0,
+):
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
+
+    if not os.path.exists(model_path):
+        logger.error(
+            f"Model not found at {model_path}. Please train a model first or specify a valid path."
+        )
+        exit(1)
+
+    # Set env vars for prometheus client creation if provided explicitly
+    if prometheus_url:
+        os.environ["PROMETHEUS_URL"] = prometheus_url
+    if prometheus_token:
+        os.environ["PROMETHEUS_TOKEN"] = prometheus_token
+
+    try:
+        # Create prometheus client using existing utility
+        prom_client = create_prometheus_client(kubeconfig)
+        
+        recommender = ScenarioRecommender(prom_client, model_path)
+        
+        # Collect data
+        telemetry_df = recommender.collect_telemetry()
+        
+        logger.info("Collected Telemetry:\n%s", telemetry_df.to_string(index=False))
+        
+        # Predict
+        recommendation = recommender.recommend(telemetry_df)
+        
+        click.echo(f"\nRecommended Chaos Scenario: {recommendation}")
+        logger.info(f"Recommendation: {recommendation}")
+        
+    except PrometheusConnectionError as e:
+        logger.error(f"Prometheus Connection Error: {e}")
+        exit(1)
+    except Exception as e:
+        logger.exception(f"An error occurred: {e}")
+        exit(1)

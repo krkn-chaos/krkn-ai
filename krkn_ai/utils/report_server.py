@@ -71,29 +71,17 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         If this server is ever exposed beyond localhost (NOT RECOMMENDED), 
         implement HTTPS and add the Secure flag.
         """
-        # Set secure cookie if not present
+        # Set secure cookie if not present, using proper HTTP redirect
         if not self.validate_token():
-            # Build cookie with security attributes
+            # Use HTTP 302 redirect (not 200 with meta-refresh)
+            # This ensures proper semantics for all resource types
+            self.send_response(302)  # Temporary redirect
+            self.send_header('Location', '/')
             # HttpOnly: Prevents JavaScript access (XSS protection)
             # SameSite=Strict: Prevents CSRF attacks
             # Secure flag intentionally omitted for HTTP localhost (see docstring)
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
             self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
             self.end_headers()
-            
-            # Redirect to clean URL without token
-            redirect_html = f'''<!DOCTYPE html>
-<html>
-<head>
-    <meta http-equiv="refresh" content="0;url=/">
-    <title>Redirecting...</title>
-</head>
-<body>
-    <p>Setting up secure session... <a href="/">Click here if not redirected</a></p>
-</body>
-</html>'''
-            self.wfile.write(redirect_html.encode())
             return
         
         # Proceed with normal GET handling
@@ -170,13 +158,15 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         safe_suffix = normalized_path.lstrip('/')
         
         # 10. Whitelist and safe-path check with realpath validation
-        if normalized_path.startswith('/assets/'):
-            if self.is_safe_path(self.dist_dir, safe_suffix):
-                return os.path.join(self.dist_dir, safe_suffix)
-        
-        elif normalized_path == '/results.json' or normalized_path.startswith('/reports/'):
+        # Data endpoints (require authentication)
+        if normalized_path == '/results.json' or normalized_path.startswith('/reports/'):
             if self.is_safe_path(self.results_dir, safe_suffix):
                 return os.path.join(self.results_dir, safe_suffix)
+        
+        # Static files from dist_dir (after extension allowlist check)
+        # This includes /assets/*, /vite.svg, /favicon.ico, etc.
+        elif self.is_safe_path(self.dist_dir, safe_suffix):
+            return os.path.join(self.dist_dir, safe_suffix)
             
         # Block everything else
         logger.warning("Blocked unauthorized or unsafe path access: %s", normalized_path)
@@ -215,6 +205,8 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
     ThreadedTCPServer.allow_reuse_address = True
     server_address = ("127.0.0.1", port)
     
+    # Initialize httpd before try block for exception safety
+    httpd = None
     try:
         httpd = ThreadedTCPServer(server_address, handler)
         
@@ -238,7 +230,10 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
         logger.info("Server is running. Press Ctrl+C to stop.")
         httpd.serve_forever()
     except KeyboardInterrupt:
-        logger.info("\\nShutting down server...")
-        httpd.shutdown()
+        logger.info("\nShutting down server...")
+        if httpd:
+            httpd.shutdown()
     except OSError as e:
         logger.error("Failed to start server: %s", e)
+        if httpd:
+            httpd.shutdown()

@@ -1,20 +1,21 @@
 import os
-import sys
 import shutil
 
-# Add the project root to sys.path so we can import krkn_ai
-sys.path.append(os.getcwd())
+# Resolve the script's directory to allow running from anywhere
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from krkn_ai.utils.report_server import start_report_server
 from krkn_ai.utils.logger import init_logger
 
 def setup_demo_results():
-    results_dir = os.path.join(os.getcwd(), "demo_results")
+    results_dir = os.path.join(SCRIPT_DIR, "demo_results")
     if not os.path.exists(results_dir):
         os.makedirs(os.path.join(results_dir, "reports"), exist_ok=True)
         # Copy mock data from the web package
-        shutil.copy("krkn_ai/web/public/results.json", results_dir)
-        shutil.copy("krkn_ai/web/public/reports/all.csv", os.path.join(results_dir, "reports"))
+        source_results = os.path.join(SCRIPT_DIR, "krkn_ai/web/public/results.json")
+        source_reports = os.path.join(SCRIPT_DIR, "krkn_ai/web/public/reports/all.csv")
+        shutil.copy(source_results, results_dir)
+        shutil.copy(source_reports, os.path.join(results_dir, "reports"))
     return results_dir
 
 def main():

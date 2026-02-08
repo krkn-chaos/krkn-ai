@@ -35,36 +35,55 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
     def translate_path(self, path):
-        # 1. Decode URL (Turn %2e%2e into ..)
+        # 1. URL-decode to catch encoded traversal attempts (%2e%2e, %2f, etc.)
         path = unquote(path)
         
         # 2. Strip query strings and fragments
         path = path.split('?', 1)[0].split('#', 1)[0]
         
-        # 3. Default behavior for root
-        if path == '/':
+        # 3. Normalize Windows separators to Unix (\ -> /)
+        path = path.replace('\\', '/')
+        
+        # 4. Collapse multiple slashes and resolve . and .. segments
+        # This handles //, /./, /../ patterns
+        parts = []
+        for part in path.split('/'):
+            if part == '' or part == '.':
+                continue
+            elif part == '..':
+                # Reject any path with .. components outright
+                logger.warning("Blocked path with .. traversal attempt: %s", path)
+                return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
+            else:
+                parts.append(part)
+        
+        # Reconstruct normalized path
+        normalized_path = '/' + '/'.join(parts) if parts else '/'
+        
+        # 5. Default behavior for root
+        if normalized_path == '/':
             return os.path.join(self.dist_dir, "index.html")
         
-        # 4. Check Extension Allowlist (unless root/index)
-        _, ext = os.path.splitext(path)
+        # 6. Check Extension Allowlist
+        _, ext = os.path.splitext(normalized_path)
         if ext.lower() not in self.ALLOWED_EXTENSIONS:
-            logger.warning("Blocked request with unsafe extension: %s", path)
+            logger.warning("Blocked request with unsafe extension: %s", normalized_path)
             return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
 
-        # Clean path for safe joining
-        safe_suffix = path.lstrip('/')
+        # 7. Clean path for safe joining
+        safe_suffix = normalized_path.lstrip('/')
         
-        # 5. Whitelist and safe-path check
-        if path.startswith('/assets/'):
+        # 8. Whitelist and safe-path check with realpath validation
+        if normalized_path.startswith('/assets/'):
             if self.is_safe_path(self.dist_dir, safe_suffix):
                 return os.path.join(self.dist_dir, safe_suffix)
         
-        elif path == '/results.json' or path.startswith('/reports/'):
+        elif normalized_path == '/results.json' or normalized_path.startswith('/reports/'):
             if self.is_safe_path(self.results_dir, safe_suffix):
                 return os.path.join(self.results_dir, safe_suffix)
             
         # Block everything else
-        logger.warning("Blocked unauthorized or unsafe path access: %s", path)
+        logger.warning("Blocked unauthorized or unsafe path access: %s", normalized_path)
         return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

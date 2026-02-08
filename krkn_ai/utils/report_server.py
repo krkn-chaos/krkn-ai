@@ -4,7 +4,8 @@ import socketserver
 import threading
 import webbrowser
 import secrets
-from urllib.parse import unquote, parse_qs, urlparse
+from http.cookies import SimpleCookie
+from urllib.parse import unquote, urlparse
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -40,19 +41,60 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         except ValueError:
             return False
 
-    def translate_path(self, path):
-        # 1. Extract and validate security token from query string
-        parsed = urlparse(path)
-        query_params = parse_qs(parsed.query)
+    def do_GET(self):
+        """Override GET to set auth cookie on first access."""
+        # Set secure cookie if not present
+        if not self.validate_token():
+            # Set HttpOnly, SameSite cookie for security
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            # HttpOnly prevents JavaScript access, SameSite prevents CSRF
+            self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
+            self.end_headers()
+            
+            # Redirect to clean URL without token
+            redirect_html = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="0;url=/">
+    <title>Redirecting...</title>
+</head>
+<body>
+    <p>Setting up secure session... <a href="/">Click here if not redirected</a></p>
+</body>
+</html>'''
+            self.wfile.write(redirect_html.encode())
+            return
         
-        # For data endpoints (/results.json, /reports/*), require security token
+        # Proceed with normal GET handling
+        super().do_GET()
+    
+    def validate_token(self):
+        """Validate security token from cookie."""
+        cookie_header = self.headers.get('Cookie')
+        if not cookie_header:
+            return False
+        
+        cookies = SimpleCookie()
+        cookies.load(cookie_header)
+        
+        token_cookie = cookies.get('krkn_token')
+        if not token_cookie:
+            return False
+        
+        return token_cookie.value == self.security_token
+    
+    def translate_path(self, path):
+        # 1. Parse path
+        parsed = urlparse(path)
+        
+        # 2. For data endpoints (/results.json, /reports/*), require valid cookie
         if parsed.path.startswith('/results.json') or parsed.path.startswith('/reports/'):
-            provided_token = query_params.get('token', [None])[0]
-            if provided_token != self.security_token:
-                logger.warning("Blocked request without valid security token: %s", parsed.path)
+            if not self.validate_token():
+                logger.warning("Blocked request without valid auth cookie: %s", parsed.path)
                 return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
         
-        # 2. URL-decode to catch encoded traversal attempts (%2e%2e, %2f, etc.)
+        # 3. URL-decode to catch encoded traversal attempts (%2e%2e, %2f, etc.)
         path = unquote(parsed.path)
         
         # 3. Strip fragments (query already handled)
@@ -146,23 +188,19 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
     try:
         httpd = ThreadedTCPServer(server_address, handler)
         
-        # Truncate token for logging (avoid exposing in CI logs/log aggregation)
-        token_preview = security_token[:8] + "..." if len(security_token) > 8 else security_token
-        
-        # Log server start with truncated token
+        # Log server start (no token display - it's in secure cookies now)
         logger.info("=" * 60)
         logger.info("Krkn-AI Dashboard Server Started")
         logger.info("=" * 60)
         logger.info("Server: http://127.0.0.1:%d", port)
-        logger.info("Security Token: %s (truncated for security)", token_preview)
-        logger.info("IMPORTANT: Token required for data endpoint access.")
+        logger.info("Authentication: Secure HttpOnly cookie (auto-set on first access)")
         logger.info("=" * 60)
         
-        # Print full URL to stdout ONLY in interactive sessions (not headless)
+        # Open browser with clean URL (no token in query string)
         if not headless:
-            url = f"http://127.0.0.1:{port}/?token={security_token}"
+            url = f"http://127.0.0.1:{port}"
             print("\n" + "=" * 60)
-            print("🔗 Dashboard URL (copy to browser if not auto-opened):")
+            print("🔗 Dashboard URL:")
             print(f"   {url}")
             print("=" * 60 + "\n")
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()

@@ -1,18 +1,14 @@
 /**
  * Data parsing utilities for Krkn-AI results
+ * Authentication is now handled via secure HttpOnly cookies
  */
-
-// Extract security token from URL parameters
-const getSecurityToken = () => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('token') || '';
-};
 
 export const parseResults = async (url = '/results.json') => {
     try {
-        const token = getSecurityToken();
-        const urlWithToken = token ? `${url}?token=${encodeURIComponent(token)}` : url;
-        const response = await fetch(urlWithToken);
+        // Cookies are automatically included in fetch requests
+        const response = await fetch(url, {
+            credentials: 'same-origin' // Include cookies
+        });
         if (!response.ok) throw new Error('Failed to fetch results');
         return await response.json();
     } catch (err) {
@@ -56,12 +52,11 @@ export const parseCSV = (csvText) => {
 };
 
 export const loadAllData = async (baseUrl = '') => {
-    const token = getSecurityToken();
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
-
     const [results, csvText] = await Promise.all([
         parseResults(`${baseUrl}/results.json`),
-        fetch(`${baseUrl}/reports/all.csv${tokenParam}`).then(res => res.ok ? res.text() : '').catch(() => '')
+        fetch(`${baseUrl}/reports/all.csv`, {
+            credentials: 'same-origin' // Include cookies
+        }).then(res => res.ok ? res.text() : '').catch(() => '')
     ]);
 
     const scenarios = parseCSV(csvText);

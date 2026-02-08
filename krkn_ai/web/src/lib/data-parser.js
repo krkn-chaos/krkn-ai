@@ -2,9 +2,17 @@
  * Data parsing utilities for Krkn-AI results
  */
 
+// Extract security token from URL parameters
+const getSecurityToken = () => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('token') || '';
+};
+
 export const parseResults = async (url = '/results.json') => {
     try {
-        const response = await fetch(url);
+        const token = getSecurityToken();
+        const urlWithToken = token ? `${url}?token=${encodeURIComponent(token)}` : url;
+        const response = await fetch(urlWithToken);
         if (!response.ok) throw new Error('Failed to fetch results');
         return await response.json();
     } catch (err) {
@@ -20,7 +28,7 @@ export const parseCSV = (csvText) => {
 
     // Robust CSV split function that handles quoted commas
     const splitCSVLine = (line) => {
-        const matches = line.matchAll(/("[^"]*"|[^,]+|(?<=,)(?=,)|(?<=^)(?=,)|(?<=,)(?=$))/g);
+        const matches = line.matchAll(/("([^"]*)"|[^,]+|(?<=,)(?=,)|(?<=^)(?=,)|(?<=,)(?=$))/g);
         return Array.from(matches).map(m => {
             let val = m[0];
             if (val.startsWith('"') && val.endsWith('"')) {
@@ -48,9 +56,12 @@ export const parseCSV = (csvText) => {
 };
 
 export const loadAllData = async (baseUrl = '') => {
+    const token = getSecurityToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+
     const [results, csvText] = await Promise.all([
         parseResults(`${baseUrl}/results.json`),
-        fetch(`${baseUrl}/reports/all.csv`).then(res => res.ok ? res.text() : '').catch(() => '')
+        fetch(`${baseUrl}/reports/all.csv${tokenParam}`).then(res => res.ok ? res.text() : '').catch(() => '')
     ]);
 
     const scenarios = parseCSV(csvText);

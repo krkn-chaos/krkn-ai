@@ -3,7 +3,8 @@ import http.server
 import socketserver
 import threading
 import webbrowser
-from urllib.parse import unquote
+import secrets
+from urllib.parse import unquote, parse_qs, urlparse
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,12 +15,17 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         '.png', '.jpg', '.jpeg', '.svg', '.gif', '.ico',
         '.woff', '.woff2', '.ttf'
     }
+    
+    # Strict allowlist for /reports/ directory (only known result files)
+    ALLOWED_REPORT_FILES = {'all.csv', 'summary.csv'}
+    
     """
     Custom handler to serve both the static dashboard and the results data.
     """
-    def __init__(self, *args, dist_dir=None, results_dir=None, **kwargs):
+    def __init__(self, *args, dist_dir=None, results_dir=None, security_token=None, **kwargs):
         self.dist_dir = dist_dir
         self.results_dir = results_dir
+        self.security_token = security_token
         super().__init__(*args, **kwargs)
 
     def is_safe_path(self, base_dir, path):
@@ -35,16 +41,27 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
     def translate_path(self, path):
-        # 1. URL-decode to catch encoded traversal attempts (%2e%2e, %2f, etc.)
-        path = unquote(path)
+        # 1. Extract and validate security token from query string
+        parsed = urlparse(path)
+        query_params = parse_qs(parsed.query)
         
-        # 2. Strip query strings and fragments
-        path = path.split('?', 1)[0].split('#', 1)[0]
+        # For data endpoints (/results.json, /reports/*), require security token
+        if parsed.path.startswith('/results.json') or parsed.path.startswith('/reports/'):
+            provided_token = query_params.get('token', [None])[0]
+            if provided_token != self.security_token:
+                logger.warning("Blocked request without valid security token: %s", parsed.path)
+                return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
         
-        # 3. Normalize Windows separators to Unix (\ -> /)
+        # 2. URL-decode to catch encoded traversal attempts (%2e%2e, %2f, etc.)
+        path = unquote(parsed.path)
+        
+        # 3. Strip fragments (query already handled)
+        path = path.split('#', 1)[0]
+        
+        # 4. Normalize Windows separators to Unix (\ -> /)
         path = path.replace('\\', '/')
         
-        # 4. Collapse multiple slashes and resolve . and .. segments
+        # 5. Collapse multiple slashes and resolve . and .. segments
         # This handles //, /./, /../ patterns
         parts = []
         for part in path.split('/'):
@@ -60,20 +77,27 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         # Reconstruct normalized path
         normalized_path = '/' + '/'.join(parts) if parts else '/'
         
-        # 5. Default behavior for root
+        # 6. Default behavior for root
         if normalized_path == '/':
             return os.path.join(self.dist_dir, "index.html")
         
-        # 6. Check Extension Allowlist
+        # 7. Check Extension Allowlist
         _, ext = os.path.splitext(normalized_path)
         if ext.lower() not in self.ALLOWED_EXTENSIONS:
             logger.warning("Blocked request with unsafe extension: %s", normalized_path)
             return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
+        
+        # 8. For /reports/, enforce strict filename allowlist
+        if normalized_path.startswith('/reports/'):
+            filename = os.path.basename(normalized_path)
+            if filename not in self.ALLOWED_REPORT_FILES:
+                logger.warning("Blocked request for non-allowlisted report file: %s", filename)
+                return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
 
-        # 7. Clean path for safe joining
+        # 9. Clean path for safe joining
         safe_suffix = normalized_path.lstrip('/')
         
-        # 8. Whitelist and safe-path check with realpath validation
+        # 10. Whitelist and safe-path check with realpath validation
         if normalized_path.startswith('/assets/'):
             if self.is_safe_path(self.dist_dir, safe_suffix):
                 return os.path.join(self.dist_dir, safe_suffix)
@@ -103,11 +127,15 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
         results_name = os.path.basename(os.path.normpath(results_dir))
         logger.warning("Warning: results.json not found in '%s'. Dashboard might be empty.", results_name or results_dir)
 
-    # Use a partial to inject directories into the handler
+    # Generate a random security token to prevent localhost abuse
+    security_token = secrets.token_urlsafe(32)
+    
+    # Use a partial to inject directories and token into the handler
     handler = lambda *args, **kwargs: ReportHandler(
         *args, 
         dist_dir=dist_dir, 
-        results_dir=results_dir, 
+        results_dir=results_dir,
+        security_token=security_token,
         **kwargs
     )
     
@@ -116,26 +144,28 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
     server_address = ("127.0.0.1", port)
     
     try:
-        with ThreadedTCPServer(server_address, handler) as httpd:
-            logger.info("Krkn-AI Dashboard serving at http://127.0.0.1:%d", port)
-            logger.info("Press Ctrl+C to stop.")
-            
-            # Start httpd in a background thread
-            server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-            server_thread.start()
-
-            # Open the browser if not headless
-            if not headless and os.getenv("KRKN_AI_HEADLESS") != "true":
-                webbrowser.open(f"http://127.0.0.1:{port}")
-
-            # Wait for keyboard interrupt
-            try:
-                while server_thread.is_alive():
-                    server_thread.join(timeout=0.5)
-            except KeyboardInterrupt:
-                logger.info("Interrupt received, shutting down report server...")
-                httpd.shutdown()
-                server_thread.join()
-                logger.info("Server shutdown complete.")
-    except Exception as e:
-        logger.error("Failed to start or run server: %s", e)
+        httpd = ThreadedTCPServer(server_address, handler)
+        
+        # Display security information
+        logger.info("=" * 60)
+        logger.info("Krkn-AI Dashboard Server Started")
+        logger.info("=" * 60)
+        logger.info("URL: http://127.0.0.1:%d/?token=%s", port, security_token)
+        logger.info("Security Token: %s", security_token)
+        logger.info("")
+        logger.info("IMPORTANT: The token is required to access data endpoints.")
+        logger.info("This prevents malicious webpages from accessing your files.")
+        logger.info("=" * 60)
+        
+        # Open browser if not headless
+        if not headless:
+            url = f"http://127.0.0.1:{port}/?token={security_token}"
+            threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+        
+        logger.info("Server is running. Press Ctrl+C to stop.")
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("\\nShutting down server...")
+        httpd.shutdown()
+    except OSError as e:
+        logger.error("Failed to start server: %s", e)

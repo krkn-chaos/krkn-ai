@@ -146,20 +146,25 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
     try:
         httpd = ThreadedTCPServer(server_address, handler)
         
-        # Display security information
+        # Truncate token for logging (avoid exposing in CI logs/log aggregation)
+        token_preview = security_token[:8] + "..." if len(security_token) > 8 else security_token
+        
+        # Log server start with truncated token
         logger.info("=" * 60)
         logger.info("Krkn-AI Dashboard Server Started")
         logger.info("=" * 60)
-        logger.info("URL: http://127.0.0.1:%d/?token=%s", port, security_token)
-        logger.info("Security Token: %s", security_token)
-        logger.info("")
-        logger.info("IMPORTANT: The token is required to access data endpoints.")
-        logger.info("This prevents malicious webpages from accessing your files.")
+        logger.info("Server: http://127.0.0.1:%d", port)
+        logger.info("Security Token: %s (truncated for security)", token_preview)
+        logger.info("IMPORTANT: Token required for data endpoint access.")
         logger.info("=" * 60)
         
-        # Open browser if not headless
+        # Print full URL to stdout ONLY in interactive sessions (not headless)
         if not headless:
             url = f"http://127.0.0.1:{port}/?token={security_token}"
+            print("\n" + "=" * 60)
+            print("🔗 Dashboard URL (copy to browser if not auto-opened):")
+            print(f"   {url}")
+            print("=" * 60 + "\n")
             threading.Timer(1.0, lambda: webbrowser.open(url)).start()
         
         logger.info("Server is running. Press Ctrl+C to stop.")

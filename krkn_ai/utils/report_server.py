@@ -71,19 +71,19 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         If this server is ever exposed beyond localhost (NOT RECOMMENDED), 
         implement HTTPS and add the Secure flag.
         """
-        # Only set cookie and redirect on root navigation (not asset requests)
+        # Set cookie on first access without redirect to avoid loops
         if not self.validate_token():
-            # Only redirect on root path to avoid extra round-trips for assets
+            # Only set cookie on root path to avoid extra processing for assets
             if self.path == '/' or self.path.startswith('/?'):
-                # Use HTTP 302 redirect for root navigation
-                self.send_response(302)  # Temporary redirect
-                self.send_header('Location', '/')
+                # Set cookie with 200 response (no redirect to avoid loops if cookies blocked)
+                # The cookie will be set and the page will be served normally
                 # HttpOnly: Prevents JavaScript access (XSS protection)
                 # SameSite=Strict: Prevents CSRF attacks
                 # Secure flag intentionally omitted for HTTP localhost (see docstring)
-                self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
-                self.end_headers()
-                return
+                
+                # We'll set the header before calling super().do_GET()
+                # Store the cookie to be sent in the response
+                self._pending_cookie = f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/'
             else:
                 # For non-root paths without cookie, return 401
                 self.send_error(401, "Authentication required. Please visit the root page first.")
@@ -91,6 +91,13 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         
         # Proceed with normal GET handling
         super().do_GET()
+    
+    def end_headers(self):
+        """Override to inject cookie header if pending."""
+        if hasattr(self, '_pending_cookie'):
+            self.send_header('Set-Cookie', self._pending_cookie)
+            delattr(self, '_pending_cookie')
+        super().end_headers()
     
     def validate_token(self):
         """Validate security token from cookie."""
@@ -247,9 +254,10 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
         httpd.serve_forever()
     except KeyboardInterrupt:
         logger.info("\nShutting down server...")
-        if httpd:
-            httpd.shutdown()
     except OSError as e:
         logger.error("Failed to start server: %s", e)
+    finally:
+        # Ensure proper cleanup of server resources
         if httpd:
             httpd.shutdown()
+            httpd.server_close()  # Close the socket to prevent port reuse issues

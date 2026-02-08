@@ -35,9 +35,9 @@ export const parseCSV = (csvText) => {
     };
 
     const headers = splitCSVLine(lines[0]);
-    return lines.slice(1).map(line => {
+    return lines.slice(1).map((line, index) => {
         const values = splitCSVLine(line);
-        return headers.reduce((obj, header, i) => {
+        const row = headers.reduce((obj, header, i) => {
             if (!header) return obj;
             let val = values[i] !== undefined ? values[i] : "";
             // Try to parse numbers
@@ -48,6 +48,19 @@ export const parseCSV = (csvText) => {
             obj[header.trim()] = val;
             return obj;
         }, {});
+        
+        // Add stable key with fallback for missing identifiers
+        const genId = row.generation_id;
+        const scenId = row.scenario_id;
+        
+        if (!genId || !scenId || genId === '' || scenId === '') {
+            // Fallback to index if identifiers missing/empty
+            row._key = `row-${index}`;
+        } else {
+            row._key = `${genId}-${scenId}`;
+        }
+        
+        return row;
     });
 };
 

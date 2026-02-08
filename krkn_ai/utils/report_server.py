@@ -51,12 +51,13 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
     dist_dir = os.path.join(base_dir, "web", "dist")
 
     if not os.path.exists(dist_dir):
-        logger.error("Dashboard not found! Please ensure it is built in '%s'", dist_dir)
+        logger.error("Dashboard not found! Please ensure it is built in 'web/dist'")
         return
 
     # Check if results exist
     if not os.path.exists(os.path.join(results_dir, "results.json")):
-        logger.warning("Warning: results.json not found in '%s'. Dashboard might be empty.", results_dir)
+        results_name = os.path.basename(os.path.normpath(results_dir))
+        logger.warning("Warning: results.json not found in '%s'. Dashboard might be empty.", results_name or results_dir)
 
     # Use a partial to inject directories into the handler
     handler = lambda *args, **kwargs: ReportHandler(

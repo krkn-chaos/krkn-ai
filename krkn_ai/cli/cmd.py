@@ -23,29 +23,6 @@ def main():
     pass
 
 
-@main.command(help="Launch interactive visualization dashboard for Krkn-AI results")
-@click.option(
-    "--results-dir",
-    "-d",
-    help="Directory containing krkn-ai results (results.json, reports/).",
-    default="./",
-)
-@click.option(
-    "--port",
-    "-p",
-    help="Port to serve the dashboard on.",
-    default=8080,
-    type=int,
-)
-def report(results_dir: str, port: int):
-    init_logger(None, False)
-    logger = get_logger(__name__)
-    
-    abs_results_dir = os.path.abspath(results_dir)
-    logger.info("Initializing dashboard for results in: %s", abs_results_dir)
-    start_report_server(abs_results_dir, port)
-
-
 @main.command(help="Run Krkn-AI tests")
 @click.option(
     "--kubeconfig",

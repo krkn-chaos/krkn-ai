@@ -183,5 +183,6 @@ chaos-ai.yaml
 
 uv.lock
 
-# Allow Krkn-AI dashboard library
+# Allow Krkn-AI dashboard assets and logic
+!krkn_ai/web/dist/
 !krkn_ai/web/src/lib/

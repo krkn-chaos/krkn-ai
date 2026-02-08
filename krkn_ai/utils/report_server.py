@@ -3,17 +3,23 @@ import http.server
 import socketserver
 import threading
 import webbrowser
+from urllib.parse import unquote
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class ReportHandler(http.server.SimpleHTTPRequestHandler):
+    ALLOWED_EXTENSIONS = {
+        '.html', '.css', '.js', '.json', '.csv',
+        '.png', '.jpg', '.jpeg', '.svg', '.gif', '.ico',
+        '.woff', '.woff2', '.ttf'
+    }
     """
     Custom handler to serve both the static dashboard and the results data.
     """
-    def __init__(self, *args, **kwargs):
-        self.dist_dir = kwargs.pop('dist_dir', None)
-        self.results_dir = kwargs.pop('results_dir', None)
+    def __init__(self, *args, dist_dir=None, results_dir=None, **kwargs):
+        self.dist_dir = dist_dir
+        self.results_dir = results_dir
         super().__init__(*args, **kwargs)
 
     def is_safe_path(self, base_dir, path):
@@ -29,20 +35,26 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
     def translate_path(self, path):
-        # normalize: strip query/fragment and unquote
-        path = path.split('?', 1)[0].split('#', 1)[0]
-        # (Assuming standard library handles unquote in self.path before calling translate_path, 
-        # but if this overrides SimpleHTTPRequestHandler.translate_path completely, we should be careful.
-        # The base implementation usually handles unquote. We will just clean the path string here.)
+        # 1. Decode URL (Turn %2e%2e into ..)
+        path = unquote(path)
         
-        # Default behavior for root
+        # 2. Strip query strings and fragments
+        path = path.split('?', 1)[0].split('#', 1)[0]
+        
+        # 3. Default behavior for root
         if path == '/':
             return os.path.join(self.dist_dir, "index.html")
         
+        # 4. Check Extension Allowlist (unless root/index)
+        _, ext = os.path.splitext(path)
+        if ext.lower() not in self.ALLOWED_EXTENSIONS:
+            logger.warning("Blocked request with unsafe extension: %s", path)
+            return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
+
         # Clean path for safe joining
         safe_suffix = path.lstrip('/')
         
-        # Whitelist and safe-path check
+        # 5. Whitelist and safe-path check
         if path.startswith('/assets/'):
             if self.is_safe_path(self.dist_dir, safe_suffix):
                 return os.path.join(self.dist_dir, safe_suffix)
@@ -51,8 +63,7 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             if self.is_safe_path(self.results_dir, safe_suffix):
                 return os.path.join(self.results_dir, safe_suffix)
             
-        # Block everything else (including traversal attempts that were normalized by the browser/client)
-        # We return a non-existent path inside dist_dir to force a 404 Not Found
+        # Block everything else
         logger.warning("Blocked unauthorized or unsafe path access: %s", path)
         return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
 

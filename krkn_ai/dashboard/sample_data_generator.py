@@ -126,21 +126,40 @@ def generate_sample_data(output_dir: str = "./sample_results"):
 
         if gen_best_scenario:
             best_scenarios.append({
-                "generation": gen,
-                "scenario": gen_best_scenario["scenario"],
+                "generation_id": gen,
+                "scenario": gen_best_scenario["scenario"].get("name", ""),
                 "fitness_score": gen_best_fitness,
             })
 
     # Save best scenarios
-    with open(output_path / "best_scenarios.json", "w") as f:
+    with open(output_path / "reports" / "best_scenarios.json", "w") as f:
         json.dump(best_scenarios, f, indent=2)
 
     # Save health check report
+    # Group by scenario and app to match HealthCheckReporter output
+    aggregated_health = []
+    for gen in range(10):
+        for scenario_idx in range(5):
+            scenario_id = f"gen{gen}_scenario{scenario_idx}"
+            for app in ["frontend", "cart", "catalogue"]:
+                success_count = random.randint(5, 10)
+                failure_count = random.randint(0, 2) if app != "cart" else random.randint(0, 5)
+                
+                aggregated_health.append({
+                    "scenario_id": scenario_id,
+                    "component_name": app,
+                    "min_response_time": random.uniform(0.1, 0.2),
+                    "max_response_time": random.uniform(0.6, 1.5),
+                    "average_response_time": random.uniform(0.2, 0.5),
+                    "success_count": success_count,
+                    "failure_count": failure_count,
+                })
+
     with open(output_path / "reports" / "health_check_report.csv", "w", newline="") as f:
-        fieldnames = ["scenario_id", "generation", "application", "timestamp", "response_time", "status_code", "success", "error"]
+        fieldnames = ["scenario_id", "component_name", "min_response_time", "max_response_time", "average_response_time", "success_count", "failure_count"]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(health_checks)
+        writer.writerows(aggregated_health)
 
     print(f"Sample data generated in: {output_path}")
     print(f"Total scenarios: {10 * 5}")

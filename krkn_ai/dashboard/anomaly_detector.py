@@ -77,31 +77,32 @@ class AnomalyDetector:
             return
 
         # Group by application
-        app_failures = {}
+        app_stats = {}
         for check in health_checks:
             app = check["application"]
-            if app not in app_failures:
-                app_failures[app] = {"total": 0, "failures": 0}
+            if app not in app_stats:
+                app_stats[app] = {"total_success": 0, "total_failure": 0}
 
-            app_failures[app]["total"] += 1
-            if not check["success"]:
-                app_failures[app]["failures"] += 1
+            app_stats[app]["total_success"] += check.get("success_count", 0)
+            app_stats[app]["total_failure"] += check.get("failure_count", 0)
 
         # Report applications with high failure rates
-        for app, stats in app_failures.items():
-            failure_rate = (stats["failures"] / stats["total"]) * 100
-            if failure_rate > 20:  # More than 20% failure rate
-                self.anomalies.append({
-                    "type": "health_check_failure",
-                    "severity": min(10, int(failure_rate / 10)),
-                    "application": app,
-                    "message": f"Health check failures detected for '{app}' ({failure_rate:.1f}% failure rate)",
-                    "details": {
-                        "total_checks": stats["total"],
-                        "failures": stats["failures"],
-                        "failure_rate": failure_rate,
-                    },
-                })
+        for app, stats in app_stats.items():
+            total = stats["total_success"] + stats["total_failure"]
+            if total > 0:
+                failure_rate = (stats["total_failure"] / total) * 100
+                if failure_rate > 20:  # More than 20% failure rate
+                    self.anomalies.append({
+                        "type": "health_check_failure",
+                        "severity": min(10, int(failure_rate / 10)),
+                        "application": app,
+                        "message": f"Health check failures detected for '{app}' ({failure_rate:.1f}% failure rate)",
+                        "details": {
+                            "success_count": stats["total_success"],
+                            "failure_count": stats["total_failure"],
+                            "failure_rate": failure_rate,
+                        },
+                    })
 
     def _detect_response_time_spikes(self):
         """Detect unusual response time spikes."""

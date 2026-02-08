@@ -313,6 +313,13 @@
             renderDashboard();
         });
 
+        function escapeHTML(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
         function renderDashboard() {
             if (!dashboardData || !dashboardData.statistics) {
                 document.getElementById('subtitle').textContent = 'No data available';
@@ -368,12 +375,24 @@
                 }
             ];
 
-            statsSection.innerHTML = cards.map(card => `
-                <div class="stat-card">
-                    <div class="stat-label">${card.label}</div>
-                    <div class="stat-value ${card.class}">${card.value}</div>
-                </div>
-            `).join('');
+            // Clear previous content
+            statsSection.innerHTML = '';
+            cards.forEach(card => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'stat-card';
+                
+                const labelEl = document.createElement('div');
+                labelEl.className = 'stat-label';
+                labelEl.textContent = card.label;
+                
+                const valueEl = document.createElement('div');
+                valueEl.className = `stat-value ${card.class}`;
+                valueEl.textContent = card.value;
+                
+                cardEl.appendChild(labelEl);
+                cardEl.appendChild(valueEl);
+                statsSection.appendChild(cardEl);
+            });
         }
 
         function renderAnomalies(anomalies) {
@@ -381,19 +400,37 @@
             const list = document.getElementById('anomalies-list');
 
             section.style.display = 'block';
+            list.innerHTML = '';
 
-            list.innerHTML = anomalies.map(anomaly => {
+            anomalies.forEach(anomaly => {
                 const severityClass = anomaly.severity >= 7 ? '' : 'warning';
-                return `
-                    <div class="anomaly-card ${severityClass}">
-                        <div class="anomaly-header">
-                            <span class="anomaly-severity ${severityClass}">${anomaly.severity}</span>
-                            <span class="anomaly-message">${anomaly.message}</span>
-                        </div>
-                        ${anomaly.details ? `<div class="anomaly-details">${formatDetails(anomaly.details)}</div>` : ''}
-                    </div>
-                `;
-            }).join('');
+                const cardEl = document.createElement('div');
+                cardEl.className = `anomaly-card ${severityClass}`;
+                
+                const headerEl = document.createElement('div');
+                headerEl.className = 'anomaly-header';
+                
+                const sevEl = document.createElement('span');
+                sevEl.className = `anomaly-severity ${severityClass}`;
+                sevEl.textContent = anomaly.severity;
+                
+                const msgEl = document.createElement('span');
+                msgEl.className = 'anomaly-message';
+                msgEl.textContent = anomaly.message;
+                
+                headerEl.appendChild(sevEl);
+                headerEl.appendChild(msgEl);
+                cardEl.appendChild(headerEl);
+                
+                if (anomaly.details) {
+                    const detailsEl = document.createElement('div');
+                    detailsEl.className = 'anomaly-details';
+                    detailsEl.textContent = formatDetails(anomaly.details);
+                    cardEl.appendChild(detailsEl);
+                }
+                
+                list.appendChild(cardEl);
+            });
         }
 
         function formatDetails(details) {
@@ -505,11 +542,8 @@
                 if (!appData[check.application]) {
                     appData[check.application] = { success: 0, failure: 0 };
                 }
-                if (check.success) {
-                    appData[check.application].success++;
-                } else {
-                    appData[check.application].failure++;
-                }
+                appData[check.application].success += check.success_count || 0;
+                appData[check.application].failure += check.failure_count || 0;
             });
 
             const apps = Object.keys(appData);
@@ -590,7 +624,7 @@
                 .sort((a, b) => b.fitness_score - a.fitness_score)
                 .slice(0, 10);
 
-            container.innerHTML = `
+            let html = `
                 <table>
                     <thead>
                         <tr>
@@ -602,22 +636,29 @@
                         </tr>
                     </thead>
                     <tbody>
-                        ${topScenarios.map((scenario, index) => `
-                            <tr>
-                                <td><strong>${index + 1}</strong></td>
-                                <td>${scenario.scenario_name}</td>
-                                <td>${scenario.generation}</td>
-                                <td><strong>${scenario.fitness_score.toFixed(2)}</strong></td>
-                                <td>
-                                    <span class="badge ${scenario.krkn_success ? 'success' : 'danger'}">
-                                        ${scenario.krkn_success ? 'Success' : 'Failed'}
-                                    </span>
-                                </td>
-                            </tr>
-                        `).join('')}
+            `;
+
+            topScenarios.forEach((scenario, index) => {
+                html += `
+                    <tr>
+                        <td><strong>${index + 1}</strong></td>
+                        <td>${escapeHTML(scenario.scenario_name)}</td>
+                        <td>${scenario.generation}</td>
+                        <td><strong>${scenario.fitness_score.toFixed(2)}</strong></td>
+                        <td>
+                            <span class="badge ${scenario.krkn_success ? 'success' : 'danger'}">
+                                ${scenario.krkn_success ? 'Success' : 'Failed'}
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
                     </tbody>
                 </table>
             `;
+            container.innerHTML = html;
         }
     </script>
 </body>

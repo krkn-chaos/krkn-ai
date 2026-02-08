@@ -24,6 +24,7 @@ setup(
         "Intended Audience :: Developers",
     ],
     packages=["krkn_ai"],
+    package_data={"krkn_ai.dashboard": ["templates/*.html"]},
     include_package_data=True,
     install_requires=REQUIRE,
     entry_points={

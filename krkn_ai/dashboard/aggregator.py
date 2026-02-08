@@ -65,7 +65,7 @@ class DataAggregator:
                 return {
                     "generations": config.get("generations", 0),
                     "population_size": config.get("population_size", 0),
-                    "kubeconfig": config.get("kubeconfig_file_path", ""),
+                    # kubeconfig removed for security (don't leak local paths)
                     "fitness_function": config.get("fitness_function", {}),
                     "scenarios": config.get("scenario", {}),
                 }
@@ -76,6 +76,7 @@ class DataAggregator:
     def _aggregate_fitness_scores(self) -> List[Dict[str, Any]]:
         """Aggregate fitness scores across all generations."""
         fitness_data = []
+        seen_scenarios = set()  # Track (gen, scenario_id) to avoid double counting
 
         # Look for scenario files in yaml/ or json/ directories
         for format_dir in ["yaml", "json"]:
@@ -85,24 +86,37 @@ class DataAggregator:
 
             # Iterate through generation directories
             for gen_dir in sorted(format_path.glob("generation_*")):
-                generation_id = int(gen_dir.name.split("_")[1])
+                try:
+                    # Robust parsing of generation ID
+                    gen_part = gen_dir.name.split("_")[1]
+                    generation_id = int(''.join(filter(str.isdigit, gen_part)))
+                except (IndexError, ValueError):
+                    logger.error("Could not parse generation ID from %s", gen_dir.name)
+                    continue
 
                 # Process each scenario file
                 for scenario_file in gen_dir.glob(f"scenario_*.{format_dir}"):
                     try:
                         data = self._load_scenario_file(scenario_file)
                         if data and "fitness_result" in data:
+                            scenario_id = data.get("scenario_id", "")
+                            
+                            # Avoid double counting (YAML + JSON)
+                            if (generation_id, scenario_id) in seen_scenarios:
+                                continue
+                            
                             fitness_data.append({
                                 "generation": generation_id,
-                                "scenario_id": data.get("scenario_id", ""),
+                                "scenario_id": scenario_id,
                                 "scenario_name": data.get("scenario", {}).get("name", ""),
                                 "fitness_score": data["fitness_result"].get("fitness_score", 0),
                                 "krkn_success": data["fitness_result"].get("krkn_success", True),
                                 "start_time": data.get("start_time", ""),
                                 "end_time": data.get("end_time", ""),
                             })
+                            seen_scenarios.add((generation_id, scenario_id))
                     except Exception as e:
-                        logger.debug("Error processing %s: %s", scenario_file, e)
+                        logger.error("Error processing %s: %s", scenario_file, e)
 
         return sorted(fitness_data, key=lambda x: (x["generation"], x["scenario_id"]))
 
@@ -118,16 +132,26 @@ class DataAggregator:
             with open(health_check_file, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    health_data.append({
-                        "scenario_id": row.get("scenario_id", ""),
-                        "generation": int(row.get("generation", 0)),
-                        "application": row.get("application", ""),
-                        "timestamp": row.get("timestamp", ""),
-                        "response_time": float(row.get("response_time", 0)),
-                        "status_code": int(row.get("status_code", 0)),
-                        "success": row.get("success", "").lower() == "true",
-                        "error": row.get("error", ""),
-                    })
+                    # Match schema from health_check_reporter.py:
+                    # scenario_id, component_name, min_response_time, max_response_time, 
+                    # average_response_time, success_count, failure_count
+                    
+                    try:
+                        success_count = int(row.get("success_count", 0))
+                        failure_count = int(row.get("failure_count", 0))
+                        total = success_count + failure_count
+                        
+                        health_data.append({
+                            "scenario_id": row.get("scenario_id", ""),
+                            "application": row.get("component_name", ""),
+                            "response_time": float(row.get("average_response_time", 0)),
+                            "success_count": success_count,
+                            "failure_count": failure_count,
+                            "success": failure_count == 0,
+                            "success_rate": (success_count / total * 100) if total > 0 else 0
+                        })
+                    except (ValueError, TypeError) as e:
+                        logger.error("Error parsing health check row: %s", e)
         except Exception as e:
             logger.error("Error loading health check data: %s", e)
 
@@ -155,9 +179,13 @@ class DataAggregator:
 
     def _load_best_scenarios(self) -> List[Dict[str, Any]]:
         """Load best scenarios summary."""
-        best_file = self.results_dir / "best_scenarios.json"
+        best_file = self.results_dir / "reports" / "best_scenarios.json"
         if not best_file.exists():
-            logger.warning("Best scenarios file not found: %s", best_file)
+            # Fallback to root for backward compatibility
+            best_file = self.results_dir / "best_scenarios.json"
+            
+        if not best_file.exists():
+            logger.warning("Best scenarios file not found in results or reports/")
             return []
 
         try:

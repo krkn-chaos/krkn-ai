@@ -5,10 +5,12 @@ import { Search, AlertCircle, CheckCircle, Activity } from 'lucide-react';
 const ScenarioTable = ({ scenarios }) => {
     const [searchTerm, setSearchTerm] = useState('');
 
-    const filtered = scenarios.filter(s =>
-        s.scenario?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.parameters?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filtered = (scenarios || []).filter(s => {
+        const scenario = (s.scenario || "").toString().toLowerCase();
+        const params = (s.parameters || "").toString().toLowerCase();
+        const search = (searchTerm || "").toLowerCase();
+        return scenario.includes(search) || params.includes(search);
+    });
 
     return (
         <div className="mt-8">

@@ -21,7 +21,7 @@ def main():
     init_logger(None, False)
     results_dir = setup_demo_results()
     print(f"Launching Krkn-AI Dashboard from {results_dir}...")
-    print("Dashboard will be available at http://localhost:8080")
+    print("Dashboard will be available at http://127.0.0.1:8080")
     try:
         start_report_server(results_dir, port=8080)
     except Exception as e:

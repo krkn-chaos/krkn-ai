@@ -182,3 +182,6 @@ krknctl-kubeconfig*
 chaos-ai.yaml
 
 uv.lock
+
+# Allow Krkn-AI dashboard library
+!krkn_ai/web/src/lib/

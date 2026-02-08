@@ -225,3 +225,27 @@ def discover(
         f.write(template)
 
     logger.info("Saved component configuration to %s", output)
+
+@main.command(help="Launch the interactive Krkn-AI dashboard")
+@click.option(
+    "--results-dir",
+    "-d",
+    help="Path to the directory containing results.json and reports/.",
+    default="./",
+)
+@click.option(
+    "--port",
+    "-p",
+    help="Port to run the dashboard server on (default: 8080).",
+    default=8080,
+)
+@click.option(
+    "--headless",
+    help="Run the server in headless mode (don't open browser).",
+    is_flag=True,
+    default=False,
+)
+def report(results_dir: str, port: int, headless: bool):
+    from krkn_ai.utils.report_server import start_report_server
+    init_logger(None, False)
+    start_report_server(results_dir, port=port, headless=headless)

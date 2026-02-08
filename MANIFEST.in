@@ -1,0 +1,5 @@
+recursive-include krkn_ai/web/dist *
+include standalone_dashboard.py
+include requirements.txt
+include README.md
+include LICENSE

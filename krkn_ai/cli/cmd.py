@@ -208,12 +208,14 @@ def discover(
     "-d",
     help="Path to the directory containing results.json and reports/.",
     default="./",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, resolve_path=True),
 )
 @click.option(
     "--port",
     "-p",
     help="Port to run the dashboard server on (default: 8080).",
     default=8080,
+    type=click.IntRange(1, 65535),
 )
 @click.option(
     "--headless",

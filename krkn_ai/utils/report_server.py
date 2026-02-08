@@ -17,9 +17,11 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def is_safe_path(self, base_dir, path):
-        """Check if path is resolved within base_dir using commonpath to prevent traversal."""
-        abs_base = os.path.abspath(base_dir)
-        target_path = os.path.abspath(os.path.join(abs_base, path.lstrip('/')))
+        """Check if path is resolved within base_dir using realpath to prevent symlink traversal."""
+        # Resolve real paths to handle symlinks
+        abs_base = os.path.realpath(os.path.abspath(base_dir))
+        target_path = os.path.realpath(os.path.abspath(os.path.join(abs_base, path.lstrip('/'))))
+        
         # commonpath returns the common sub-path which must be exactly abs_base
         try:
             return os.path.commonpath([abs_base, target_path]) == abs_base

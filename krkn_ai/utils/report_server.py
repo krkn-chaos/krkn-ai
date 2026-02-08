@@ -27,6 +27,12 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
     def translate_path(self, path):
+        # normalize: strip query/fragment and unquote
+        path = path.split('?', 1)[0].split('#', 1)[0]
+        # (Assuming standard library handles unquote in self.path before calling translate_path, 
+        # but if this overrides SimpleHTTPRequestHandler.translate_path completely, we should be careful.
+        # The base implementation usually handles unquote. We will just clean the path string here.)
+        
         # Default behavior for root
         if path == '/':
             return os.path.join(self.dist_dir, "index.html")
@@ -47,6 +53,9 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         # We return a non-existent path inside dist_dir to force a 404 Not Found
         logger.warning("Blocked unauthorized or unsafe path access: %s", path)
         return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
+
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    pass
 
 def start_report_server(results_dir: str, port: int = 8080, headless: bool = False):
     # Locate the built dashboard in the package
@@ -70,12 +79,12 @@ def start_report_server(results_dir: str, port: int = 8080, headless: bool = Fal
         **kwargs
     )
     
-    # Use a socket server that allows address reuse and binds to localhost only
-    socketserver.TCPServer.allow_reuse_address = True
+    # Use a threaded socket server for concurrency
+    ThreadedTCPServer.allow_reuse_address = True
     server_address = ("127.0.0.1", port)
     
     try:
-        with socketserver.TCPServer(server_address, handler) as httpd:
+        with ThreadedTCPServer(server_address, handler) as httpd:
             logger.info("Krkn-AI Dashboard serving at http://127.0.0.1:%d", port)
             logger.info("Press Ctrl+C to stop.")
             

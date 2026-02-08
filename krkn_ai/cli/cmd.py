@@ -15,7 +15,6 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
-from krkn_ai.utils.report_server import start_report_server
 
 
 @click.group(context_settings={"show_default": True})

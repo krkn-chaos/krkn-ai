@@ -17,11 +17,14 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def is_safe_path(self, base_dir, path):
-        """Check if path is resolved within base_dir to prevent traversal."""
-        # Normalize and resolve absolute path
+        """Check if path is resolved within base_dir using commonpath to prevent traversal."""
         abs_base = os.path.abspath(base_dir)
-        target_path = os.path.normpath(os.path.join(abs_base, path.lstrip('/')))
-        return target_path.startswith(abs_base)
+        target_path = os.path.abspath(os.path.join(abs_base, path.lstrip('/')))
+        # commonpath returns the common sub-path which must be exactly abs_base
+        try:
+            return os.path.commonpath([abs_base, target_path]) == abs_base
+        except ValueError:
+            return False
 
     def translate_path(self, path):
         # Default behavior for root

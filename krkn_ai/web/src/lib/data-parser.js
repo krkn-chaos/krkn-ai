@@ -15,12 +15,24 @@ export const parseResults = async (url = '/results.json') => {
 
 export const parseCSV = (csvText) => {
     if (!csvText) return [];
-    const lines = csvText.split('\n');
+    const lines = csvText.split('\n').filter(line => line.trim());
     if (lines.length === 0) return [];
 
-    const headers = lines[0].split(',');
-    return lines.slice(1).filter(line => line.trim()).map(line => {
-        const values = line.split(',');
+    // Robust CSV split function that handles quoted commas
+    const splitCSVLine = (line) => {
+        const matches = line.matchAll(/("[^"]*"|[^,]+|(?<=,)(?=,)|(?<=^)(?=,)|(?<=,)(?=$))/g);
+        return Array.from(matches).map(m => {
+            let val = m[0];
+            if (val.startsWith('"') && val.endsWith('"')) {
+                val = val.substring(1, val.length - 1);
+            }
+            return val;
+        });
+    };
+
+    const headers = splitCSVLine(lines[0]);
+    return lines.slice(1).map(line => {
+        const values = splitCSVLine(line);
         return headers.reduce((obj, header, i) => {
             if (!header) return obj;
             let val = values[i] !== undefined ? values[i] : "";

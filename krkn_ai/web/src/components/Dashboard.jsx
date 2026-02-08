@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import SummaryCard from './SummaryCard';
 import GeneticProgressionChart from './GeneticProgressionChart';
 import ScenarioTable from './ScenarioTable';

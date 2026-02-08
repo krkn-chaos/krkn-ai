@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, AlertCircle, CheckCircle, Activity } from 'lucide-react';
+import { Search, AlertCircle, Activity } from 'lucide-react';
 
 const ScenarioTable = ({ scenarios }) => {
     const [searchTerm, setSearchTerm] = useState('');

@@ -1,3 +1,19 @@
+"""
+Krkn-AI Dashboard Report Server
+
+SECURITY DESIGN:
+This server is designed EXCLUSIVELY for localhost usage (127.0.0.1).
+It should NEVER be exposed to external networks or the internet.
+
+Authentication: HttpOnly, SameSite=Strict cookies
+- HttpOnly prevents JavaScript access (XSS protection)
+- SameSite=Strict prevents CSRF attacks  
+- Secure flag intentionally omitted for HTTP localhost compatibility
+
+The server binds only to 127.0.0.1, ensuring it cannot be accessed
+from external networks. If localhost-only restriction is ever removed,
+HTTPS must be implemented and the Secure cookie flag must be added.
+"""
 import os
 import http.server
 import socketserver
@@ -42,13 +58,27 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
             return False
 
     def do_GET(self):
-        """Override GET to set auth cookie on first access."""
+        """Override GET to set auth cookie on first access.
+        
+        Security Note: This server is designed for localhost-only usage (127.0.0.1).
+        The cookie uses HttpOnly and SameSite=Strict for security, but intentionally
+        omits the Secure flag because:
+        1. This server binds only to 127.0.0.1 (localhost)
+        2. Localhost connections use HTTP, not HTTPS
+        3. Adding Secure flag would break functionality on HTTP
+        4. Localhost is inherently isolated from network attacks
+        
+        If this server is ever exposed beyond localhost (NOT RECOMMENDED), 
+        implement HTTPS and add the Secure flag.
+        """
         # Set secure cookie if not present
         if not self.validate_token():
-            # Set HttpOnly, SameSite cookie for security
+            # Build cookie with security attributes
+            # HttpOnly: Prevents JavaScript access (XSS protection)
+            # SameSite=Strict: Prevents CSRF attacks
+            # Secure flag intentionally omitted for HTTP localhost (see docstring)
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
-            # HttpOnly prevents JavaScript access, SameSite prevents CSRF
             self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
             self.end_headers()
             

@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Krkn-AI Experiment Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #5B8DEE;
+            --primary-dark: #4A7DD9;
+            --success: #52C17C;
+            --warning: #F5A962;
+            --danger: #E86B6B;
+            --bg-dark: #1a1f2e;
+            --bg-card: #252b3d;
+            --bg-card-hover: #2f3649;
+            --text-primary: #f1f5f9;
+            --text-secondary: #9ca3af;
+            --border: #3a4052;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1f2e 0%, #252b3d 100%);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #5B8DEE 0%, #7BA3F0 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px -4px rgba(99, 102, 241, 0.3);
+            border-color: var(--primary);
+        }
+
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-value.success {
+            color: var(--success);
+        }
+
+        .stat-value.warning {
+            color: var(--warning);
+        }
+
+        .stat-value.danger {
+            color: var(--danger);
+        }
+
+        .chart-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 30px;
+            border: 1px solid var(--border);
+        }
+
+        .chart-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--text-primary);
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 400px;
+        }
+
+        .anomaly-section {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 30px;
+            border: 1px solid var(--border);
+        }
+
+        .anomaly-card {
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 4px solid var(--danger);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+        }
+
+        .anomaly-card:hover {
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        .anomaly-card.warning {
+            background: rgba(245, 158, 11, 0.1);
+            border-left-color: var(--warning);
+        }
+
+        .anomaly-card.warning:hover {
+            background: rgba(245, 158, 11, 0.15);
+        }
+
+        .anomaly-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .anomaly-severity {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--danger);
+            color: white;
+            font-weight: 700;
+            font-size: 0.875rem;
+        }
+
+        .anomaly-severity.warning {
+            background: var(--warning);
+        }
+
+        .anomaly-message {
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .anomaly-details {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            margin-top: 8px;
+        }
+
+        .table-container {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 30px;
+            border: 1px solid var(--border);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background: var(--bg-dark);
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--primary);
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        tr:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge.success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        .badge.danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .chart-wrapper {
+                height: 300px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>🧬 Krkn-AI Experiment Dashboard</h1>
+            <p class="subtitle" id="subtitle">Loading experiment results...</p>
+        </header>
+
+        <div id="stats-section" class="stats-grid"></div>
+
+        <div id="anomalies-section" class="anomaly-section" style="display: none;">
+            <h2 class="chart-title">⚠️ Anomalies Detected</h2>
+            <div id="anomalies-list"></div>
+        </div>
+
+        <div class="chart-container">
+            <h2 class="chart-title">📈 Fitness Score Trends</h2>
+            <div class="chart-wrapper">
+                <canvas id="fitnessChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2 class="chart-title">💚 Health Check Status</h2>
+            <div class="chart-wrapper">
+                <canvas id="healthChart"></canvas>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <h2 class="chart-title">🏆 Top Scenarios</h2>
+            <div id="scenarios-table"></div>
+        </div>
+    </div>
+
+    <script>
+        /*DATA_PLACEHOLDER*/
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            renderDashboard();
+        });
+
+        function renderDashboard() {
+            if (!dashboardData || !dashboardData.statistics) {
+                document.getElementById('subtitle').textContent = 'No data available';
+                return;
+            }
+
+            const stats = dashboardData.statistics;
+            const metadata = dashboardData.metadata || {};
+
+            // Update subtitle
+            document.getElementById('subtitle').textContent =
+                `Experiment completed with ${stats.total_generations} generations and ${stats.total_scenarios} scenarios`;
+
+            // Render stats cards
+            renderStatsCards(stats);
+
+            // Render anomalies
+            if (anomaliesData && anomaliesData.length > 0) {
+                renderAnomalies(anomaliesData);
+            }
+
+            // Render charts
+            renderFitnessChart();
+            renderHealthChart();
+
+            // Render scenarios table
+            renderScenariosTable();
+        }
+
+        function renderStatsCards(stats) {
+            const statsSection = document.getElementById('stats-section');
+
+            const cards = [
+                {
+                    label: 'Best Fitness Score',
+                    value: stats.best_fitness.toFixed(2),
+                    class: 'success'
+                },
+                {
+                    label: 'Total Scenarios',
+                    value: stats.total_scenarios,
+                    class: ''
+                },
+                {
+                    label: 'Success Rate',
+                    value: stats.success_rate.toFixed(1) + '%',
+                    class: stats.success_rate >= 90 ? 'success' : stats.success_rate >= 70 ? 'warning' : 'danger'
+                },
+                {
+                    label: 'Generations',
+                    value: stats.total_generations,
+                    class: ''
+                }
+            ];
+
+            statsSection.innerHTML = cards.map(card => `
+                <div class="stat-card">
+                    <div class="stat-label">${card.label}</div>
+                    <div class="stat-value ${card.class}">${card.value}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderAnomalies(anomalies) {
+            const section = document.getElementById('anomalies-section');
+            const list = document.getElementById('anomalies-list');
+
+            section.style.display = 'block';
+
+            list.innerHTML = anomalies.map(anomaly => {
+                const severityClass = anomaly.severity >= 7 ? '' : 'warning';
+                return `
+                    <div class="anomaly-card ${severityClass}">
+                        <div class="anomaly-header">
+                            <span class="anomaly-severity ${severityClass}">${anomaly.severity}</span>
+                            <span class="anomaly-message">${anomaly.message}</span>
+                        </div>
+                        ${anomaly.details ? `<div class="anomaly-details">${formatDetails(anomaly.details)}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatDetails(details) {
+            return Object.entries(details)
+                .map(([key, value]) => {
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                    const formattedValue = typeof value === 'number' ? value.toFixed(2) : value;
+                    return `${label}: ${formattedValue}`;
+                })
+                .join(' • ');
+        }
+
+        function renderFitnessChart() {
+            const ctx = document.getElementById('fitnessChart');
+            const genStats = dashboardData.statistics.generation_stats || [];
+
+            if (genStats.length === 0) {
+                ctx.parentElement.innerHTML = '<div class="no-data">No fitness data available</div>';
+                return;
+            }
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: genStats.map(g => `Gen ${g.generation}`),
+                    datasets: [
+                        {
+                            label: 'Best Fitness',
+                            data: genStats.map(g => g.best),
+                            borderColor: '#52C17C',
+                            backgroundColor: 'rgba(82, 193, 124, 0.15)',
+                            borderWidth: 3,
+                            tension: 0.4,
+                            fill: true,
+                            pointBackgroundColor: '#52C17C',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2,
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: 'Average Fitness',
+                            data: genStats.map(g => g.average),
+                            borderColor: '#5B8DEE',
+                            backgroundColor: 'rgba(91, 141, 238, 0.12)',
+                            borderWidth: 2.5,
+                            tension: 0.4,
+                            fill: true,
+                            pointBackgroundColor: '#5B8DEE',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2,
+                            pointRadius: 3,
+                            pointHoverRadius: 5
+                        },
+                        {
+                            label: 'Worst Fitness',
+                            data: genStats.map(g => g.worst),
+                            borderColor: '#E86B6B',
+                            backgroundColor: 'rgba(232, 107, 107, 0.12)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true,
+                            pointBackgroundColor: '#E86B6B',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2,
+                            pointRadius: 3,
+                            pointHoverRadius: 5
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#f1f5f9' }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        },
+                        x: {
+                            ticks: { color: '#94a3b8' },
+                            grid: { color: '#334155' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderHealthChart() {
+            const ctx = document.getElementById('healthChart');
+            const healthChecks = dashboardData.health_checks || [];
+
+            if (healthChecks.length === 0) {
+                ctx.parentElement.innerHTML = '<div class="no-data">No health check data available</div>';
+                return;
+            }
+
+            // Group by application
+            const appData = {};
+            healthChecks.forEach(check => {
+                if (!appData[check.application]) {
+                    appData[check.application] = { success: 0, failure: 0 };
+                }
+                if (check.success) {
+                    appData[check.application].success++;
+                } else {
+                    appData[check.application].failure++;
+                }
+            });
+
+            const apps = Object.keys(appData);
+            const successData = apps.map(app => appData[app].success);
+            const failureData = apps.map(app => appData[app].failure);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: apps,
+                    datasets: [
+                        {
+                            label: 'Success',
+                            data: successData,
+                            backgroundColor: '#52C17C',
+                            borderColor: '#42A868',
+                            borderWidth: 0,
+                            borderRadius: 6,
+                            barThickness: 40
+                        },
+                        {
+                            label: 'Failure',
+                            data: failureData,
+                            backgroundColor: '#E86B6B',
+                            borderColor: '#D85555',
+                            borderWidth: 0,
+                            borderRadius: 6,
+                            barThickness: 40
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#f1f5f9' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            stacked: true,
+                            ticks: {
+                                color: '#9ca3af',
+                                font: { size: 12 }
+                            },
+                            grid: {
+                                color: '#3a4052',
+                                drawBorder: false
+                            }
+                        },
+                        x: {
+                            stacked: true,
+                            ticks: {
+                                color: '#9ca3af',
+                                font: { size: 12 }
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderScenariosTable() {
+            const container = document.getElementById('scenarios-table');
+            const fitnessScores = dashboardData.fitness_scores || [];
+
+            if (fitnessScores.length === 0) {
+                container.innerHTML = '<div class="no-data">No scenario data available</div>';
+                return;
+            }
+
+            // Get top 10 scenarios by fitness score
+            const topScenarios = [...fitnessScores]
+                .sort((a, b) => b.fitness_score - a.fitness_score)
+                .slice(0, 10);
+
+            container.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Scenario</th>
+                            <th>Generation</th>
+                            <th>Fitness Score</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${topScenarios.map((scenario, index) => `
+                            <tr>
+                                <td><strong>${index + 1}</strong></td>
+                                <td>${scenario.scenario_name}</td>
+                                <td>${scenario.generation}</td>
+                                <td><strong>${scenario.fitness_score.toFixed(2)}</strong></td>
+                                <td>
+                                    <span class="badge ${scenario.krkn_success ? 'success' : 'danger'}">
+                                        ${scenario.krkn_success ? 'Success' : 'Failed'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+    </script>
+</body>
+
+</html>

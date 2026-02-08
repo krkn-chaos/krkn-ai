@@ -201,3 +201,39 @@ def discover(
         f.write(template)
 
     logger.info("Saved component configuration to %s", output)
+
+
+@main.command(help="Generate interactive dashboard from results")
+@click.option(
+    "--results",
+    "-r",
+    help="Path to Krkn-AI results directory.",
+    required=True,
+)
+@click.option(
+    "--output",
+    "-o",
+    help="Path to save dashboard HTML file.",
+    default="./dashboard.html",
+)
+@click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.pass_context
+def dashboard(ctx, results: str, output: str = "./dashboard.html", verbose: int = 0):
+    from krkn_ai.dashboard.generator import DashboardGenerator
+
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
+
+    if not os.path.exists(results):
+        logger.error("Results directory not found: %s", results)
+        exit(1)
+
+    try:
+        generator = DashboardGenerator(results)
+        dashboard_path = generator.generate(output)
+        logger.info("Dashboard generated successfully: %s", dashboard_path)
+        logger.info("Open the dashboard in your browser: file://%s", os.path.abspath(dashboard_path))
+    except Exception as e:
+        logger.exception("Failed to generate dashboard: %s", e)
+        exit(1)
+

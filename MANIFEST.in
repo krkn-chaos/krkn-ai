@@ -3,3 +3,4 @@ include standalone_dashboard.py
 include requirements.txt
 include README.md
 include LICENSE
+recursive-include krkn_ai/web/public *

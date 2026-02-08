@@ -68,7 +68,7 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    pass
+    daemon_threads = True
 
 def start_report_server(results_dir: str, port: int = 8080, headless: bool = False):
     # Locate the built dashboard in the package

@@ -8,14 +8,37 @@ from krkn_ai.utils.report_server import start_report_server
 from krkn_ai.utils.logger import init_logger
 
 def setup_demo_results():
+    """Set up demo results directory with validation and error handling."""
     results_dir = os.path.join(SCRIPT_DIR, "demo_results")
     if not os.path.exists(results_dir):
         os.makedirs(os.path.join(results_dir, "reports"), exist_ok=True)
-        # Copy mock data from the web package
-        source_results = os.path.join(SCRIPT_DIR, "krkn_ai/web/public/results.json")
-        source_reports = os.path.join(SCRIPT_DIR, "krkn_ai/web/public/reports/all.csv")
-        shutil.copy(source_results, results_dir)
-        shutil.copy(source_reports, os.path.join(results_dir, "reports"))
+        
+        # Validate source directory exists
+        source_dir = os.path.join(SCRIPT_DIR, "krkn_ai", "web", "public")
+        if not os.path.exists(source_dir):
+            print(f"Warning: Demo assets not found at {source_dir}")
+            print("Creating empty demo_results directory...")
+            print("You can manually add results.json and reports/ to this directory.")
+            return results_dir
+        
+        # Copy files with validation and error handling
+        files_to_copy = [
+            ("results.json", results_dir),
+            ("reports/all.csv", os.path.join(results_dir, "reports"))
+        ]
+        
+        try:
+            for file_path, dest_dir in files_to_copy:
+                source_file = os.path.join(source_dir, file_path)
+                if os.path.exists(source_file):
+                    shutil.copy(source_file, dest_dir)
+                    print(f"✓ Copied {file_path}")
+                else:
+                    print(f"Warning: {file_path} not found, skipping...")
+        except Exception as e:
+            print(f"Error copying demo files: {e}")
+            print("Demo directory created but may be incomplete.")
+    
     return results_dir
 
 def main():

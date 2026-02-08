@@ -71,18 +71,23 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         If this server is ever exposed beyond localhost (NOT RECOMMENDED), 
         implement HTTPS and add the Secure flag.
         """
-        # Set secure cookie if not present, using proper HTTP redirect
+        # Only set cookie and redirect on root navigation (not asset requests)
         if not self.validate_token():
-            # Use HTTP 302 redirect (not 200 with meta-refresh)
-            # This ensures proper semantics for all resource types
-            self.send_response(302)  # Temporary redirect
-            self.send_header('Location', '/')
-            # HttpOnly: Prevents JavaScript access (XSS protection)
-            # SameSite=Strict: Prevents CSRF attacks
-            # Secure flag intentionally omitted for HTTP localhost (see docstring)
-            self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
-            self.end_headers()
-            return
+            # Only redirect on root path to avoid extra round-trips for assets
+            if self.path == '/' or self.path.startswith('/?'):
+                # Use HTTP 302 redirect for root navigation
+                self.send_response(302)  # Temporary redirect
+                self.send_header('Location', '/')
+                # HttpOnly: Prevents JavaScript access (XSS protection)
+                # SameSite=Strict: Prevents CSRF attacks
+                # Secure flag intentionally omitted for HTTP localhost (see docstring)
+                self.send_header('Set-Cookie', f'krkn_token={self.security_token}; HttpOnly; SameSite=Strict; Path=/')
+                self.end_headers()
+                return
+            else:
+                # For non-root paths without cookie, return 401
+                self.send_error(401, "Authentication required. Please visit the root page first.")
+                return
         
         # Proceed with normal GET handling
         super().do_GET()
@@ -141,11 +146,22 @@ class ReportHandler(http.server.SimpleHTTPRequestHandler):
         if normalized_path == '/':
             return os.path.join(self.dist_dir, "index.html")
         
-        # 7. Check Extension Allowlist
+        # 7. Check Extension Allowlist (or serve index.html for SPA routes)
         _, ext = os.path.splitext(normalized_path)
-        if ext.lower() not in self.ALLOWED_EXTENSIONS:
+        if ext and ext.lower() not in self.ALLOWED_EXTENSIONS:
+            # Has extension but not in allowlist → block
             logger.warning("Blocked request with unsafe extension: %s", normalized_path)
             return os.path.join(self.dist_dir, "404_not_found_by_security_policy")
+        elif not ext:
+            # No extension → likely a client-side route (e.g., /dashboard, /settings)
+            # Serve index.html and let the SPA handle routing
+            # But still protect data endpoints
+            if normalized_path.startswith('/reports/'):
+                # This is a data endpoint, not a client route
+                pass  # Continue to normal validation
+            else:
+                # Client-side route → serve index.html
+                return os.path.join(self.dist_dir, "index.html")
         
         # 8. For /reports/, enforce strict filename allowlist
         if normalized_path.startswith('/reports/'):

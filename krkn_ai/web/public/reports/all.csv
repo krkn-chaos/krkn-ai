@@ -1,0 +1,7 @@
+generation_id,scenario_id,scenario,parameters,health_check_failure_score,health_check_response_time_score,krkn_failure_score,fitness_score
+0,1,pod-scenario,namespace=robot-shop pod=cart,0.1,0.2,0.0,0.3
+0,2,node-cpu-hog,node=node-1,0.0,0.1,0.0,0.1
+1,11,pod-scenario,namespace=robot-shop pod=payment,0.4,0.3,0.0,0.7
+2,21,container-scenario,container=redis,0.2,0.5,0.0,0.7
+3,31,pod-scenario,namespace=robot-shop pod=cart,0.8,0.1,0.0,0.9
+4,41,pod-scenario,namespace=robot-shop pod=user,0.9,0.05,0.0,0.95

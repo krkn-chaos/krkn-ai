@@ -1,0 +1,73 @@
+{
+    "run_id": "demo-run-uuid-12345",
+    "seed": 42,
+    "start_time": "2026-02-05T10:00:00Z",
+    "end_time": "2026-02-05T10:30:00Z",
+    "duration_seconds": 1800,
+    "config": {
+        "generations": 5,
+        "population_size": 10,
+        "mutation_rate": 0.1,
+        "scenario_mutation_rate": 0.2,
+        "crossover_rate": 0.8,
+        "composition_rate": 0.3
+    },
+    "summary": {
+        "total_scenarios_executed": 50,
+        "unique_scenarios": 42,
+        "generations_completed": 5,
+        "best_fitness_score": 0.95,
+        "average_fitness_score": 0.45
+    },
+    "best_scenarios": [
+        {
+            "rank": 1,
+            "scenario_id": 101,
+            "generation": 4,
+            "fitness_score": 0.95,
+            "scenario_type": "pod-scenario",
+            "parameters": {
+                "namespace": "robot-shop",
+                "pod": "cart"
+            }
+        },
+        {
+            "rank": 2,
+            "scenario_id": 85,
+            "generation": 3,
+            "fitness_score": 0.88,
+            "scenario_type": "container-scenario",
+            "parameters": {
+                "namespace": "robot-shop",
+                "container": "catalogue"
+            }
+        }
+    ],
+    "fitness_progression": [
+        {
+            "generation": 0,
+            "best": 0.35,
+            "average": 0.15
+        },
+        {
+            "generation": 1,
+            "best": 0.55,
+            "average": 0.25
+        },
+        {
+            "generation": 2,
+            "best": 0.72,
+            "average": 0.35
+        },
+        {
+            "generation": 3,
+            "best": 0.88,
+            "average": 0.42
+        },
+        {
+            "generation": 4,
+            "best": 0.95,
+            "average": 0.45
+        }
+    ]
+}

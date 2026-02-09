@@ -162,6 +162,28 @@ class JSONSummaryReporter:
                     for param in result.scenario.parameters
                 }
 
+            # Calculate execution duration
+            execution_duration = (result.end_time - result.start_time).total_seconds()
+
+            # Build fitness components breakdown
+            fitness_components = {
+                "krkn_failures": result.fitness_result.krkn_failure_score,
+                "health_check_failures": result.fitness_result.health_check_failure_score,
+                "response_time_score": result.fitness_result.health_check_response_time_score,
+            }
+
+            # Add SLO details if available
+            slo_details = []
+            if result.fitness_result.scores:
+                slo_details = [
+                    {
+                        "slo_id": item.id,
+                        "slo_fitness_score": round(item.fitness_score, 4),
+                        "slo_weighted_score": round(item.weighted_score, 4),
+                    }
+                    for item in result.fitness_result.scores
+                ]
+
             best_scenarios.append(
                 {
                     "rank": rank,
@@ -170,6 +192,11 @@ class JSONSummaryReporter:
                     "fitness_score": result.fitness_result.fitness_score,
                     "scenario_type": result.scenario.name,
                     "parameters": scenario_params,
+                    "start_time": result.start_time.isoformat(),
+                    "end_time": result.end_time.isoformat(),
+                    "execution_duration_seconds": round(execution_duration, 2),
+                    "fitness_components": fitness_components,
+                    "slo_details": slo_details,
                 }
             )
         return best_scenarios

@@ -193,6 +193,9 @@ class HealthCheckReporter:
                 fitness_function_item.fitness_score
             )
 
+        # Calculate execution duration
+        execution_duration = (fitness_result.end_time - fitness_result.start_time).total_seconds()
+
         new_row = pd.DataFrame(
             [
                 {
@@ -200,6 +203,9 @@ class HealthCheckReporter:
                     "scenario_id": fitness_result.scenario_id,
                     "scenario": fitness_result.scenario.name,
                     "parameters": " ".join(params),
+                    "start_time": fitness_result.start_time.isoformat(),
+                    "end_time": fitness_result.end_time.isoformat(),
+                    "execution_duration_seconds": round(execution_duration, 2),
                     **fitness_function_slos,
                     "health_check_failure_score": fitness_result.fitness_result.health_check_failure_score,
                     "health_check_response_time_score": fitness_result.fitness_result.health_check_response_time_score,

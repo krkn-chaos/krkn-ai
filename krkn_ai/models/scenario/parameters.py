@@ -1,12 +1,13 @@
 import math
-from pydantic import BaseModel, Field
+from typing import Optional
+from pydantic import BaseModel, Field, PrivateAttr
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
 
 
 class DummyEndParameter(BaseParameter):
     krknhub_name: str = "END"
-    krknctl_name: str = "end"
+    krknctl_name: str = "duration"
     value: int = 10
 
 
@@ -327,6 +328,29 @@ class PodNameParameter(BaseParameter):
     krknhub_name: str = "POD_NAME"
     krknctl_name: str = "pod-name"
     value: str = ""
+    _namespace: str = PrivateAttr(default="")
+    _owner_kind: Optional[str] = PrivateAttr(default=None)
+    _owner_name: Optional[str] = PrivateAttr(default=None)
+
+    def set_pod(self, namespace, pod):
+        """Store pod identity for lazy resolution at execution time."""
+        self.value = pod.name
+        self._namespace = namespace
+        if pod.owner:
+            self._owner_kind = pod.owner.kind
+            self._owner_name = pod.owner.name
+        else:
+            self._owner_kind = None
+            self._owner_name = None
+
+    def get_value(self):
+        if self._namespace and self._owner_kind and self._owner_name:
+            from krkn_ai.utils.pvc_utils import resolve_pod_name
+
+            return resolve_pod_name(
+                self._namespace, self.value, self._owner_kind, self._owner_name
+            )
+        return self.value
 
 
 class IngressParameter(BaseParameter):

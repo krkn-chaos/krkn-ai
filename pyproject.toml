@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "krkn_ai"
-version = "0.0.1"
+version = "0.0.3"
 description = "Krkn-AI"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11,<4.0"
 license = { text = "Apache-2.0" }
 authors = [ { name = "krkn-chaos" } ]
 

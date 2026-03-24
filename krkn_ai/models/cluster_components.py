@@ -7,10 +7,16 @@ class Container(BaseModel):
     disabled: bool = False
 
 
+class OwnerReference(BaseModel):
+    kind: str
+    name: str
+
+
 class Pod(BaseModel):
     name: str
     labels: Dict[str, str] = {}
     containers: List[Container] = []
+    owner: Optional[OwnerReference] = None
     disabled: bool = False
 
 

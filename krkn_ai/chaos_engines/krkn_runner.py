@@ -91,6 +91,7 @@ class KrknRunner:
         logger.info("Running scenario: %s", scenario)
 
         start_time = datetime.datetime.now()
+        mono_start = time.monotonic()
 
         # Generate command krkn executor command
         log, returncode, run_uuid = None, None, None
@@ -115,19 +116,25 @@ class KrknRunner:
             # Start watching application urls for health checks
             health_check_watcher.run()
 
-            # Run command (show logs when verbose mode is enabled)
-            log, returncode = run_shell(
-                self.process_es_env_string(command, True), do_not_log=not is_verbose()
-            )
+            try:
+                # Run command (show logs when verbose mode is enabled)
+                log, returncode = run_shell(
+                    self.process_es_env_string(command, True),
+                    do_not_log=not is_verbose(),
+                )
 
-            # Extract return code from run log which is part of telemetry data present in the log
-            returncode, run_uuid = self.__extract_returncode_from_run(log, returncode)
-            logger.info("Krkn scenario return code: %d", returncode)
+                # Extract return code from run log which is part of telemetry data present in the log
+                returncode, run_uuid = self.__extract_returncode_from_run(
+                    log, returncode
+                )
+                logger.info("Krkn scenario return code: %d", returncode)
 
-            # Stop watching application urls for health checks
-            health_check_watcher.stop()
+            finally:
+                # Stop watching application urls for health checks
+                health_check_watcher.stop()
 
         end_time = datetime.datetime.now()
+        duration_seconds = time.monotonic() - mono_start
 
         # calculate fitness scores
         fitness_result: FitnessResult = FitnessResult()
@@ -200,6 +207,7 @@ class KrknRunner:
             returncode=returncode,
             start_time=start_time,
             end_time=end_time,
+            duration_seconds=duration_seconds,
             fitness_result=fitness_result,
             health_check_results=health_check_results,
             run_uuid=run_uuid,

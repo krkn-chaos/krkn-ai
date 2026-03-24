@@ -79,7 +79,7 @@ class PVCScenario(Scenario):
         else:
             namespace, pod = rng.choice(namespace_pod_tuple)
             self.namespace.value = namespace.name
-            self.pod_name.value = pod.name
+            self.pod_name.set_pod(namespace.name, pod)
             self.pvc_name.value = ""  # Leave empty when using pod-name
             selected_pvc_name = None
 

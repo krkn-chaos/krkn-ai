@@ -12,7 +12,7 @@ REQUIRE = (HERE / "requirements.txt").read_text(encoding="utf-8")
 
 setup(
     name="krkn_ai",
-    version="0.0.1",
+    version="0.0.3",
     description="Krkn-AI",
     long_description=DESCRIPTION,
     long_description_content_type="text/markdown",

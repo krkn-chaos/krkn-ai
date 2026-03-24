@@ -52,4 +52,4 @@ class DnsOutageScenario(Scenario):
         # Select a random pod from all pods in the cluster
         ns, pod = rng.choice(pods)
         self.namespace.value = ns.name
-        self.pod_name.value = pod.name
+        self.pod_name.set_pod(ns.name, pod)

@@ -32,6 +32,7 @@ class JSONSummaryReporter:
         config: ConfigFile,
         seen_population: Dict[Any, CommandRunResult],
         best_of_generation: List[CommandRunResult],
+        baseline_result: Optional[CommandRunResult] = None,
         start_time: Optional[datetime.datetime] = None,
         end_time: Optional[datetime.datetime] = None,
         completed_generations: int = 0,
@@ -55,6 +56,7 @@ class JSONSummaryReporter:
         self.config = config
         self.seen_population = seen_population
         self.best_of_generation = best_of_generation
+        self.baseline_result = baseline_result
         self.start_time = start_time
         self.end_time = end_time
         self.completed_generations = completed_generations
@@ -136,6 +138,12 @@ class JSONSummaryReporter:
                 if r.regression_from_baseline is True
             )
             results_summary["summary"]["regressions_from_baseline"] = regressions
+
+        if self.baseline_result is not None:
+            results_summary["baseline"] = {
+                "fitness_score": self.baseline_result.fitness_result.fitness_score,
+                "duration_seconds": self.baseline_result.duration_seconds,
+            }
 
         return results_summary
 

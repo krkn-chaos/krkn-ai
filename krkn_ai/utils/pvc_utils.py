@@ -1,5 +1,5 @@
 """
-Utilities for working with PVCs, including getting real-time usage percentage.
+Kubernetes resource utilities: PVC usage lookups and pod name resolution.
 """
 
 from typing import Optional, Dict, Tuple
@@ -22,14 +22,88 @@ _logged_pvcs: set = set()
 
 def initialize_kubeconfig(kubeconfig_path: str):
     """
-    Initialize the kubeconfig path for PVC utilities.
-    This should be called once at the start of the application.
+    Initialize the global kubeconfig path.
+    Called once at startup by ScenarioFactory.
 
     Args:
         kubeconfig_path: Path to kubeconfig file
     """
     global _kubeconfig_path
     _kubeconfig_path = kubeconfig_path
+
+
+def resolve_pod_name(
+    namespace: str,
+    pod_name: str,
+    owner_kind: Optional[str] = None,
+    owner_name: Optional[str] = None,
+    kubeconfig: Optional[str] = None,
+) -> str:
+    """
+    Resolve a potentially stale pod name to the current running pod name
+    using the pod's owner reference.
+
+    Pods managed by controllers (Deployments, StatefulSets, etc.) get new
+    names when recreated after chaos scenarios. This uses the owner reference
+    stored during discovery to find the current running pod.
+
+    Falls back to the stored pod name if no kubeconfig is available (unit
+    tests), the pod has no owner reference (bare pod), or resolution fails.
+
+    Args:
+        namespace: Namespace where the pod lives
+        pod_name: Pod name from cluster_components config
+        owner_kind: Controller kind (e.g. "ReplicaSet", "StatefulSet")
+        owner_name: Controller name (e.g. "cart-655b74fb49")
+        kubeconfig: Optional explicit kubeconfig path
+
+    Returns:
+        Current pod name, or the stored name as fallback
+    """
+    kubeconfig_path = kubeconfig or _kubeconfig_path
+    if not kubeconfig_path:
+        return pod_name
+
+    if not owner_kind or not owner_name:
+        return pod_name
+
+    try:
+        krkn_k8s = KrknKubernetes(kubeconfig_path=kubeconfig_path)
+        live_pods = krkn_k8s.cli.list_namespaced_pod(
+            namespace=namespace,
+            field_selector="status.phase=Running",
+        ).items
+
+        for live_pod in live_pods:
+            if not live_pod.metadata.owner_references:
+                continue
+            ref = live_pod.metadata.owner_references[0]
+            if ref.kind == owner_kind and ref.name == owner_name:
+                logger.debug(
+                    "Resolved pod %s -> %s (owner: %s/%s)",
+                    pod_name,
+                    live_pod.metadata.name,
+                    owner_kind,
+                    owner_name,
+                )
+                return live_pod.metadata.name
+
+        logger.debug(
+            "No running pod found for owner %s/%s in %s, using stored name %s",
+            owner_kind,
+            owner_name,
+            namespace,
+            pod_name,
+        )
+        return pod_name
+    except Exception as e:
+        logger.debug(
+            "Failed to resolve pod name for %s in %s: %s",
+            pod_name,
+            namespace,
+            str(e),
+        )
+        return pod_name
 
 
 def get_pvc_usage_percentage(

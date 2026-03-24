@@ -23,7 +23,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 ### Prerequisites
 
 - [krknctl](https://github.com/krkn-chaos/krknctl)
-- Python 3.9+
+- Python 3.11+
 - `uv` package manager (recommended) or `pip`
 - [podman](https://podman.io/)
 - [helm](https://helm.sh/docs/intro/install/)
@@ -36,7 +36,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 pip install uv
 
 # Create and activate virtual environment
-uv venv --python 3.9
+uv venv --python 3.11
 source .venv/bin/activate
 
 # Install Krkn-AI in development mode

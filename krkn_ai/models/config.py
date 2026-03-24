@@ -47,6 +47,14 @@ class KubevirtScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class BaselineConfig(BaseModel):
+    enable: bool = True
+    duration: int = 60 * 2  # 2 minutes
+    regression_threshold: Optional[float] = (
+        None  # Percentage threshold for regression detection (0-100). If scenario fitness degrades by more than this percentage from baseline, mark as regression. Example: 10.0 means 10% degradation is considered regression.
+    )
+
+
 class ScenarioConfig(BaseModel):
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
@@ -246,9 +254,6 @@ class ConfigFile(BaseModel):
         const.WAIT_DURATION
     )  # Time to wait after each scenario run (Default: 120 seconds)
 
-    baseline_regression_threshold: Optional[float] = (
-        None  # Percentage threshold for regression detection (0-100). If scenario fitness degrades by more than this percentage from baseline, mark as regression. Example: 10.0 means 10% degradation is considered regression.
-    )
 
     mutation_rate: float = (
         const.MUTATION_RATE
@@ -273,6 +278,7 @@ class ConfigFile(BaseModel):
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 
+    baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
 
     output: OutputConfig = OutputConfig()

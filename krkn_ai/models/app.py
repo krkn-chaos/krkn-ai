@@ -41,6 +41,7 @@ class CommandRunResult(BaseModel):
     returncode: int  # Return code of Krkn-Hub scenario execution
     start_time: datetime.datetime  # Start date timestamp of the test
     end_time: datetime.datetime  # End date timestamp of the test
+    duration_seconds: float = 0.0  # Monotonic-clock elapsed seconds for the run
     fitness_result: FitnessResult  # Fitness result measured for scenario.
     health_check_results: Dict[str, List[HealthCheckResult]] = {}
     run_uuid: Optional[str] = (

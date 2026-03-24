@@ -47,9 +47,10 @@ class TestKrknRunnerInitialization:
             runner = KrknRunner(config=minimal_config, output_dir=temp_output_dir)
             assert runner.runner_type == KrknRunnerType.CLI_RUNNER
 
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_init_raises_when_no_runner_available(
-        self, mock_run_shell, minimal_config, temp_output_dir
+        self, mock_run_shell, mock_env, minimal_config, temp_output_dir
     ):
         """Test raises exception when neither krknctl nor podman is available"""
         mock_run_shell.side_effect = [
@@ -214,3 +215,19 @@ class TestKrknRunnerCommandGeneration:
             assert os.path.exists(graph_dir)
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
+
+    def test_generate_scenario_json_uses_krknctl_name(self, minimal_config, temp_output_dir, mock_cluster_components):
+        """Test __generate_scenario_json uses krknctl_name for the name field (Issue #159)"""
+        from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            scenario = DnsOutageScenario(cluster_components=mock_cluster_components)
+            # Access private method for testing
+            result = runner._KrknRunner__generate_scenario_json(scenario)
+            assert result["name"] == "pod-network-filter"
+            assert result["name"] != "dns-outage"

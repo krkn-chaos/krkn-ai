@@ -64,18 +64,31 @@ class KrknRunner:
         # Check if krknctl is available
         krknctl_available = True
         podman_available = True
-        _, returncode = run_shell("krknctl --version", do_not_log=True)
-        if returncode != 0:
+        try:
+            _, returncode = run_shell("krknctl --version", do_not_log=True)
+            if returncode != 0:
+                krknctl_available = False
+                logger.warning("krknctl is not available.")
+        except Exception:
             krknctl_available = False
             logger.warning("krknctl is not available.")
 
         # Check if podman is available
-        _, returncode = run_shell("podman --version", do_not_log=True)
-        if returncode != 0:
+        try:
+            _, returncode = run_shell("podman --version", do_not_log=True)
+            if returncode != 0:
+                podman_available = False
+                logger.warning("podman is not available.")
+        except Exception:
             podman_available = False
             logger.warning("podman is not available.")
 
         if krknctl_available is False and podman_available is False:
+            if env_is_truthy("MOCK_RUN"):
+                logger.warning(
+                    "krknctl and podman are not available, but MOCK_RUN is enabled. Using CLI_RUNNER for mock run."
+                )
+                return KrknRunnerType.CLI_RUNNER
             raise Exception(
                 "krknctl and podman are not available. Please install krknctl and podman."
             )
@@ -378,7 +391,7 @@ class KrknRunner:
         }
         result = {
             "image": scenario.krknhub_image,
-            "name": scenario.name,
+            "name": scenario.krknctl_name,
             "env": env,
         }
         if depends_on is not None:

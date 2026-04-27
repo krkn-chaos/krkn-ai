@@ -62,7 +62,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     is_ocp = is_openshift(kubeconfig)
 
     # Case 2: For non-OpenShift clusters, both variables are required.
-    if not is_ocp and (not url or not token):
+    if not is_ocp and not url:
         raise PrometheusConnectionError(
             "Prometheus configuration missing for Kubernetes cluster.\n"
             "Please set the following environment variables:\n"
@@ -78,7 +78,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
     if is_ocp and not token:
         token = _discover_openshift_prometheus_token(kubeconfig)
 
-    if not url or not token:
+    if not url:
         raise PrometheusConnectionError(
             "Automatic Prometheus discovery failed on OpenShift.\n"
             "Ensure the monitoring routes are accessible or set explicitly:\n"

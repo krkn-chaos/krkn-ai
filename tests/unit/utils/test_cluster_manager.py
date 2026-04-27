@@ -54,6 +54,10 @@ class TestClusterManager:
         mock_pod = Mock()
         mock_pod.metadata.name = "test-pod"
         mock_pod.metadata.labels = {"app": "test"}
+        mock_owner_ref = Mock()
+        mock_owner_ref.kind = "ReplicaSet"
+        mock_owner_ref.name = "test-pod-abc123"
+        mock_pod.metadata.owner_references = [mock_owner_ref]
         mock_container = Mock()
         mock_container.name = "test-container"
         mock_pod.spec = Mock()
@@ -82,6 +86,11 @@ class TestClusterManager:
         mock_node.metadata.name = "test-node"
         mock_node.metadata.labels = {"kubernetes.io/hostname": "test-node"}
         mock_node.spec.taints = None
+        mock_node.spec.unschedulable = False
+        mock_ready_condition = Mock()
+        mock_ready_condition.type = "Ready"
+        mock_ready_condition.status = "True"
+        mock_node.status.conditions = [mock_ready_condition]
         mock_node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
         cluster_manager.core_api.list_node.return_value.items = [mock_node]
 
@@ -108,6 +117,9 @@ class TestClusterManager:
         assert components.namespaces[0].name == "default"
         assert len(components.namespaces[0].pods) == 1
         assert components.namespaces[0].pods[0].name == "test-pod"
+        assert components.namespaces[0].pods[0].owner is not None
+        assert components.namespaces[0].pods[0].owner.kind == "ReplicaSet"
+        assert components.namespaces[0].pods[0].owner.name == "test-pod-abc123"
         assert len(components.nodes) == 1
         assert components.nodes[0].name == "test-node"
 
@@ -287,6 +299,7 @@ class TestClusterManager:
         mock_pod1 = Mock()
         mock_pod1.metadata.name = "app-pod"
         mock_pod1.metadata.labels = {"app": "myapp", "env": "prod"}
+        mock_pod1.metadata.owner_references = None
         mock_container1 = Mock()
         mock_container1.name = "container1"
         mock_pod1.spec = Mock()
@@ -295,6 +308,7 @@ class TestClusterManager:
         mock_pod2 = Mock()
         mock_pod2.metadata.name = "skip-me"
         mock_pod2.metadata.labels = {"app": "myapp"}
+        mock_pod2.metadata.owner_references = None
         mock_container2 = Mock()
         mock_container2.name = "container2"
         mock_pod2.spec = Mock()
@@ -380,6 +394,11 @@ class TestClusterManager:
         mock_taint.value = None
         mock_taint.effect = "NoSchedule"
         mock_node.spec.taints = [mock_taint]
+        mock_node.spec.unschedulable = False
+        mock_ready_condition = Mock()
+        mock_ready_condition.type = "Ready"
+        mock_ready_condition.status = "True"
+        mock_node.status.conditions = [mock_ready_condition]
         mock_node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
         cluster_manager.core_api.list_node.return_value.items = [mock_node]
 
@@ -419,6 +438,11 @@ class TestClusterManager:
         mock_node.metadata.name = "test-node"
         mock_node.metadata.labels = {"kubernetes.io/hostname": "test-node"}
         mock_node.spec.taints = None
+        mock_node.spec.unschedulable = False
+        mock_ready_condition = Mock()
+        mock_ready_condition.type = "Ready"
+        mock_ready_condition.status = "True"
+        mock_node.status.conditions = [mock_ready_condition]
         mock_node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
         cluster_manager.core_api.list_node.return_value.items = [mock_node]
 

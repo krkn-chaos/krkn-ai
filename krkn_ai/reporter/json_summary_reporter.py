@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.constants import STATUS_COMPLETED
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,7 @@ class JSONSummaryReporter:
         config: ConfigFile,
         seen_population: Dict[Any, CommandRunResult],
         best_of_generation: List[CommandRunResult],
+        baseline_result: Optional[CommandRunResult] = None,
         start_time: Optional[datetime.datetime] = None,
         end_time: Optional[datetime.datetime] = None,
         completed_generations: int = 0,
@@ -50,10 +52,12 @@ class JSONSummaryReporter:
         self.config = config
         self.seen_population = seen_population
         self.best_of_generation = best_of_generation
+        self.baseline_result = baseline_result
         self.start_time = start_time
         self.end_time = end_time
         self.completed_generations = completed_generations
         self.seed = seed
+        self.status = STATUS_COMPLETED
 
     def generate_summary(self) -> Dict[str, Any]:
         """
@@ -102,6 +106,7 @@ class JSONSummaryReporter:
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "duration_seconds": round(duration_seconds, 2),
+            "status": self.status,
             "config": {
                 "generations": self.config.generations,
                 "population_size": self.config.population_size,
@@ -120,6 +125,12 @@ class JSONSummaryReporter:
             "best_scenarios": best_scenarios,
             "fitness_progression": fitness_progression,
         }
+
+        if self.baseline_result is not None:
+            results_summary["baseline"] = {
+                "fitness_score": self.baseline_result.fitness_result.fitness_score,
+                "duration_seconds": self.baseline_result.duration_seconds,
+            }
 
         return results_summary
 

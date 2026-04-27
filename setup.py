@@ -1,5 +1,5 @@
 import pathlib
-from setuptools import setup
+from setuptools import setup, find_packages
 
 # The directory containing this file
 HERE = pathlib.Path(__file__).parent
@@ -12,7 +12,7 @@ REQUIRE = (HERE / "requirements.txt").read_text(encoding="utf-8")
 
 setup(
     name="krkn_ai",
-    version="0.0.1",
+    version="0.0.3",
     description="Krkn-AI",
     long_description=DESCRIPTION,
     long_description_content_type="text/markdown",
@@ -23,7 +23,7 @@ setup(
         "Programming Language :: Python :: 3",
         "Intended Audience :: Developers",
     ],
-    packages=["krkn_ai"],
+    packages=find_packages(include=["krkn_ai*"]),
     include_package_data=True,
     install_requires=REQUIRE,
     entry_points={

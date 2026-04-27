@@ -52,7 +52,7 @@ case "$MODE_LOWER" in
         fi
 
         # Build the command
-        CMD=(uv run krkn_ai discover --kubeconfig "$KUBECONFIG" --output "$OUTPUT_DIR/krkn-ai.yaml")
+        CMD=(krkn_ai discover --kubeconfig "$KUBECONFIG" --output "$OUTPUT_DIR/krkn-ai.yaml")
 
         # Add optional parameters
         if [ -n "$NAMESPACE" ]; then
@@ -94,7 +94,7 @@ case "$MODE_LOWER" in
         fi
 
         # Build the command
-        CMD="uv run krkn_ai run --config $CONFIG_FILE --output $OUTPUT_DIR --kubeconfig $KUBECONFIG"
+        CMD="krkn_ai run --config $CONFIG_FILE --output $OUTPUT_DIR --kubeconfig $KUBECONFIG"
 
         # Add optional parameters
         if [ -n "$FORMAT" ]; then

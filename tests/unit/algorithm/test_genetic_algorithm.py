@@ -2,7 +2,6 @@
 GeneticAlgorithm core functionality tests
 """
 
-import os
 import pytest
 from unittest.mock import Mock, patch
 
@@ -20,17 +19,19 @@ class TestGeneticAlgorithmInitialization:
                 "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
             ) as mock_gen:
                 mock_gen.return_value = [("pod_scenarios", Mock)]
+                run_uuid = "test-run-uuid"
                 ga = GeneticAlgorithm(
-                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                    config=minimal_config,
+                    output_dir=temp_output_dir,
+                    format="yaml",
+                    run_uuid=run_uuid,
                 )
                 assert ga.config == minimal_config
                 assert ga.output_dir == temp_output_dir
+                assert ga.run_uuid == run_uuid
                 assert ga.format == "yaml"
                 assert ga.population == []
                 assert len(ga.best_of_generation) == 0
-                # Verify config file is saved during initialization
-                config_path = os.path.join(temp_output_dir, "krkn-ai.yaml")
-                assert os.path.exists(config_path)
 
     def test_init_with_population_size_less_than_2(
         self, minimal_config, temp_output_dir

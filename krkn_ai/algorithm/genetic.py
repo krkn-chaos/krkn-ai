@@ -28,6 +28,7 @@ from krkn_ai.utils.rng import rng
 from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
 from krkn_ai.utils.output import format_result_filename, format_duration
 from krkn_ai.utils.elastic_client import ElasticSearchClient
+from krkn_ai.constants import STATUS_IN_PROGRESS
 
 logger = get_logger(__name__)
 
@@ -43,10 +44,14 @@ class GeneticAlgorithm:
         output_dir: str,
         format: str,
         runner_type: KrknRunnerType = None,
+        run_uuid: str = str(uuid.uuid4()),
     ):
-        self.output_dir = output_dir
         self.config = config
         self.format = format
+        self.run_uuid = run_uuid
+
+        # Organize results under run_uuid subdirectory
+        self.output_dir = output_dir
 
         # Initialize RNG with seed for reproducibility
         rng.set_seed(self.config.seed)
@@ -56,7 +61,7 @@ class GeneticAlgorithm:
             logger.info("Random seed: None (non-reproducible mode)")
 
         self.krkn_client = KrknRunner(
-            config, output_dir=output_dir, runner_type=runner_type
+            config, output_dir=self.output_dir, runner_type=runner_type
         )
         self.population: List[BaseScenario] = []
 
@@ -71,6 +76,7 @@ class GeneticAlgorithm:
             0  # Track new scenarios discovered in current generation
         )
 
+        self.baseline_result: Optional[CommandRunResult] = None
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
         )  # List valid scenarios
@@ -87,10 +93,6 @@ class GeneticAlgorithm:
         self.elastic_client: Optional[ElasticSearchClient] = None
         if self.config.elastic is not None:
             self.elastic_client = ElasticSearchClient(self.config.elastic)
-
-        # Generate unique run UUID for this experiment
-        self.run_uuid = str(uuid.uuid4())
-        logger.info("Krkn-AI run UUID: %s", self.run_uuid)
 
         # Track run metadata for results summary
         self.start_time: Optional[datetime.datetime] = None
@@ -118,13 +120,26 @@ class GeneticAlgorithm:
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
     def simulate(self):
-        # Initial population (Gen 0)
-        self.population = self.create_population(self.config.population_size)
-
+        try:
+            results_path = os.path.join(self.output_dir, "results.json")
+            if os.path.exists(results_path):
+                with open(results_path, "r") as f:
+                    data = json.load(f)
+                data["status"] = STATUS_IN_PROGRESS
+                with open(results_path, "w") as f:
+                    json.dump(data, f)
+        except Exception as e:
+            logger.warning("Failed to update status to in progress: %s", e)
         # Variables to track the progress of the algorithm
         self.start_time = datetime.datetime.now(datetime.timezone.utc)
         start_time = time.time()
         cur_generation = 0
+
+        # Establish baseline by running dummy scenario to evaluate cluster health, fitness score before chaos testing
+        self.run_baseline()
+
+        # Initial population (Gen 0)
+        self.population = self.create_population(self.config.population_size)
 
         while True:
             # Calculate elapsed time since the start of the algorithm
@@ -217,6 +232,33 @@ class GeneticAlgorithm:
                 self.population.extend(
                     self.create_population(self.config.population_injection_size)
                 )
+
+    def run_baseline(self):
+        """
+        Run baseline scenario to get a baseline fitness score.
+        """
+        if not self.config.baseline.enable:
+            logger.info("Baseline is disabled, skipping baseline scenario")
+            return
+
+        # Run dummy scenario for baseline duration
+        logger.info(
+            "Running baseline scenario for %d seconds", self.config.baseline.duration
+        )
+        baseline_scenario = ScenarioFactory.create_dummy_scenario()
+        baseline_scenario.end.value = self.config.baseline.duration
+
+        # Run baseline scenario
+        self.baseline_result = self.krkn_client.run(baseline_scenario, 0)
+
+        self.baseline_result.scenario_id = "baseline"
+
+        # Save baseline result
+        self.save_scenario_result(self.baseline_result)
+        self.health_check_reporter.plot_report(self.baseline_result)
+        self.health_check_reporter.write_fitness_result(self.baseline_result)
+        if self.elastic_client is not None:
+            self.elastic_client.index_run_result(self.baseline_result, self.run_uuid)
 
     def adapt_mutation_rate(self):
         cfg = self.config.adaptive_mutation
@@ -693,6 +735,7 @@ class GeneticAlgorithm:
             config=self.config,
             seen_population=self.seen_population,
             best_of_generation=self.best_of_generation,
+            baseline_result=self.baseline_result,
             start_time=self.start_time,
             end_time=self.end_time,
             completed_generations=self.completed_generations,

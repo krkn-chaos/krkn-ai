@@ -1,4 +1,7 @@
 import os
+import uuid
+import json
+from krkn_ai.constants import STATUS_STARTED, STATUS_FAILED
 
 import click
 from pydantic import ValidationError
@@ -6,6 +9,7 @@ from krkn_ai.utils.logger import init_logger, get_logger
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import KrknRunnerType
+from krkn_ai.dashboard.manager import DashboardManager
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
     MissingScenarioError,
@@ -60,6 +64,18 @@ def main():
     default=None,
 )
 @click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.option(
+    "--monitoring",
+    "-m",
+    is_flag=True,
+    help="Launch live monitoring dashboard in the background.",
+)
+@click.option(
+    "--port",
+    type=int,
+    help="Port to run Streamlit server on when monitoring is enabled.",
+    default=8501,
+)
 @click.pass_context
 def run(
     ctx,
@@ -71,9 +87,15 @@ def run(
     param: list[str] = None,
     seed: int = None,
     verbose: int = 0,  # Default to INFO level
+    monitoring: bool = False,
+    port: int = 8501,
 ):
-    init_logger(output, verbose >= 2)
+    run_uuid = str(uuid.uuid4())
+    new_output_path = os.path.join(output, run_uuid)
+    init_logger(new_output_path, verbose >= 2)
     logger = get_logger(__name__)
+
+    logger.info("Krkn-AI run UUID: %s", run_uuid)
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
@@ -104,16 +126,30 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
+    streamlit_process = None
+    if monitoring:
+        logger.info("Starting live monitoring dashboard...")
+        streamlit_process = DashboardManager.start(
+            new_output_path, port, background=True
+        )
+
+    run_success = False
     try:
+        os.makedirs(new_output_path, exist_ok=True)
+        with open(os.path.join(new_output_path, "results.json"), "w") as f:
+            json.dump({"status": STATUS_STARTED}, f)
+
         genetic = GeneticAlgorithm(
-            parsed_config,
-            output_dir=output,
+            run_uuid=run_uuid,
+            config=parsed_config,
+            output_dir=new_output_path,
             format=format,
             runner_type=enum_runner_type,
         )
         genetic.simulate()
 
         genetic.save()
+        run_success = True
     except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
         logger.error("%s", e)
         exit(1)
@@ -124,7 +160,34 @@ def run(
         logger.exception("Something went wrong: %s", e)
         exit(1)
     finally:
-        logger.info("Check run.log file in '%s' for more details.", output)
+        if not run_success:
+            try:
+                with open(os.path.join(new_output_path, "results.json"), "w") as f:
+                    json.dump({"status": STATUS_FAILED}, f)
+            except Exception:
+                pass
+
+        if streamlit_process:
+            logger.info(
+                "Run finished. Monitoring dashboard will remain running. Terminate manually when done."
+            )
+        logger.info("Check run.log file in '%s' for more details.", new_output_path)
+
+
+@main.command(help="Monitor results from previous completed runs")
+@click.option("--output", "-o", help="Directory where results are saved.", default="./")
+@click.option("--port", "-p", help="Port to run Streamlit server on.", default=8501)
+@click.pass_context
+def monitor(ctx, output: str, port: int):
+    init_logger(output, False)
+    logger = get_logger(__name__)
+    logger.info(
+        "Starting monitoring dashboard on port %s for output directory: %s",
+        port,
+        output,
+    )
+
+    DashboardManager.start(output, port, background=False)
 
 
 @main.command(help="Discover components for Krkn-AI tests")
@@ -178,8 +241,8 @@ def discover(
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
 
-    if kubeconfig == "" or kubeconfig is None:
-        logger.warning("Kubeconfig file not found.")
+    if kubeconfig == "" or kubeconfig is None or not os.path.exists(kubeconfig):
+        logger.error("Kubeconfig file not found.")
         exit(1)
 
     cluster_manager = ClusterManager(kubeconfig)

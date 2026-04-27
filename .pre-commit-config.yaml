@@ -39,6 +39,7 @@ repos:
     hooks:
       - id: hadolint-docker
         files: ^containers/Containerfile$
+        args: ['--ignore', 'DL4006']
 
   # Mypy - static type checker
   - repo: https://github.com/pre-commit/mirrors-mypy

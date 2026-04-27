@@ -44,3 +44,11 @@ class UniqueScenariosError(Exception):
     """
 
     pass
+
+
+class ShellCommandTimeoutError(Exception):
+    """
+    Exception raised when a shell command times out.
+    """
+
+    pass

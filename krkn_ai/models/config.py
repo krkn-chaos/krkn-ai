@@ -47,6 +47,11 @@ class KubevirtScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class BaselineConfig(BaseModel):
+    enable: bool = True
+    duration: int = 60 * 2  # 2 minutes
+
+
 class ScenarioConfig(BaseModel):
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
@@ -269,6 +274,7 @@ class ConfigFile(BaseModel):
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 
+    baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
 
     output: OutputConfig = OutputConfig()

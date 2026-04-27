@@ -23,7 +23,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 ### Prerequisites
 
 - [krknctl](https://github.com/krkn-chaos/krknctl)
-- Python 3.9+
+- Python 3.11+
 - `uv` package manager (recommended) or `pip`
 - [podman](https://podman.io/)
 - [helm](https://helm.sh/docs/intro/install/)
@@ -36,7 +36,7 @@ An intelligent chaos engineering framework that uses genetic algorithms to optim
 pip install uv
 
 # Create and activate virtual environment
-uv venv --python 3.9
+uv venv --python 3.11
 source .venv/bin/activate
 
 # Install Krkn-AI in development mode
@@ -258,6 +258,8 @@ Usage: krkn_ai run [OPTIONS]
   Run Krkn-AI tests
 
 Options:
+  -k, --kubeconfig TEXT           Path to cluster kubeconfig file. Setting this
+                                  will override value in config file.
   -c, --config TEXT               Path to Krkn-AI config file.
   -o, --output TEXT               Directory to save results.
   -f, --format [json|yaml]        Format of the output file.
@@ -265,11 +267,58 @@ Options:
                                   Type of krkn engine to use.
   -p, --param TEXT                Additional parameters for config file in
                                   key=value format.
+  -s, --seed INTEGER              Random seed for reproducible runs. Overrides
+                                  seed in config file.
   -v, --verbose                   Increase verbosity of output.
+  -m, --monitoring                Launch live monitoring dashboard in the
+                                  background.
+  --port INTEGER                  Port to run Streamlit server on when
+                                  monitoring is enabled.  [default: 8501]
   --help                          Show this message and exit.
+
+
+$ uv run krkn_ai monitor --help
+Usage: krkn_ai monitor [OPTIONS]
+
+  Monitor results from previous completed runs
+
+Options:
+  -o, --output TEXT  Directory where results are saved.  [default: ./]
+  -p, --port TEXT    Port to run Streamlit server on.  [default: 8501]
+  --help             Show this message and exit.
 ```
 
 > **Note:** You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).
+
+### Monitoring Dashboard
+
+Krkn-AI includes a Streamlit-based dashboard for visualizing experiment progress and results.
+
+**Live monitoring during a run:**
+
+```bash
+uv run krkn_ai run \
+  -c ./tmp/krkn-ai.yaml \
+  -o ./tmp/results/ \
+  --monitoring
+```
+
+This launches the dashboard in the background alongside the experiment. By default it runs on port `8501`. Use `--port` to change it:
+
+```bash
+uv run krkn_ai run \
+  -c ./tmp/krkn-ai.yaml \
+  -o ./tmp/results/ \
+  --monitoring --port 9000
+```
+
+**View results from a previous run:**
+
+```bash
+uv run krkn_ai monitor -o ./tmp/results/
+```
+
+The dashboard provides tabs for fitness evolution, health checks, detailed scenario telemetry, logs, and configuration review.
 
 ### Understanding Results
 

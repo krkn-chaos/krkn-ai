@@ -199,6 +199,7 @@ class HealthCheckReporter:
                     "generation_id": fitness_result.generation_id,
                     "scenario_id": fitness_result.scenario_id,
                     "scenario": fitness_result.scenario.name,
+                    "duration_seconds": fitness_result.duration_seconds,
                     "parameters": " ".join(params),
                     **fitness_function_slos,
                     "health_check_failure_score": fitness_result.fitness_result.health_check_failure_score,

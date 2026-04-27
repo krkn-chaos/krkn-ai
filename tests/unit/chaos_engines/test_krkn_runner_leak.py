@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -41,10 +42,17 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
         mock_run_shell.side_effect = Exception("Simulated Shell Crash")
 
         print("\n[TEST] Executing runner.run() with failing run_shell...")
-        try:
-            runner.run(scenario, 1)
-        except Exception as e:
-            print(f"[INFO] Caught expected exception: {e}")
+        env = {
+            "PROMETHEUS_URL": "http://localhost",
+            "PROMETHEUS_TOKEN": "tok",
+            "MOCK_FITNESS": "false",
+            "MOCK_RUN": "false",
+        }
+        with patch.dict(os.environ, env):
+            try:
+                runner.run(scenario, 1)
+            except Exception as e:
+                print(f"[INFO] Caught expected exception: {e}")
 
         # Verification
         print("[VERIFY] Checking if HealthCheckWatcher.stop() was called...")

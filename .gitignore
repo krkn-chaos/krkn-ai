@@ -176,9 +176,11 @@ cython_debug/
 notebooks/
 
 tmp/
+hack/
 
 kubeconfig.yaml
 krknctl-kubeconfig*
 chaos-ai.yaml
+krkn-ai.yaml
 
 uv.lock

@@ -29,10 +29,17 @@ class RNG:
     def choices(self, items: List[Any], weights: List[float], k: int = 1):
         return list(self.rng.choice(items, p=weights, size=k))
 
-    def randint(self, low: int, high: int):
+    def randint(self, low: int, high: int) -> int:
+        """Return a random integer N such that low <= N <= high (both inclusive).
+
+        Note: numpy's ``integers(low, high)`` uses an exclusive upper bound.
+        We add 1 to ``high`` so that the public contract of this method is
+        inclusive on both ends, matching the behaviour of Python's
+        ``random.randint``.
+        """
         if low == high:
             return low
-        return int(self.rng.integers(low, high))
+        return int(self.rng.integers(low, high + 1))
 
     def uniform(self, low: float, high: float):
         return self.rng.uniform(low, high)

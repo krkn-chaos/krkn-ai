@@ -12,11 +12,13 @@ from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.dashboard.manager import DashboardManager
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
+    KubeconfigValidationError,
     MissingScenarioError,
     PrometheusConnectionError,
     UniqueScenariosError,
 )
 from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.kubeconfig import validate_kubeconfig_for_container_use
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
 
@@ -112,6 +114,17 @@ def run(
         exit(1)
     except ValidationError as err:
         logger.error("Unable to parse config file: %s", err)
+        exit(1)
+
+    # Fail fast with an actionable error if the kubeconfig references credential
+    # files by host path (e.g., a default minikube/kind kubeconfig). Krkn-AI
+    # launches scenarios inside containers that won't have access to those host
+    # paths, so loading the kubeconfig there would fail with a cryptic
+    # `kubernetes.config.config_exception.ConfigException` deep in the call stack.
+    try:
+        validate_kubeconfig_for_container_use(parsed_config.kubeconfig_file_path)
+    except KubeconfigValidationError as err:
+        logger.error("%s", err)
         exit(1)
 
     # Override seed from CLI if provided

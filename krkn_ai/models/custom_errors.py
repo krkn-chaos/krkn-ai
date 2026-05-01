@@ -52,3 +52,13 @@ class ShellCommandTimeoutError(Exception):
     """
 
     pass
+
+
+class KubeconfigValidationError(Exception):
+    """
+    Exception raised when a kubeconfig cannot be used for containerized krkn
+    scenarios (e.g., it references credential files by host path instead of
+    embedding them).
+    """
+
+    pass

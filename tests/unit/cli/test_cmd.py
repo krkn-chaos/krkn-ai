@@ -41,31 +41,32 @@ class TestRunCommand:
         try:
             with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
                 with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
-                    mock_read.return_value = minimal_config
-                    mock_ga = Mock()
-                    mock_ga_class.return_value = mock_ga
+                    with patch("krkn_ai.cli.cmd.validate_kubeconfig_for_container_use"):
+                        mock_read.return_value = minimal_config
+                        mock_ga = Mock()
+                        mock_ga_class.return_value = mock_ga
 
-                    override_kubeconfig = "/override/kubeconfig"
-                    result = runner.invoke(
-                        main,
-                        [
-                            "run",
-                            "--config",
-                            config_path,
-                            "--output",
-                            temp_output_dir,
-                            "--kubeconfig",
-                            override_kubeconfig,
-                        ],
-                    )
+                        override_kubeconfig = "/override/kubeconfig"
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                                "--output",
+                                temp_output_dir,
+                                "--kubeconfig",
+                                override_kubeconfig,
+                            ],
+                        )
 
-                    assert result.exit_code == 0
-                    # Verify kubeconfig override was passed to read_config_from_file
-                    mock_read.assert_called_once_with(
-                        config_path, (), override_kubeconfig
-                    )
-                    mock_ga.simulate.assert_called_once()
-                    mock_ga.save.assert_called_once()
+                        assert result.exit_code == 0
+                        # Verify kubeconfig override was passed to read_config_from_file
+                        mock_read.assert_called_once_with(
+                            config_path, (), override_kubeconfig
+                        )
+                        mock_ga.simulate.assert_called_once()
+                        mock_ga.save.assert_called_once()
         finally:
             os.unlink(config_path)
 
@@ -167,26 +168,27 @@ class TestRunCommand:
         try:
             with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
                 with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
-                    mock_read.return_value = minimal_config
-                    mock_ga = Mock()
-                    mock_ga_class.return_value = mock_ga
+                    with patch("krkn_ai.cli.cmd.validate_kubeconfig_for_container_use"):
+                        mock_read.return_value = minimal_config
+                        mock_ga = Mock()
+                        mock_ga_class.return_value = mock_ga
 
-                    # Test runner_type conversion (krknctl -> CLI_RUNNER)
-                    result = runner.invoke(
-                        main,
-                        [
-                            "run",
-                            "--config",
-                            config_path,
-                            "--output",
-                            temp_output_dir,
-                            "--runner-type",
-                            "krknctl",
-                        ],
-                    )
-                    assert result.exit_code == 0
-                    call_args = mock_ga_class.call_args
-                    assert call_args[1]["runner_type"] == KrknRunnerType.CLI_RUNNER
+                        # Test runner_type conversion (krknctl -> CLI_RUNNER)
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                                "--output",
+                                temp_output_dir,
+                                "--runner-type",
+                                "krknctl",
+                            ],
+                        )
+                        assert result.exit_code == 0
+                        call_args = mock_ga_class.call_args
+                        assert call_args[1]["runner_type"] == KrknRunnerType.CLI_RUNNER
         finally:
             os.unlink(config_path)
 
@@ -216,31 +218,34 @@ class TestRunCommand:
             with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
                 with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
                     with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
-                        mock_read.return_value = minimal_config
-                        mock_ga = Mock()
-                        mock_ga_class.return_value = mock_ga
-                        mock_logger = Mock()
-                        mock_get_logger.return_value = mock_logger
+                        with patch(
+                            "krkn_ai.cli.cmd.validate_kubeconfig_for_container_use"
+                        ):
+                            mock_read.return_value = minimal_config
+                            mock_ga = Mock()
+                            mock_ga_class.return_value = mock_ga
+                            mock_logger = Mock()
+                            mock_get_logger.return_value = mock_logger
 
-                        # Test FitnessFunctionCalculationError handling
-                        mock_ga.simulate.side_effect = FitnessFunctionCalculationError(
-                            "Calculation failed"
-                        )
-                        result = runner.invoke(
-                            main,
-                            [
-                                "run",
-                                "--config",
-                                config_path,
-                                "--output",
-                                temp_output_dir,
-                            ],
-                        )
-                        assert result.exit_code == 1
-                        mock_logger.error.assert_called_once()
-                        assert "Unable to calculate fitness function score" in str(
-                            mock_logger.error.call_args
-                        )
+                            # Test FitnessFunctionCalculationError handling
+                            mock_ga.simulate.side_effect = (
+                                FitnessFunctionCalculationError("Calculation failed")
+                            )
+                            result = runner.invoke(
+                                main,
+                                [
+                                    "run",
+                                    "--config",
+                                    config_path,
+                                    "--output",
+                                    temp_output_dir,
+                                ],
+                            )
+                            assert result.exit_code == 1
+                            mock_logger.error.assert_called_once()
+                            assert "Unable to calculate fitness function score" in str(
+                                mock_logger.error.call_args
+                            )
         finally:
             os.unlink(config_path)
 

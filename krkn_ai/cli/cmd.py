@@ -83,7 +83,7 @@ def run(
     output: str = "./",
     format: str = "yaml",
     runner_type: str = None,
-    param: list[str] = None,
+    param: tuple[str, ...] = (),
     seed: int = None,
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,

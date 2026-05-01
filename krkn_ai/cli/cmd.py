@@ -231,8 +231,8 @@ def monitor(ctx, output: str, port: int):
 def discover(
     ctx,
     kubeconfig: str,
-    output: str = "./",
-    namespace: str = "*",
+    output: str = "./krkn-ai.yaml",
+    namespace: str = ".*",
     pod_label: str = ".*",
     node_label: str = ".*",
     verbose: int = 0,

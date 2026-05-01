@@ -322,33 +322,35 @@ The dashboard provides tabs for fitness evolution, health checks, detailed scena
 
 ### Understanding Results
 
-Krkn-AI saves results in the specified output directory:
+Each run of `krkn_ai run` creates a unique subdirectory (named by a generated UUID) inside the `--output` directory. All artifacts for that run are written there:
 
 ```
 .
 └── results/
-    ├── reports/
-    │   ├── health_check_report.csv
-    │   ├── all.csv
-    │   ├── best_scenarios.yaml
-    │   └── graphs/
-    │       ├── best_generation.png
-    │       ├── scenario_1.png
-    │       ├── scenario_2.png
-    │       └── ...
-    ├── yaml/
-    │   ├── generation_0/
-    │   │   ├── scenario_1.yaml
-    │   │   ├── scenario_2.yaml
-    │   │   └── ...
-    │   └── generation_1/
-    │       └── ...
-    ├── logs/
-    │   ├── scenario_1.log
-    │   ├── scenario_2.log
-    │   └── ...
-    ├── results.json
-    └── krkn-ai.yaml
+    └── <run_uuid>/
+        ├── run.log
+        ├── reports/
+        │   ├── health_check_report.csv
+        │   ├── all.csv
+        │   ├── best_scenarios.yaml
+        │   └── graphs/
+        │       ├── best_generation.png
+        │       ├── scenario_1.png
+        │       ├── scenario_2.png
+        │       └── ...
+        ├── yaml/
+        │   ├── generation_0/
+        │   │   ├── scenario_1.yaml
+        │   │   ├── scenario_2.yaml
+        │   │   └── ...
+        │   └── generation_1/
+        │       └── ...
+        ├── logs/
+        │   ├── scenario_1.log
+        │   ├── scenario_2.log
+        │   └── ...
+        ├── results.json
+        └── krkn-ai.yaml
 ```
 
 ## 🧬 How It Works

@@ -329,6 +329,8 @@ Krkn-AI saves results in the specified output directory:
 └── results/
     ├── reports/
     │   ├── health_check_report.csv
+    │   ├── all.csv
+    │   ├── best_scenarios.yaml
     │   └── graphs/
     │       ├── best_generation.png
     │       ├── scenario_1.png
@@ -341,12 +343,12 @@ Krkn-AI saves results in the specified output directory:
     │   │   └── ...
     │   └── generation_1/
     │       └── ...
-    ├── log/
+    ├── logs/
     │   ├── scenario_1.log
     │   ├── scenario_2.log
     │   └── ...
-    ├── best_scenarios.json
-    └── config.yaml
+    ├── results.json
+    └── krkn-ai.yaml
 ```
 
 ## 🧬 How It Works

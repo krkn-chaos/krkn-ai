@@ -31,7 +31,7 @@ def main():
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file. Setting this will override value in config file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option("--config", "-c", help="Path to krkn-ai config file.")
 @click.option("--output", "-o", help="Directory to save results.", default="./")
@@ -195,7 +195,7 @@ def monitor(ctx, output: str, port: int):
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option(
     "--output", "-o", help="Path to save config file.", default="./krkn-ai.yaml"

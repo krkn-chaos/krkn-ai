@@ -34,7 +34,7 @@ def main():
     default=os.getenv("KUBECONFIG", None),
 )
 @click.option("--config", "-c", help="Path to krkn-ai config file.")
-@click.option("--output", "-o", help="Directory to save results.")
+@click.option("--output", "-o", help="Directory to save results.", default="./")
 @click.option(
     "--format",
     "-f",

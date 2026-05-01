@@ -54,7 +54,6 @@ def main():
     "-p",
     multiple=True,
     help="Additional parameters for config file in key=value format.",
-    default=[],
 )
 @click.option(
     "--seed",

@@ -146,6 +146,8 @@ class TestKrknRunnerRun:
 
 
 class TestKrknRunnerReturnCodeExtraction:
+    """Test return code extraction from runner output logs"""
+
     def extract_returncode(self, log, default_returncode=0):
         runner = KrknRunner.__new__(KrknRunner)
         return runner._KrknRunner__extract_returncode_from_run(

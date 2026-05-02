@@ -542,7 +542,6 @@ class KrknRunner:
         """
         try:
             # TODO: Look into if we can save telemetry data to file from Krkn itself.
-            # Hacky way to extract return code from log
             # Find the line with "Chaos data:" and extract JSON from next lines
             marker = "Chaos data:"
             marker_idx = log.find(marker)
@@ -551,11 +550,8 @@ class KrknRunner:
                 logger.warning("Could not find 'Chaos data:' in log")
                 return default_returncode, None
 
-            if chaos_data_idx == -1:
-                logger.warning("Could not find 'Chaos data:' in log")
-                return default_returncode, None
 
-            # Extract JSON by counting braces
+            # JSON Decoding
             decoder = json.JSONDecoder()
             chaos_data_text = log[marker_idx + len(marker):]
             search_idx = 0
@@ -588,18 +584,13 @@ class KrknRunner:
                     logger.debug("Extracted exit_status: %s", exit_status)
                     logger.debug("Extracted run_uuid: %s", run_uuid)
                     return exit_status, run_uuid
-
+             
+            logger.warning("No exit_status found in telemetry data")
+            return default_returncode, None 
+            
             # Extract exit_status from first scenario
             scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-            if scenarios and len(scenarios) > 0:
-                exit_status = scenarios[0].get("exit_status", default_returncode)
-                run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-                logger.debug("Extracted exit_status: %s", exit_status)
-                logger.debug("Extracted run_uuid: %s", run_uuid)
-                return exit_status, run_uuid
-
-            logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None
+            
 
         except Exception as e:
             logger.error("Failed to extract return code from run log: %s", e)

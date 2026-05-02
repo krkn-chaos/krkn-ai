@@ -556,35 +556,38 @@ class KrknRunner:
                 return default_returncode, None
 
             # Extract JSON by counting braces
-            json_lines = []
-            brace_count = 0
-            started = False
+            decoder = json.JSONDecoder()
+            chaos_data_text = log[marker_idx + len(marker):]
+            search_idx = 0
 
-            for i in range(chaos_data_idx, len(lines)):
-                line = lines[i]
-
-                # Count opening and closing braces
-                for char in line:
-                    if char == "{":
-                        brace_count += 1
-                        started = True
-                    elif char == "}":
-                        brace_count -= 1
-
-                if started:
-                    json_lines.append(line)
-
-                # When braces are balanced, we've found the complete JSON
-                if started and brace_count == 0:
+            while True:
+                object_start = chaos_data_text.find("{", search_idx)
+                if object_start == -1:
                     break
 
-            if not json_lines:
-                logger.warning("Could not extract JSON content from log")
-                return default_returncode, None
+                try:
+                    chaos_data, object_end = decoder.raw_decode(
+                        chaos_data_text[object_start:]
+                    )
+                except json.JSONDecodeError:
+                    search_idx = object_start + 1
+                    continue
 
-            # Join all JSON lines into a single string
-            json_str = "\n".join(json_lines)
-            chaos_data = json.loads(json_str)
+                search_idx = object_start + object_end
+                if not isinstance(chaos_data, dict):
+                    continue
+
+                telemetry = chaos_data.get("telemetry")
+                if not isinstance(telemetry, dict):
+                    continue
+
+                scenarios = telemetry.get("scenarios", [])
+                if scenarios and isinstance(scenarios[0], dict):
+                    exit_status = scenarios[0].get("exit_status", default_returncode)
+                    run_uuid = telemetry.get("run_uuid", None)
+                    logger.debug("Extracted exit_status: %s", exit_status)
+                    logger.debug("Extracted run_uuid: %s", run_uuid)
+                    return exit_status, run_uuid
 
             # Extract exit_status from first scenario
             scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])

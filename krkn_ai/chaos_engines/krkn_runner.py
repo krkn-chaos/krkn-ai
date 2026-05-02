@@ -544,13 +544,12 @@ class KrknRunner:
             # TODO: Look into if we can save telemetry data to file from Krkn itself.
             # Hacky way to extract return code from log
             # Find the line with "Chaos data:" and extract JSON from next lines
-            lines = log.split("\n")
-            chaos_data_idx = -1
+            marker = "Chaos data:"
+            marker_idx = log.find(marker)
 
-            for i, line in enumerate(lines):
-                if "Chaos data:" in line:
-                    chaos_data_idx = i + 1
-                    break
+            if marker_idx == -1:
+                logger.warning("Could not find 'Chaos data:' in log")
+                return default_returncode, None
 
             if chaos_data_idx == -1:
                 logger.warning("Could not find 'Chaos data:' in log")

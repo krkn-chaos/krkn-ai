@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional, Union
+from typing import Iterable, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils import run_shell
@@ -397,20 +397,31 @@ class ClusterManager:
             logger.warning("Unable to find interfaces for node %s", node)
             return []
 
-        interfaces = []
-        interfaces_list = [x.strip() for x in log.splitlines()]
+        return self._filter_chaos_interfaces(
+            x.strip() for x in log.splitlines() if x.strip()
+        )
 
-        # TODO: Check which interfaces to consider for network chaos
-        # For now, consider specific interfaces like ens5, eth0, etc.
+    # Linux interface name rules: up to 15 chars, alphanumerics with '_' or '-'.
+    # krknctl rejects names with characters outside this set.
+    _VALID_INTERFACE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,15}$")
 
-        for intf in interfaces_list:
-            # TODO: Check which interfaces to consider for network chaos
-            # ens5, eth0, br-ex, br-int, etc. as well as other interfaces like lo, ovs-system, etc.
-            # Krkn validation doesn't work with interfaces with name like ABC-XYZ
-            if intf.startswith("ens") or intf.startswith("eth"):
-                interfaces.append(intf)
+    # Virtual/internal interfaces that aren't useful targets for network chaos:
+    # loopback, OVS/OVN internals, dynamic tunnel devices, and veth pairs.
+    _SKIP_INTERFACE_EXACT = frozenset({"lo", "ovs-system", "br-int"})
+    _SKIP_INTERFACE_PREFIXES = ("genev_sys", "vxlan_sys", "veth", "tun", "tap")
 
-        return interfaces
+    @classmethod
+    def _filter_chaos_interfaces(cls, interfaces: "Iterable[str]") -> List[str]:
+        result = []
+        for intf in interfaces:
+            if intf in cls._SKIP_INTERFACE_EXACT:
+                continue
+            if intf.startswith(cls._SKIP_INTERFACE_PREFIXES):
+                continue
+            if not cls._VALID_INTERFACE_NAME.match(intf):
+                continue
+            result.append(intf)
+        return result
 
     def __fetch_node_metrics(self, node: str):
         metrics = self.custom_obj_api.list_cluster_custom_object(

@@ -462,18 +462,49 @@ class TestClusterManager:
         assert nodes[0].interfaces == []  # Empty on failure
 
     def test_list_node_interfaces_filters_network_interfaces(self, cluster_manager):
-        """Test list_node_interfaces filters and returns only ens/eth interfaces"""
+        """Test list_node_interfaces keeps physical/external NICs and bridges
+        and drops loopback/OVS internals."""
         with patch(
             "krkn_ai.utils.cluster_manager.run_shell",
-            return_value=("eth0\nens5\nlo\novs-system\nbr-ex\n", 0),
+            return_value=("eth0\nens5\nlo\novs-system\nbr-ex\nbr-int\n", 0),
         ):
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
-        assert len(interfaces) == 2
         assert "eth0" in interfaces
         assert "ens5" in interfaces
+        assert "br-ex" in interfaces
         assert "lo" not in interfaces
         assert "ovs-system" not in interfaces
+        assert "br-int" not in interfaces
+
+    def test_list_node_interfaces_keeps_bare_metal_and_bond_names(
+        self, cluster_manager
+    ):
+        """Test list_node_interfaces keeps enp/eno/bond names that the old
+        ens/eth-only filter used to drop."""
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=("enp0s3\neno1\nbond0\n", 0),
+        ):
+            interfaces = cluster_manager.list_node_interfaces("test-node")
+
+        assert set(interfaces) == {"enp0s3", "eno1", "bond0"}
+
+    def test_list_node_interfaces_drops_dynamic_and_invalid_names(
+        self, cluster_manager
+    ):
+        """Test list_node_interfaces drops veth/genev/vxlan tunnels and any
+        name with characters krknctl would reject."""
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=(
+                "eth0\nveth1234abc\ngenev_sys_6081\nvxlan_sys_4789\nABC.XYZ\n",
+                0,
+            ),
+        ):
+            interfaces = cluster_manager.list_node_interfaces("test-node")
+
+        assert interfaces == ["eth0"]
 
     def test_list_node_interfaces_returns_empty_list_on_shell_error(
         self, cluster_manager

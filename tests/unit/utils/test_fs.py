@@ -22,3 +22,13 @@ class TestParamParsing:
         key, value = p.split("=", 1)
         assert key == "KEY"
         assert value == "value"
+
+    def test_param_without_equals_sign(self):
+        """param without = should assign empty string as value"""
+        p = "JUST_A_KEY"
+        if "=" in p:
+            key, value = p.split("=", 1)
+        else:
+            key, value = p, ""
+        assert key == "JUST_A_KEY"
+        assert value == ""

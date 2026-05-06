@@ -38,7 +38,10 @@ def read_config_from_file(
     if param:
         params = {}
         for p in param:
-            key, value = p.split("=", 1)
+            if "=" in p:
+                key, value = p.split("=", 1)
+            else:
+                key, value = p, ""
             params[str(key)] = str(value)
 
         # Replace parameter in health check url string

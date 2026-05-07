@@ -63,7 +63,6 @@ class TestGeneticAlgorithmInitialization:
                 )
                 assert ga.config.population_size == 6
 
-
     def test_init_generates_fresh_run_uuid_when_not_provided(
         self, minimal_config, temp_output_dir
     ):

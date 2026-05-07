@@ -64,6 +64,25 @@ class TestGeneticAlgorithmInitialization:
                 assert ga.config.population_size == 6
 
 
+    def test_init_generates_fresh_run_uuid_when_not_provided(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test default run UUID is generated per instance, not at import time"""
+        with patch("krkn_ai.algorithm.genetic.KrknRunner"):
+            with patch(
+                "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+            ) as mock_gen:
+                mock_gen.return_value = [("pod_scenarios", Mock)]
+                first = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+                second = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+
+                assert first.run_uuid != second.run_uuid
+
+
 class TestGeneticAlgorithmCoreMethods:
     """Test GeneticAlgorithm core methods"""
 

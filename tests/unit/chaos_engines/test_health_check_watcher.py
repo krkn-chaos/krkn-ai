@@ -208,6 +208,39 @@ class TestHealthCheckWatcherResults:
         # Should return 0 when less than 4 successful checks
         assert score == 0
 
+    def test_summarize_response_time_skips_urls_with_insufficient_data(self):
+        """Test summarize_response_time skips URLs with insufficient data"""
+        config = HealthCheckConfig(applications=[])
+        watcher = HealthCheckWatcher(config)
+
+        sparse_results = [
+            HealthCheckResult(
+                name="sparse-app",
+                response_time=response_time,
+                status_code=200,
+                success=True,
+            )
+            for response_time in [0.1, 0.2, 0.3]
+        ]
+        outlier_results = [
+            HealthCheckResult(
+                name="outlier-app",
+                response_time=response_time,
+                status_code=200,
+                success=True,
+            )
+            for response_time in [0.1, 0.1, 0.1, 0.1, 5.0]
+        ]
+
+        score = watcher.summarize_response_time(
+            {
+                "http://localhost:8080/health": sparse_results,
+                "http://localhost:8081/health": outlier_results,
+            }
+        )
+
+        assert score == 2.0
+
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
         """Test health check handles request exceptions gracefully"""

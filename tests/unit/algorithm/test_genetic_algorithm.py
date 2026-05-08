@@ -67,6 +67,41 @@ class TestGeneticAlgorithmInitialization:
 class TestGeneticAlgorithmCoreMethods:
     """Test GeneticAlgorithm core methods"""
 
+    def test_injection_extends_population(self, genetic_algorithm):
+        """Test injection adds members to the population."""
+        genetic_algorithm.config.population_size = 4
+        genetic_algorithm.config.population_injection_rate = 1.0
+        genetic_algorithm.config.population_injection_size = 2
+        offspring = [Mock(name=f"offspring-{index}") for index in range(4)]
+        injected = [Mock(name=f"injected-{index}") for index in range(2)]
+        genetic_algorithm.population = offspring.copy()
+
+        with patch("krkn_ai.algorithm.genetic.rng.random", return_value=0.0):
+            with patch.object(
+                genetic_algorithm, "create_population", return_value=injected
+            ) as mock_create_population:
+                genetic_algorithm._inject_population()
+
+        assert genetic_algorithm.population == offspring + injected
+        assert len(genetic_algorithm.population) == 6
+        mock_create_population.assert_called_once_with(2)
+
+    def test_injection_roll_miss(self, genetic_algorithm):
+        """Test injection is skipped when the roll misses."""
+        genetic_algorithm.config.population_injection_rate = 0.5
+        genetic_algorithm.config.population_injection_size = 2
+        offspring = [Mock(name=f"offspring-{index}") for index in range(4)]
+        genetic_algorithm.population = offspring.copy()
+
+        with patch("krkn_ai.algorithm.genetic.rng.random", return_value=0.9):
+            with patch.object(
+                genetic_algorithm, "create_population"
+            ) as mock_create_population:
+                genetic_algorithm._inject_population()
+
+        assert genetic_algorithm.population == offspring
+        mock_create_population.assert_not_called()
+
     def test_save_method_calls_reporters(self, genetic_algorithm):
         """Test save method calls all reporters"""
         with patch.object(

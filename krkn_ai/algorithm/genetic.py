@@ -228,10 +228,14 @@ class GeneticAlgorithm:
                     self.population.append(child2)
 
             # Inject random members to population to diversify scenarios
-            if rng.random() < self.config.population_injection_rate:
-                self.population.extend(
-                    self.create_population(self.config.population_injection_size)
-                )
+            self._inject_population()
+
+    def _inject_population(self):
+        """Add random members to diversify scenarios."""
+        if rng.random() < self.config.population_injection_rate:
+            self.population.extend(
+                self.create_population(self.config.population_injection_size)
+            )
 
     def run_baseline(self):
         """

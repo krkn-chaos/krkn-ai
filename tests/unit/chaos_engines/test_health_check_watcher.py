@@ -208,7 +208,7 @@ class TestHealthCheckWatcherResults:
         # Should return 0 when less than 4 successful checks
         assert score == 0
 
-    def test_summarize_response_time_skips_urls_with_insufficient_data(self):
+    def test_summarize_response_time_skips_sparse_urls(self):
         """Test summarize_response_time skips URLs with insufficient data"""
         config = HealthCheckConfig(applications=[])
         watcher = HealthCheckWatcher(config)

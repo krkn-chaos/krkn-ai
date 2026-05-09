@@ -1,4 +1,5 @@
 import os
+from typing import Any, Dict
 
 import jinja2
 import yaml
@@ -7,6 +8,35 @@ environment = jinja2.Environment()
 
 # Add enumerate to the template environment so it's available in templates
 environment.globals["enumerate"] = enumerate
+
+
+def _compute_scenario_flags(cluster_component_data: dict) -> Dict[str, Any]:
+    """Derive scenario availability flags from discovered cluster components.
+
+    Inspects the serialised ``ClusterComponents`` dict and returns boolean
+    flags that the Jinja2 template can use to conditionally enable or
+    disable scenarios based on what actually exists in the cluster.
+
+    Node-level destructive scenarios (``node-*-hog``, ``time-scenarios``)
+    are intentionally kept disabled as safe defaults regardless of
+    discovered resources.
+    """
+    namespaces = cluster_component_data.get("namespaces", [])
+    nodes = cluster_component_data.get("nodes", [])
+
+    has_pods = any(ns.get("pods") for ns in namespaces)
+    has_services = any(ns.get("services") for ns in namespaces)
+    has_pvcs = any(ns.get("pvcs") for ns in namespaces)
+    has_vmis = any(ns.get("vmis") for ns in namespaces)
+    has_interfaces = any(n.get("interfaces") for n in nodes)
+
+    return {
+        "has_pods": has_pods,
+        "has_services": has_services,
+        "has_pvcs": has_pvcs,
+        "has_vmis": has_vmis,
+        "has_interfaces": has_interfaces,
+    }
 
 
 def create_krkn_ai_template(
@@ -36,7 +66,11 @@ def create_krkn_ai_template(
 
     cluster_components_indented = "\n".join(indented_lines)
 
+    # Compute scenario availability flags from discovered resources
+    scenario_flags = _compute_scenario_flags(cluster_component_data)
+
     return template.render(
         kubeconfig_file_path=kubeconfig_file_path,
         cluster_components=cluster_components_indented,
+        **scenario_flags,
     )

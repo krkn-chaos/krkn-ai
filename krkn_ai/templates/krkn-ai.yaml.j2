@@ -63,11 +63,11 @@ fitness_function:
 
 scenario:
   pod-scenarios:
-    enable: true
+    enable: {{ has_pods | lower }}
   application-outages:
-    enable: true
+    enable: {{ has_services | lower }}
   container-scenarios:
-    enable: true
+    enable: {{ has_pods | lower }}
   node-cpu-hog:
     enable: false
   node-memory-hog:
@@ -77,15 +77,15 @@ scenario:
   time-scenarios:
     enable: false
   network-scenarios:
-    enable: false
+    enable: {{ has_interfaces | lower }}
   dns-outage:
-    enable: true
+    enable: {{ has_services | lower }}
   syn-flood:
-    enable: false
+    enable: {{ has_interfaces | lower }}
   pvc-scenarios:
-    enable: false
+    enable: {{ has_pvcs | lower }}
   kubevirt-scenarios:
-    enable: false
+    enable: {{ has_vmis | lower }}
 
 cluster_components:
 {{ cluster_components }}

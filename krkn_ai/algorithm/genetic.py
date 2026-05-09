@@ -97,7 +97,7 @@ class GeneticAlgorithm:
         # Track run metadata for results summary
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
-        self.seed: Optional[int] = None  # Seed can be set externally if needed
+        self.seed: Optional[int] = self.config.seed
         self.completed_generations: int = 0
 
         if self.config.population_size < 2:

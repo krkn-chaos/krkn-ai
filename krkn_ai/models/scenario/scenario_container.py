@@ -66,6 +66,11 @@ class ContainerScenario(Scenario):
         # pod_label is a string of the form "key=value"
         self.label_selector.value = "{}={}".format(label, labels[label])
 
+        if not pod.containers:
+            self.disruption_count.value = 1
+            self.container_name.value = ""
+            return
+
         self.disruption_count.value = rng.randint(1, len(pod.containers))
 
         if self.disruption_count.value == 1:

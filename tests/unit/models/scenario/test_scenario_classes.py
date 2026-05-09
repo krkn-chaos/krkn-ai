@@ -105,6 +105,22 @@ class TestContainerScenario:
         ):
             ContainerScenario(cluster_components=cluster)
 
+    def test_container_scenario_empty_pod(self):
+        """Test that ContainerScenario handles pods with no containers gracefully."""
+        pod_empty = Pod(
+            name="empty-pod",
+            containers=[],  # zero containers
+            labels={"app": "test"},
+            disabled=False,
+        )
+        ns = Namespace(name="test-ns", pods=[pod_empty], services=[], pvcs=[], vmis=[])
+        components = ClusterComponents(namespaces=[ns], nodes=[])
+
+        scenario = ContainerScenario(cluster_components=components)
+        # Should not raise; safe defaults are set
+        assert scenario.disruption_count.value == 1
+        assert scenario.container_name.value == ""
+
 
 class TestNodeCPUHogScenario:
     """Test NodeCPUHogScenario class"""

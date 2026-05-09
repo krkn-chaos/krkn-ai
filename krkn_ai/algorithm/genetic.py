@@ -147,6 +147,7 @@ class GeneticAlgorithm:
 
             # Check all stopping criteria before processing generation
             if self._check_and_stop(cur_generation, elapsed_time):
+                self.completed_generations = cur_generation
                 break
 
             # Log remaining time if duration is set
@@ -196,6 +197,7 @@ class GeneticAlgorithm:
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
             elapsed_after_eval = time.time() - start_time
             if self._check_and_stop(cur_generation, elapsed_after_eval):
+                self.completed_generations = cur_generation
                 break
 
             # Repopulate off-springs

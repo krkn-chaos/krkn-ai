@@ -233,6 +233,9 @@ class GeneticAlgorithm:
                     self.create_population(self.config.population_injection_size)
                 )
 
+        # Update completed generations count after loop exits
+        self.completed_generations = cur_generation
+
     def run_baseline(self):
         """
         Run baseline scenario to get a baseline fitness score.

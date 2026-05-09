@@ -7,7 +7,7 @@
 repos:
   # Ruff - Python linter (replaces flake8, isort, black)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: "v0.14.14"
+    rev: "v0.15.12"
     hooks:
       # Run ruff linter with auto-fix
       - id: ruff
@@ -43,7 +43,7 @@ repos:
 
   # Mypy - static type checker
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v2.0.0
     hooks:
       - id: mypy
         additional_dependencies: [types-PyYAML, types-requests]

@@ -292,11 +292,21 @@ class ClusterManager:
         """
         List nodes with optional label filtering.
 
+        When a specific label pattern is provided, only nodes that carry at
+        least one matching label key are returned.  This prevents expensive
+        interface listing (``oc debug``) and metrics fetching for nodes the
+        caller is not interested in.
+
+        The ``kubernetes.io/hostname`` label is always included in the output
+        labels for identification, but does not affect which nodes pass the
+        filter.
+
         Args:
-            node_label_pattern: Pattern for node label keys to include.
-                - None or '': Include all labels (default_match_all=True)
-                - '*': Include all labels
-                - 'kubernetes.io/hostname': Include specific labels
+            node_label_pattern: Pattern for node label keys to filter by.
+                - None or '': Return all nodes with all labels
+                - '*': Return all nodes with all labels
+                - 'node-role.kubernetes.io/control-plane': Return only nodes
+                  that carry this label key
                 - 'node-role.*': Regex pattern for label keys
 
         Returns:
@@ -307,7 +317,17 @@ class ClusterManager:
             node_label_pattern, default_match_all=True
         )
 
+        # Build a separate matcher from the original pattern (before hostname
+        # injection) to decide whether a node should be included at all.
+        # When a specific label pattern is given, only nodes that carry at
+        # least one matching label are kept — this avoids expensive interface
+        # listing and metrics fetching for irrelevant nodes.  (Fixes #174)
+        user_matcher = PatternMatcher.from_string(
+            node_label_pattern, default_match_all=True
+        )
+
         # If specific patterns provided, ensure hostname is always included
+        # in the *display* matcher so node names are always visible.
         if not label_matcher.match_all and label_matcher.include_patterns:
             # Check if hostname pattern is already included
             hostname_key = "kubernetes.io/hostname"
@@ -349,11 +369,24 @@ class ClusterManager:
                 logger.debug("Node %s is not Ready, skipping", node.metadata.name)
                 return None
 
+            # When a specific label pattern is active, skip nodes that have
+            # no labels matching the user's original pattern.
+            if not user_matcher.match_all:
+                node_labels = node.metadata.labels or {}
+                has_user_match = any(user_matcher.matches(k) for k in node_labels)
+                if not has_user_match:
+                    logger.debug(
+                        "Node %s has no labels matching pattern, skipping",
+                        node.metadata.name,
+                    )
+                    return None
+
             labels = {}
             if node.metadata.labels is not None:
                 for label_key, label_value in node.metadata.labels.items():
                     if label_matcher.matches(label_key):
                         labels[label_key] = label_value
+
             # Get node taints and format as strings: "key:effect" or "key=value:effect"
             taints = []
             if node.spec.taints is not None:

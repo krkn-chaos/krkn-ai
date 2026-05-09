@@ -461,6 +461,156 @@ class TestClusterManager:
         assert nodes[0].free_mem == -1  # Error indicator
         assert nodes[0].interfaces == []  # Empty on failure
 
+    def test_list_nodes_excludes_nodes_without_matching_labels(self, cluster_manager):
+        """Test list_nodes excludes nodes that have no matching labels when a
+        specific label pattern is provided (fixes #174)"""
+        # Node 1: has the target label
+        mock_node1 = Mock()
+        mock_node1.metadata.name = "control-plane-1"
+        mock_node1.metadata.labels = {
+            "kubernetes.io/hostname": "control-plane-1",
+            "node-role.kubernetes.io/control-plane": "",
+        }
+        mock_node1.spec.taints = None
+        mock_node1.spec.unschedulable = False
+        mock_ready1 = Mock()
+        mock_ready1.type = "Ready"
+        mock_ready1.status = "True"
+        mock_node1.status.conditions = [mock_ready1]
+        mock_node1.status.allocatable = {"cpu": "4", "memory": "8Gi"}
+
+        # Node 2: does NOT have the target label
+        mock_node2 = Mock()
+        mock_node2.metadata.name = "worker-1"
+        mock_node2.metadata.labels = {
+            "kubernetes.io/hostname": "worker-1",
+            "node-role.kubernetes.io/worker": "",
+        }
+        mock_node2.spec.taints = None
+        mock_node2.spec.unschedulable = False
+        mock_ready2 = Mock()
+        mock_ready2.type = "Ready"
+        mock_ready2.status = "True"
+        mock_node2.status.conditions = [mock_ready2]
+        mock_node2.status.allocatable = {"cpu": "8", "memory": "16Gi"}
+
+        cluster_manager.core_api.list_node.return_value.items = [
+            mock_node1,
+            mock_node2,
+        ]
+
+        # Mock metrics
+        cluster_manager.custom_obj_api.list_cluster_custom_object.return_value = {
+            "items": [
+                {
+                    "metadata": {"name": "control-plane-1"},
+                    "usage": {"cpu": "500m", "memory": "2Gi"},
+                }
+            ]
+        }
+
+        # Mock interfaces
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=("eth0\n", 0),
+        ):
+            nodes = cluster_manager.list_nodes(
+                node_label_pattern="node-role.kubernetes.io/control-plane"
+            )
+
+        # Only the control-plane node should be returned
+        assert len(nodes) == 1
+        assert nodes[0].name == "control-plane-1"
+
+    def test_list_nodes_includes_all_nodes_when_no_pattern_given(self, cluster_manager):
+        """Test list_nodes returns all nodes when no label pattern is specified
+        (backward compatibility)"""
+        mock_node1 = Mock()
+        mock_node1.metadata.name = "node-1"
+        mock_node1.metadata.labels = {"kubernetes.io/hostname": "node-1"}
+        mock_node1.spec.taints = None
+        mock_node1.spec.unschedulable = False
+        mock_ready1 = Mock()
+        mock_ready1.type = "Ready"
+        mock_ready1.status = "True"
+        mock_node1.status.conditions = [mock_ready1]
+        mock_node1.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+
+        mock_node2 = Mock()
+        mock_node2.metadata.name = "node-2"
+        mock_node2.metadata.labels = {"kubernetes.io/hostname": "node-2"}
+        mock_node2.spec.taints = None
+        mock_node2.spec.unschedulable = False
+        mock_ready2 = Mock()
+        mock_ready2.type = "Ready"
+        mock_ready2.status = "True"
+        mock_node2.status.conditions = [mock_ready2]
+        mock_node2.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+
+        cluster_manager.core_api.list_node.return_value.items = [
+            mock_node1,
+            mock_node2,
+        ]
+
+        # Mock metrics
+        cluster_manager.custom_obj_api.list_cluster_custom_object.return_value = {
+            "items": [
+                {
+                    "metadata": {"name": "node-1"},
+                    "usage": {"cpu": "500m", "memory": "2Gi"},
+                },
+                {
+                    "metadata": {"name": "node-2"},
+                    "usage": {"cpu": "500m", "memory": "2Gi"},
+                },
+            ]
+        }
+
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=("eth0\n", 0),
+        ):
+            nodes = cluster_manager.list_nodes(node_label_pattern=None)
+
+        # Both nodes should be returned with no pattern
+        assert len(nodes) == 2
+        assert {n.name for n in nodes} == {"node-1", "node-2"}
+
+    def test_list_nodes_includes_all_nodes_with_wildcard_pattern(self, cluster_manager):
+        """Test list_nodes returns all nodes when '*' wildcard pattern is used
+        (backward compatibility)"""
+        mock_node = Mock()
+        mock_node.metadata.name = "node-1"
+        mock_node.metadata.labels = {"kubernetes.io/hostname": "node-1"}
+        mock_node.spec.taints = None
+        mock_node.spec.unschedulable = False
+        mock_ready = Mock()
+        mock_ready.type = "Ready"
+        mock_ready.status = "True"
+        mock_node.status.conditions = [mock_ready]
+        mock_node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+
+        cluster_manager.core_api.list_node.return_value.items = [mock_node]
+
+        # Mock metrics
+        cluster_manager.custom_obj_api.list_cluster_custom_object.return_value = {
+            "items": [
+                {
+                    "metadata": {"name": "node-1"},
+                    "usage": {"cpu": "500m", "memory": "2Gi"},
+                }
+            ]
+        }
+
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=("eth0\n", 0),
+        ):
+            nodes = cluster_manager.list_nodes(node_label_pattern="*")
+
+        assert len(nodes) == 1
+        assert nodes[0].name == "node-1"
+
     def test_list_node_interfaces_filters_network_interfaces(self, cluster_manager):
         """Test list_node_interfaces filters and returns only ens/eth interfaces"""
         with patch(

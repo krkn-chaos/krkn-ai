@@ -1,6 +1,6 @@
 import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pydantic import (
     BaseModel,
     Field,
@@ -226,7 +226,7 @@ class AdaptiveMutation(BaseModel):
 
     @field_validator("min", "max", mode="after")
     @classmethod
-    def validate_rate_range(cls, value: float, info) -> float:
+    def validate_rate_range(cls, value: float, info: Any) -> float:
         if value < 0 or value > 1:
             raise ValueError(
                 f"adaptive_mutation.{info.field_name} must be between 0.0 and 1.0, got {value}. "
@@ -284,7 +284,7 @@ class StoppingCriteria(BaseModel):
 
     @field_validator("generation_saturation", "exploration_saturation", mode="after")
     @classmethod
-    def validate_positive_int(cls, value: Optional[int], info) -> Optional[int]:
+    def validate_positive_int(cls, value: Optional[int], info: Any) -> Optional[int]:
         if value is not None and value <= 0:
             field_name = info.field_name
             raise ValueError(
@@ -361,7 +361,7 @@ class ConfigFile(BaseModel):
         mode="after",
     )
     @classmethod
-    def validate_probability_rate(cls, value: float, info) -> float:
+    def validate_probability_rate(cls, value: float, info: Any) -> float:
         """Validate that probability rate parameters are within [0.0, 1.0]."""
         if value < 0 or value > 1:
             raise ValueError(

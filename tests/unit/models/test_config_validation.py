@@ -7,6 +7,7 @@ Validates that genetic algorithm parameters are properly constrained:
 - Cross-field validation (adaptive_mutation.min < adaptive_mutation.max)
 """
 
+from typing import Any
 import pytest
 from pydantic import ValidationError
 
@@ -23,7 +24,7 @@ from krkn_ai.models.cluster_components import ClusterComponents
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_config(**overrides) -> ConfigFile:
+def _make_config(**overrides: Any) -> ConfigFile:
     """Create a valid ConfigFile with optional field overrides."""
     defaults = {
         "kubeconfig_file_path": "/path/to/kubeconfig",
@@ -43,14 +44,17 @@ class TestBaselineConfigValidation:
     """Tests for BaselineConfig.duration validation."""
 
     def test_valid_duration(self):
+        """Test BaselineConfig with a valid duration."""
         config = BaselineConfig(duration=120)
         assert config.duration == 120
 
     def test_duration_zero_raises(self):
+        """Test BaselineConfig duration=0 raises ValidationError."""
         with pytest.raises(ValidationError, match="baseline duration must be a positive integer"):
             BaselineConfig(duration=0)
 
     def test_duration_negative_raises(self):
+        """Test BaselineConfig negative duration raises ValidationError."""
         with pytest.raises(ValidationError, match="baseline duration must be a positive integer"):
             BaselineConfig(duration=-10)
 
@@ -66,11 +70,13 @@ class TestAdaptiveMutationValidation:
     # --- rate range ---
 
     def test_valid_min_max(self):
+        """Test AdaptiveMutation with valid min and max values."""
         am = AdaptiveMutation(min=0.1, max=0.8)
         assert am.min == 0.1
         assert am.max == 0.8
 
     def test_min_below_zero_raises(self):
+        """Test AdaptiveMutation min < 0 raises ValidationError."""
         with pytest.raises(ValidationError, match="adaptive_mutation.min must be between 0.0 and 1.0"):
             AdaptiveMutation(min=-0.1)
 
@@ -135,6 +141,7 @@ class TestConfigFileProbabilityRates:
 
     @pytest.mark.parametrize("field", RATE_FIELDS)
     def test_valid_rate_zero(self, field):
+        """Test that probability rate fields accept 0.0."""
         config = _make_config(**{field: 0.0})
         assert getattr(config, field) == 0.0
 
@@ -306,6 +313,7 @@ class TestConfigFileDefaultsValid:
     """Ensure the default values for all fields pass validation."""
 
     def test_defaults_pass(self):
+        """Integration test verifying that default ConfigFile values pass all validators."""
         config = _make_config()
         assert config.population_size == 10
         assert config.generations == 20

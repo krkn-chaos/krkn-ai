@@ -1,0 +1,11 @@
+name: "Cascading Network and Pod Outage"
+steps:
+  - name: "Pod Killer"
+    type: "pod"
+    parameters:
+      namespace: "default"
+  - name: "Network Delay"
+    type: "network"
+    depends_on: "Pod Killer"
+    parameters:
+      duration: 60

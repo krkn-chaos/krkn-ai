@@ -264,6 +264,9 @@ class ConfigFile(BaseModel):
     parameters: Dict[str, ParameterValue] = {}
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
+    recipes_path: Optional[str] = (
+        None  # Path to directory containing chaos recipes (.yaml)
+    )
 
     generations: Optional[int] = (
         20  # Total number of generations to run. Ignored if duration is set.

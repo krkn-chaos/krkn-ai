@@ -24,6 +24,7 @@ from krkn_ai.models.cluster_components import ClusterComponents
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_config(**overrides: Any) -> ConfigFile:
     """Create a valid ConfigFile with optional field overrides."""
     defaults = {
@@ -50,12 +51,16 @@ class TestBaselineConfigValidation:
 
     def test_duration_zero_raises(self):
         """Test BaselineConfig duration=0 raises ValidationError."""
-        with pytest.raises(ValidationError, match="baseline duration must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="baseline duration must be a positive integer"
+        ):
             BaselineConfig(duration=0)
 
     def test_duration_negative_raises(self):
         """Test BaselineConfig negative duration raises ValidationError."""
-        with pytest.raises(ValidationError, match="baseline duration must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="baseline duration must be a positive integer"
+        ):
             BaselineConfig(duration=-10)
 
 
@@ -77,19 +82,27 @@ class TestAdaptiveMutationValidation:
 
     def test_min_below_zero_raises(self):
         """Test AdaptiveMutation min < 0 raises ValidationError."""
-        with pytest.raises(ValidationError, match="adaptive_mutation.min must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.min must be between 0.0 and 1.0"
+        ):
             AdaptiveMutation(min=-0.1)
 
     def test_min_above_one_raises(self):
-        with pytest.raises(ValidationError, match="adaptive_mutation.min must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.min must be between 0.0 and 1.0"
+        ):
             AdaptiveMutation(min=1.5)
 
     def test_max_below_zero_raises(self):
-        with pytest.raises(ValidationError, match="adaptive_mutation.max must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.max must be between 0.0 and 1.0"
+        ):
             AdaptiveMutation(max=-0.5)
 
     def test_max_above_one_raises(self):
-        with pytest.raises(ValidationError, match="adaptive_mutation.max must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.max must be between 0.0 and 1.0"
+        ):
             AdaptiveMutation(max=2.0)
 
     def test_boundary_min_zero_max_one(self):
@@ -115,11 +128,17 @@ class TestAdaptiveMutationValidation:
         assert am.generations == 10
 
     def test_generations_zero_raises(self):
-        with pytest.raises(ValidationError, match="adaptive_mutation.generations must be a positive integer"):
+        with pytest.raises(
+            ValidationError,
+            match="adaptive_mutation.generations must be a positive integer",
+        ):
             AdaptiveMutation(generations=0)
 
     def test_generations_negative_raises(self):
-        with pytest.raises(ValidationError, match="adaptive_mutation.generations must be a positive integer"):
+        with pytest.raises(
+            ValidationError,
+            match="adaptive_mutation.generations must be a positive integer",
+        ):
             AdaptiveMutation(generations=-5)
 
 
@@ -157,17 +176,23 @@ class TestConfigFileProbabilityRates:
 
     @pytest.mark.parametrize("field", RATE_FIELDS)
     def test_rate_above_one_raises(self, field):
-        with pytest.raises(ValidationError, match=f"{field} must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match=f"{field} must be between 0.0 and 1.0"
+        ):
             _make_config(**{field: 1.5})
 
     @pytest.mark.parametrize("field", RATE_FIELDS)
     def test_rate_negative_raises(self, field):
-        with pytest.raises(ValidationError, match=f"{field} must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match=f"{field} must be between 0.0 and 1.0"
+        ):
             _make_config(**{field: -0.1})
 
     @pytest.mark.parametrize("field", RATE_FIELDS)
     def test_rate_large_value_raises(self, field):
-        with pytest.raises(ValidationError, match=f"{field} must be between 0.0 and 1.0"):
+        with pytest.raises(
+            ValidationError, match=f"{field} must be between 0.0 and 1.0"
+        ):
             _make_config(**{field: 99.0})
 
 
@@ -217,11 +242,15 @@ class TestConfigFileInjectionSize:
         assert config.population_injection_size == 1
 
     def test_injection_size_zero_raises(self):
-        with pytest.raises(ValidationError, match="population_injection_size must be at least 1"):
+        with pytest.raises(
+            ValidationError, match="population_injection_size must be at least 1"
+        ):
             _make_config(population_injection_size=0)
 
     def test_injection_size_negative_raises(self):
-        with pytest.raises(ValidationError, match="population_injection_size must be at least 1"):
+        with pytest.raises(
+            ValidationError, match="population_injection_size must be at least 1"
+        ):
             _make_config(population_injection_size=-3)
 
 
@@ -246,11 +275,15 @@ class TestConfigFileGenerations:
         assert config.generations == 1
 
     def test_generations_zero_raises(self):
-        with pytest.raises(ValidationError, match="generations must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="generations must be a positive integer"
+        ):
             _make_config(generations=0)
 
     def test_generations_negative_raises(self):
-        with pytest.raises(ValidationError, match="generations must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="generations must be a positive integer"
+        ):
             _make_config(generations=-10)
 
 
@@ -275,11 +308,15 @@ class TestConfigFileDuration:
         assert config.duration == 1
 
     def test_duration_zero_raises(self):
-        with pytest.raises(ValidationError, match="duration must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="duration must be a positive integer"
+        ):
             _make_config(duration=0)
 
     def test_duration_negative_raises(self):
-        with pytest.raises(ValidationError, match="duration must be a positive integer"):
+        with pytest.raises(
+            ValidationError, match="duration must be a positive integer"
+        ):
             _make_config(duration=-60)
 
 

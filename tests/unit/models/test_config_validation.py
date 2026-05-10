@@ -119,13 +119,15 @@ class TestAdaptiveMutationValidation:
 
     def test_threshold_below_zero_raises(self):
         with pytest.raises(
-            ValidationError, match="adaptive_mutation.threshold must be between 0.0 and 1.0"
+            ValidationError,
+            match="adaptive_mutation.threshold must be between 0.0 and 1.0",
         ):
             AdaptiveMutation(threshold=-0.1)
 
     def test_threshold_above_one_raises(self):
         with pytest.raises(
-            ValidationError, match="adaptive_mutation.threshold must be between 0.0 and 1.0"
+            ValidationError,
+            match="adaptive_mutation.threshold must be between 0.0 and 1.0",
         ):
             AdaptiveMutation(threshold=1.5)
 

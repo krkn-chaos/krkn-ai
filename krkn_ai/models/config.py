@@ -224,7 +224,7 @@ class AdaptiveMutation(BaseModel):
     threshold: float = 0.1
     generations: int = 5
 
-    @field_validator("min", "max", mode="after")
+    @field_validator("min", "max", "threshold", mode="after")
     @classmethod
     def validate_rate_range(cls, value: float, info: Any) -> float:
         if value < 0 or value > 1:

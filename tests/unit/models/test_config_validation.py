@@ -111,6 +111,24 @@ class TestAdaptiveMutationValidation:
         assert am.min == 0.0
         assert am.max == 1.0
 
+    # --- threshold range ---
+
+    def test_valid_threshold(self):
+        am = AdaptiveMutation(threshold=0.5)
+        assert am.threshold == 0.5
+
+    def test_threshold_below_zero_raises(self):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.threshold must be between 0.0 and 1.0"
+        ):
+            AdaptiveMutation(threshold=-0.1)
+
+    def test_threshold_above_one_raises(self):
+        with pytest.raises(
+            ValidationError, match="adaptive_mutation.threshold must be between 0.0 and 1.0"
+        ):
+            AdaptiveMutation(threshold=1.5)
+
     # --- cross-field: min < max ---
 
     def test_min_equals_max_raises(self):

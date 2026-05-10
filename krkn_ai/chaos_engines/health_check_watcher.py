@@ -1,114 +1,128 @@
 import asyncio
-from collections import defaultdict
 import threading
 import time
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 import numpy as np
 import httpx
 
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.fs import preprocess_param_string
 from krkn_ai.models.config import (
     HealthCheckApplicationConfig,
     HealthCheckConfig,
     HealthCheckResult,
+    ParameterValue,
 )
 
 logger = get_logger(__name__)
 
 
 class HealthCheckWatcher:
-    def __init__(self, config: HealthCheckConfig):
+    def __init__(
+        self,
+        config: HealthCheckConfig,
+        params: Optional[Dict[str, ParameterValue]] = None,
+    ):
         self.config = config
+        self._params = {k: v.value for k, v in (params or {}).items()}
+        self._results: Dict[str, List[HealthCheckResult]] = {
+            app.url: [] for app in self.config.applications
+        }
+        self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event: Optional[asyncio.Event] = None
-        self._thread: Optional[threading.Thread] = None
-        self._results: Dict[str, List[HealthCheckResult]] = defaultdict(list)
+        self._stop_requested = False
         self._lock = threading.Lock()
+
+    def _resolve_headers(self, app: HealthCheckApplicationConfig) -> dict:
+        merged = {**(self.config.headers or {}), **(app.headers or {})}
+        return {k: preprocess_param_string(v, self._params) for k, v in merged.items()}
+
+    async def _run_health_check(self, app_config: HealthCheckApplicationConfig):
+        assert self._stop_event is not None
+        resolved_headers = self._resolve_headers(app_config)
+        async with httpx.AsyncClient() as client:
+            while not self._stop_event.is_set():
+                start_time = time.monotonic()
+                try:
+                    resp = await client.get(
+                        app_config.url,
+                        headers=resolved_headers,
+                        timeout=app_config.timeout,
+                    )
+                    elapsed = time.monotonic() - start_time
+                    status = resp.status_code
+                    success = status == app_config.status_code
+                    error = None
+                except httpx.RequestError as e:
+                    elapsed = time.monotonic() - start_time
+                    status = -1
+                    success = False
+                    error = str(e)
+                except Exception as e:
+                    elapsed = time.monotonic() - start_time
+                    status = -1
+                    success = False
+                    error = f"Unexpected error: {str(e)}"
+
+                result = HealthCheckResult(
+                    name=app_config.name,
+                    status_code=status,
+                    success=success,
+                    error=error,
+                    response_time=elapsed,
+                )
+
+                with self._lock:
+                    self._results[app_config.url].append(result)
+
+                if not success and self.config.stop_watcher_on_failure:
+                    logger.warning(
+                        f"Health check failed for {app_config.name} ({app_config.url}). Stopping watcher."
+                    )
+                    self._stop_event.set()
+                    break
+
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=app_config.interval
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    continue
+
+    async def _run_all(self):
+        tasks = [self._run_health_check(app) for app in self.config.applications]
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    def _start_loop(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._stop_event = asyncio.Event()
+        if self._stop_requested:
+            self._stop_event.set()
+        try:
+            self._loop.run_until_complete(self._run_all())
+        finally:
+            self._loop.close()
 
     def run(self):
         """Starts the health check watcher in a background thread with an asyncio loop."""
         logger.debug(
             f"Starting health check watcher for {len(self.config.applications)} applications"
         )
-        self._thread = threading.Thread(target=self._run_event_loop, daemon=True)
+        self._thread = threading.Thread(target=self._start_loop)
         self._thread.start()
-
-    def _run_event_loop(self):
-        """Internal method to run the asyncio event loop in a background thread."""
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-        self._stop_event = asyncio.Event()
-
-        try:
-            self._loop.run_until_complete(self._main())
-        finally:
-            self._loop.close()
-
-    async def _main(self):
-        """Main async entry point for the watcher."""
-        async with httpx.AsyncClient() as client:
-            tasks = []
-            for app_config in self.config.applications:
-                tasks.append(self._watch_application(client, app_config))
-
-            # Run all watchers concurrently
-            await asyncio.gather(*tasks)
-
-    async def _watch_application(
-        self, client: httpx.AsyncClient, app_config: HealthCheckApplicationConfig
-    ):
-        """Asynchronous polling loop for a single application."""
-        while not self._stop_event.is_set():
-            try:
-                start_time = time.monotonic()
-                resp = await client.get(app_config.url, timeout=app_config.timeout)
-                elapsed = time.monotonic() - start_time
-                status = resp.status_code
-                success = status == app_config.status_code
-                error = None
-            except httpx.RequestError as e:
-                status = -1
-                success = False
-                elapsed = -1
-                error = str(e)
-            except Exception as e:
-                status = -1
-                success = False
-                elapsed = -1
-                error = f"Unexpected error: {str(e)}"
-
-            result = HealthCheckResult(
-                name=app_config.name,
-                status_code=status,
-                success=success,
-                error=error,
-                response_time=elapsed,
-            )
-
-            with self._lock:
-                self._results[app_config.url].append(result)
-
-            if not success and self.config.stop_watcher_on_failure:
-                logger.warning(
-                    f"Health check failed for {app_config.name} ({app_config.url}). Stopping watcher."
-                )
-                self._stop_event.set()
-                break
-
-            try:
-                # Wait for the interval or until stopped
-                await asyncio.wait_for(self._stop_event.wait(), timeout=app_config.interval)
-                break  # If wait() returns, it means stop_event is set
-            except asyncio.TimeoutError:
-                continue  # Interval reached, continue loop
 
     def stop(self):
         """Stops the health check watcher and waits for the thread to finish."""
-        if self._loop and self._stop_event:
+        self._stop_requested = True
+        if self._loop and self._stop_event and self._loop.is_running():
             logger.debug("Stopping health check watcher")
             self._loop.call_soon_threadsafe(self._stop_event.set)
-            if self._thread:
-                self._thread.join(timeout=5)
+        if self._thread:
+            self._thread.join(timeout=5)
 
     def get_results(self) -> Dict[str, List[HealthCheckResult]]:
         """Returns the collected results."""

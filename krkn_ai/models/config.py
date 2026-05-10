@@ -1,10 +1,29 @@
 import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 import krkn_ai.constants as const
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.utils import id_generator
+
+
+class ParameterValue(BaseModel):
+    value: str
+    is_private: bool = False
+
+    @model_serializer
+    def serialize(self) -> str:
+        return "***" if self.is_private else self.value
+
+    @classmethod
+    def from_cli(cls, key: str, raw: str) -> "ParameterValue":
+        return cls(value=raw, is_private=key.startswith("__"))
 
 
 class PodScenarioConfig(BaseModel):
@@ -140,11 +159,13 @@ class HealthCheckApplicationConfig(BaseModel):
     status_code: int = 200  # Expected status code
     timeout: int = 4  # in seconds
     interval: int = 2  # in seconds
+    headers: Optional[Dict[str, str]] = None
 
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
     applications: List[HealthCheckApplicationConfig] = []
+    headers: Optional[Dict[str, str]] = None
 
 
 class OutputConfig(BaseModel):
@@ -235,7 +256,7 @@ class StoppingCriteria(BaseModel):
 
 class ConfigFile(BaseModel):
     kubeconfig_file_path: str  # Path to kubeconfig
-    parameters: Dict[str, str] = {}
+    parameters: Dict[str, ParameterValue] = {}
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
 

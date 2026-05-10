@@ -17,7 +17,8 @@ def create_krkn_ai_template(
     current_dir = os.path.dirname(__file__)
     template_path = os.path.join(current_dir, "krkn-ai.yaml.j2")
 
-    template_str = open(template_path).read()
+    with open(template_path, encoding="utf-8") as f:
+        template_str = f.read()
     template = environment.from_string(template_str)
 
     # Convert cluster_components to properly indented YAML string

@@ -5,11 +5,13 @@ HealthCheckWatcher core functionality tests
 import time
 from unittest.mock import Mock, patch
 
+import httpx
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.config import (
     HealthCheckConfig,
     HealthCheckApplicationConfig,
     HealthCheckResult,
+    ParameterValue,
 )
 
 
@@ -143,7 +145,7 @@ class TestHealthCheckWatcherResults:
         # Score is (failed / total) * 10
         assert score <= 10
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
     def test_summarize_success_rate_returns_zero_for_empty_results(self, mock_get):
         """Test summarize_success_rate returns 0 for empty results"""
         config = HealthCheckConfig(applications=[])
@@ -179,7 +181,7 @@ class TestHealthCheckWatcherResults:
         assert score >= 0
         assert score <= 10
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
     def test_summarize_response_time_returns_zero_with_insufficient_data(
         self, mock_get
     ):
@@ -228,3 +230,142 @@ class TestHealthCheckWatcherResults:
                 assert result.success is False
                 assert result.status_code == -1
                 assert result.error is not None
+
+
+class TestHealthCheckWatcherHeaders:
+    """Test header merging and env-var resolution"""
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
+    def test_global_headers_sent_when_no_endpoint_headers(self, mock_get):
+        """Global headers are passed to requests.get when endpoint has none"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.1
+        mock_get.return_value = mock_response
+
+        config = HealthCheckConfig(
+            headers={"X-Global": "global-value"},
+            applications=[
+                HealthCheckApplicationConfig(
+                    name="api", url="http://localhost/health", interval=1
+                )
+            ],
+        )
+        watcher = HealthCheckWatcher(config)
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        assert mock_get.call_args.kwargs["headers"]["X-Global"] == "global-value"
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
+    def test_endpoint_headers_override_global(self, mock_get):
+        """Per-endpoint header wins over global for the same key"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.1
+        mock_get.return_value = mock_response
+
+        config = HealthCheckConfig(
+            headers={"Authorization": "Bearer global"},
+            applications=[
+                HealthCheckApplicationConfig(
+                    name="api",
+                    url="http://localhost/health",
+                    headers={"Authorization": "Bearer endpoint"},
+                    interval=1,
+                )
+            ],
+        )
+        watcher = HealthCheckWatcher(config)
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        assert (
+            mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer endpoint"
+        )
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
+    def test_global_and_endpoint_headers_merged(self, mock_get):
+        """Both global and endpoint headers are present when keys differ"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.1
+        mock_get.return_value = mock_response
+
+        config = HealthCheckConfig(
+            headers={"X-Global": "g"},
+            applications=[
+                HealthCheckApplicationConfig(
+                    name="api",
+                    url="http://localhost/health",
+                    headers={"X-Endpoint": "e"},
+                    interval=1,
+                )
+            ],
+        )
+        watcher = HealthCheckWatcher(config)
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        kwargs = mock_get.call_args.kwargs
+        assert kwargs["headers"]["X-Global"] == "g"
+        assert kwargs["headers"]["X-Endpoint"] == "e"
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
+    def test_param_in_header_value_is_resolved(self, mock_get):
+        """$PARAM in a header value is resolved from the params dict passed to the watcher"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.1
+        mock_get.return_value = mock_response
+
+        config = HealthCheckConfig(
+            applications=[
+                HealthCheckApplicationConfig(
+                    name="api",
+                    url="http://localhost/health",
+                    headers={"Authorization": "Bearer $__TOKEN"},
+                    interval=1,
+                )
+            ],
+        )
+        params = {"__TOKEN": ParameterValue(value="resolved-token", is_private=True)}
+        watcher = HealthCheckWatcher(config, params=params)
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        assert (
+            mock_get.call_args.kwargs["headers"]["Authorization"]
+            == "Bearer resolved-token"
+        )
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.httpx.AsyncClient.get")
+    def test_missing_param_leaves_template_unchanged(self, mock_get):
+        """$PARAM with no matching entry in params dict is passed through as-is"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.1
+        mock_get.return_value = mock_response
+
+        config = HealthCheckConfig(
+            applications=[
+                HealthCheckApplicationConfig(
+                    name="api",
+                    url="http://localhost/health",
+                    headers={"Authorization": "Bearer $MISSING"},
+                    interval=1,
+                )
+            ],
+        )
+        watcher = HealthCheckWatcher(config, params={})
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        assert (
+            mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer $MISSING"
+        )

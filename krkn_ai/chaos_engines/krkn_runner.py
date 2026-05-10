@@ -103,7 +103,9 @@ class KrknRunner:
         else:
             raise NotImplementedError("Scenario unable to run")
 
-        health_check_watcher = HealthCheckWatcher(self.config.health_checks)
+        health_check_watcher = HealthCheckWatcher(
+            self.config.health_checks, self.config.parameters
+        )
 
         # Run command and fetch result
         if env_is_truthy("MOCK_RUN"):
@@ -111,10 +113,10 @@ class KrknRunner:
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
-            # Start watching application urls for health checks
-            health_check_watcher.run()
-
             try:
+                # Start watching application urls for health checks
+                health_check_watcher.run()
+
                 # Run command (show logs when verbose mode is enabled)
                 log, returncode = run_shell(
                     self.process_es_env_string(command, True),
@@ -285,8 +287,14 @@ class KrknRunner:
 
         # Create JSON for krknctl graph runner
         scenario_json = self.__expand_composite_json(scenario)
-        json_file = tempfile.mktemp(suffix=".json", dir=graph_json_directory)
-        with open(json_file, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".json",
+            dir=graph_json_directory,
+            delete=False,
+            mode="w",
+            encoding="utf-8",
+        ) as f:
+            json_file = f.name
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
         logger.info("Created scenario json in path: %s", json_file)
 

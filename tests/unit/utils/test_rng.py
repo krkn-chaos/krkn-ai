@@ -72,16 +72,61 @@ class TestRNG:
         choices2 = rng.choices(items, weights, k=5)
         assert choices == choices2
 
-    def test_randint(self):
-        """Test randint() returns an integer within range."""
+    def test_randint_returns_int_in_inclusive_range(self):
+        """Test randint() returns an integer within [low, high] inclusive."""
         rng = RNG(42)
         low, high = 1, 10
         val = rng.randint(low, high)
         assert isinstance(val, int)
-        assert low <= val < high
+        assert low <= val <= high  # both bounds inclusive
 
-        # Test low == high case
+    def test_randint_equal_bounds(self):
+        """Test randint() with equal low and high returns that value."""
+        rng = RNG(42)
         assert rng.randint(5, 5) == 5
+        assert rng.randint(0, 0) == 0
+
+    def test_randint_upper_bound_is_reachable(self):
+        """Verify the upper bound can actually be produced (catches the numpy off-by-one bug).
+
+        numpy.integers(low, high) is exclusive of high.  Our wrapper must add 1
+        so that callers using rng.randint(a, b) get an inclusive [a, b] range.
+        Over 10 000 draws, the upper bound *must* appear at least once.
+        """
+        rng = RNG(seed=0)
+        results = {rng.randint(1, 3) for _ in range(10_000)}
+        assert 3 in results, (
+            "Upper bound 3 was never produced by randint(1, 3) — "
+            "likely caused by numpy.integers exclusive-high off-by-one bug."
+        )
+        assert 1 in results, "Lower bound 1 was never produced by randint(1, 3)."
+        assert results == {1, 2, 3}
+
+    def test_randint_covers_full_range(self):
+        """Verify every integer in [low, high] is reachable over many draws."""
+        rng = RNG(seed=99)
+        low, high = 1, 10
+        results = {rng.randint(low, high) for _ in range(50_000)}
+        assert results == set(range(low, high + 1)), (
+            f"Not all values in [{low}, {high}] were produced. Missing: "
+            f"{set(range(low, high + 1)) - results}"
+        )
+
+    def test_randint_disruption_count_inclusive(self):
+        """Regression test: scenario_container uses rng.randint(1, len(containers)).
+
+        With 2 containers, disruption_count must be able to equal 2 (all containers).
+        Previously broken because randint(1, 2) with numpy exclusive upper bound
+        could only produce 1, silently making the multi-container branch in
+        ContainerScenario.mutate() unreachable.
+        """
+        rng = RNG(seed=7)
+        results = {rng.randint(1, 2) for _ in range(10_000)}
+        assert 2 in results, (
+            "randint(1, 2) never produced 2 — disruption_count could never "
+            "equal the number of containers in a 2-container pod."
+        )
+        assert results == {1, 2}
 
     def test_uniform(self):
         """Test uniform() returns a float within range."""

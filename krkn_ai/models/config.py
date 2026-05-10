@@ -70,6 +70,16 @@ class BaselineConfig(BaseModel):
     enable: bool = True
     duration: int = 60 * 2  # 2 minutes
 
+    @field_validator("duration", mode="after")
+    @classmethod
+    def validate_duration(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError(
+                f"baseline duration must be a positive integer, got {value}. "
+                "Please check the 'baseline.duration' parameter in your krkn-ai config file."
+            )
+        return value
+
 
 class ScenarioConfig(BaseModel):
     application_outages: Optional[AppOutageScenarioConfig] = Field(
@@ -214,6 +224,36 @@ class AdaptiveMutation(BaseModel):
     threshold: float = 0.1
     generations: int = 5
 
+    @field_validator("min", "max", mode="after")
+    @classmethod
+    def validate_rate_range(cls, value: float, info) -> float:
+        if value < 0 or value > 1:
+            raise ValueError(
+                f"adaptive_mutation.{info.field_name} must be between 0.0 and 1.0, got {value}. "
+                f"Please check the 'adaptive_mutation.{info.field_name}' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("generations", mode="after")
+    @classmethod
+    def validate_generations(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError(
+                f"adaptive_mutation.generations must be a positive integer, got {value}. "
+                "Please check the 'adaptive_mutation.generations' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_min_less_than_max(self):
+        if self.min >= self.max:
+            raise ValueError(
+                f"adaptive_mutation.min ({self.min}) must be less than "
+                f"adaptive_mutation.max ({self.max}). "
+                "Please check the 'adaptive_mutation' parameters in your krkn-ai config file."
+            )
+        return self
+
 
 class StoppingCriteria(BaseModel):
     """
@@ -311,3 +351,76 @@ class ConfigFile(BaseModel):
     stopping_criteria: StoppingCriteria = (
         StoppingCriteria()
     )  # Additional stopping criteria for the algorithm
+
+    @field_validator(
+        "mutation_rate",
+        "scenario_mutation_rate",
+        "crossover_rate",
+        "composition_rate",
+        "population_injection_rate",
+        mode="after",
+    )
+    @classmethod
+    def validate_probability_rate(cls, value: float, info) -> float:
+        """Validate that probability rate parameters are within [0.0, 1.0]."""
+        if value < 0 or value > 1:
+            raise ValueError(
+                f"{info.field_name} must be between 0.0 and 1.0, got {value}. "
+                f"Please check the '{info.field_name}' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("population_size", mode="after")
+    @classmethod
+    def validate_population_size(cls, value: int) -> int:
+        """Validate that population size is at least 2."""
+        if value < 2:
+            raise ValueError(
+                f"population_size must be at least 2, got {value}. "
+                "Please check the 'population_size' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("population_injection_size", mode="after")
+    @classmethod
+    def validate_injection_size(cls, value: int) -> int:
+        """Validate that population injection size is at least 1."""
+        if value < 1:
+            raise ValueError(
+                f"population_injection_size must be at least 1, got {value}. "
+                "Please check the 'population_injection_size' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("generations", mode="after")
+    @classmethod
+    def validate_generations(cls, value: Optional[int]) -> Optional[int]:
+        """Validate that generations is positive when set."""
+        if value is not None and value <= 0:
+            raise ValueError(
+                f"generations must be a positive integer, got {value}. "
+                "Please check the 'generations' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("duration", mode="after")
+    @classmethod
+    def validate_duration(cls, value: Optional[int]) -> Optional[int]:
+        """Validate that duration is positive when set."""
+        if value is not None and value <= 0:
+            raise ValueError(
+                f"duration must be a positive integer, got {value}. "
+                "Please check the 'duration' parameter in your krkn-ai config file."
+            )
+        return value
+
+    @field_validator("wait_duration", mode="after")
+    @classmethod
+    def validate_wait_duration(cls, value: int) -> int:
+        """Validate that wait duration is non-negative."""
+        if value < 0:
+            raise ValueError(
+                f"wait_duration must be non-negative, got {value}. "
+                "Please check the 'wait_duration' parameter in your krkn-ai config file."
+            )
+        return value

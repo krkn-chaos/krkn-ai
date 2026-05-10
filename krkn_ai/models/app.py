@@ -52,3 +52,5 @@ class CommandRunResult(BaseModel):
 class KrknRunnerType(str, Enum):
     HUB_RUNNER = "HUB_RUNNER"
     CLI_RUNNER = "CLI_RUNNER"
+    MOCK_RUNNER = "MOCK_RUNNER"
+    SHELL_RUNNER = "SHELL_RUNNER"

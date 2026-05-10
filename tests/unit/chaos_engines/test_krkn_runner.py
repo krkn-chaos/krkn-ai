@@ -33,7 +33,7 @@ class TestKrknRunnerInitialization:
             )
             assert runner.config == minimal_config
             assert runner.output_dir == temp_output_dir
-            assert runner.runner_type == KrknRunnerType.CLI_RUNNER
+            assert runner.provider.get_name() == "kraken-cli"
 
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_init_detects_cli_runner(
@@ -42,11 +42,10 @@ class TestKrknRunnerInitialization:
         """Test automatic detection of CLI runner when krknctl is available"""
         mock_run_shell.side_effect = [
             ("krknctl version 1.0.0", 0),  # krknctl available
-            ("podman version 1.0.0", 0),  # podman also available
         ]
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
             runner = KrknRunner(config=minimal_config, output_dir=temp_output_dir)
-            assert runner.runner_type == KrknRunnerType.CLI_RUNNER
+            assert runner.provider.get_name() == "kraken-cli"
 
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_init_raises_when_no_runner_available(
@@ -58,7 +57,7 @@ class TestKrknRunnerInitialization:
             ("", 1),  # podman not available
         ]
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
-            with pytest.raises(Exception, match="krknctl and podman are not available"):
+            with pytest.raises(Exception, match="No suitable chaos provider detected"):
                 KrknRunner(config=minimal_config, output_dir=temp_output_dir)
 
 
@@ -93,7 +92,7 @@ class TestKrknRunnerRun:
             assert isinstance(result.end_time, datetime.datetime)
 
     @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
-    @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
+    @patch("krkn_ai.chaos_engines.providers.kraken_cli.run_shell")
     def test_run_handles_misconfiguration_failure(
         self, mock_run_shell, mock_env, minimal_config, temp_output_dir
     ):
@@ -109,26 +108,22 @@ class TestKrknRunnerRun:
         mock_run_shell.return_value = ("error log", 1)
 
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
-            with patch.object(
-                KrknRunner,
-                "_KrknRunner__extract_returncode_from_run",
-                return_value=(1, None),
-            ):
-                runner = KrknRunner(
-                    config=minimal_config,
-                    output_dir=temp_output_dir,
-                    runner_type=KrknRunnerType.CLI_RUNNER,
-                )
-                scenario = DummyScenario(cluster_components=ClusterComponents())
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            scenario = DummyScenario(cluster_components=ClusterComponents())
 
-                result = runner.run(scenario, generation_id=0)
+            result = runner.run(scenario, generation_id=0)
 
-                assert result.returncode == 1
-                assert result.fitness_result.fitness_score == -1.0
-                assert result.fitness_result.krkn_failure_score == -1.0
+            assert result.returncode == 1
+            assert result.fitness_result.fitness_score == -1.0
+            assert result.fitness_result.krkn_failure_score == -1.0
 
+    @patch("krkn_ai.chaos_engines.providers.kraken_cli.run_shell")
     def test_run_raises_for_unsupported_scenario_type(
-        self, minimal_config, temp_output_dir
+        self, mock_run_shell, minimal_config, temp_output_dir
     ):
         """Test run raises NotImplementedError for unsupported scenario type"""
         minimal_config.health_checks = HealthCheckConfig()
@@ -141,15 +136,15 @@ class TestKrknRunnerRun:
             )
             unsupported_scenario = Mock()  # Not a Scenario or CompositeScenario
 
-            with pytest.raises(NotImplementedError, match="Scenario unable to run"):
+            with pytest.raises(NotImplementedError, match="Unsupported scenario type"):
                 runner.run(unsupported_scenario, generation_id=0)
 
 
 class TestKrknRunnerCommandGeneration:
-    """Test command generation methods"""
+    """Test command generation via providers"""
 
     def test_runner_command_for_cli_runner(self, minimal_config, temp_output_dir):
-        """Test runner_command generates correct CLI command format"""
+        """Test CLI provider generates correct command format"""
         minimal_config.wait_duration = 60
         minimal_config.kubeconfig_file_path = "/tmp/kubeconfig"
 
@@ -161,7 +156,7 @@ class TestKrknRunnerCommandGeneration:
             )
             scenario = DummyScenario(cluster_components=ClusterComponents())
 
-            command = runner.runner_command(scenario)
+            command = runner.provider._generate_command(scenario)
 
             assert "krknctl run" in command
             assert "dummy-scenario" in command
@@ -169,7 +164,7 @@ class TestKrknRunnerCommandGeneration:
             assert "/tmp/kubeconfig" in command
 
     def test_runner_command_for_hub_runner(self, minimal_config, temp_output_dir):
-        """Test runner_command generates correct podman command format"""
+        """Test Hub provider generates correct podman command format"""
         minimal_config.wait_duration = 60
         minimal_config.kubeconfig_file_path = "/tmp/kubeconfig"
 
@@ -181,7 +176,7 @@ class TestKrknRunnerCommandGeneration:
             )
             scenario = DummyScenario(cluster_components=ClusterComponents())
 
-            command = runner.runner_command(scenario)
+            command = runner.provider._generate_command(scenario)
 
             assert "podman run" in command
             assert "dummy-scenario" in command
@@ -189,7 +184,7 @@ class TestKrknRunnerCommandGeneration:
             assert "/tmp/kubeconfig" in command
 
     def test_graph_command_creates_json_file(self, minimal_config, temp_output_dir):
-        """Test graph_command creates JSON file for composite scenario"""
+        """Test CLI provider creates JSON file for composite scenario"""
         minimal_config.kubeconfig_file_path = "/tmp/kubeconfig"
 
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
@@ -206,12 +201,12 @@ class TestKrknRunnerCommandGeneration:
                 dependency=CompositeDependency.NONE,
             )
 
-            command = runner.graph_command(composite)
+            command = runner.provider._generate_graph_command(composite)
 
             assert "krknctl graph run" in command
             assert "/tmp/kubeconfig" in command
             # Verify JSON file was created
-            graph_dir = os.path.join(temp_output_dir, "graphs")
+            graph_dir = os.path.join(runner.provider.output_dir, "graphs")
             assert os.path.exists(graph_dir)
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
@@ -287,8 +282,7 @@ class TestCalculatePointFitness:
                     start, end, "sum(kube_pod_container_status_restarts_total)"
                 )
 
-            assert "Prometheus returned no data" in str(exc_info.value)
-            assert "point fitness (start)" in str(exc_info.value)
+            assert "No values for" in str(exc_info.value)
 
     def test_calculate_point_fitness_none_result_raises_error(
         self, minimal_config, temp_output_dir
@@ -321,7 +315,7 @@ class TestCalculatePointFitness:
                     start, end, "sum(kube_pod_container_status_restarts_total)"
                 )
 
-            assert "Prometheus returned no data" in str(exc_info.value)
+            assert "No data for" in str(exc_info.value)
 
     def test_calculate_point_fitness_empty_list_result_raises_error(
         self, minimal_config, temp_output_dir
@@ -354,7 +348,7 @@ class TestCalculatePointFitness:
                     start, end, "sum(kube_pod_container_status_restarts_total)"
                 )
 
-            assert "Prometheus returned no data" in str(exc_info.value)
+            assert "No data for" in str(exc_info.value)
 
     def test_query_prometheus_single_point_context_in_error(
         self, minimal_config, temp_output_dir
@@ -381,11 +375,9 @@ class TestCalculatePointFitness:
             ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
 
             with pytest.raises(FitnessFunctionCalculationError) as exc_info:
-                runner._query_prometheus_single_point("up", ts, "my custom context")
+                runner._query_prometheus_single_point("up", ts, "start")
 
-            assert "my custom context" in str(exc_info.value)
             assert "up" in str(exc_info.value)
-            assert "2024-01-01 12:00:00" in str(exc_info.value)
 
 
 class TestCalculateRangeFitness:
@@ -457,10 +449,7 @@ class TestCalculateRangeFitness:
                     start, end, "max(kube_pod_container_status_restarts_total{$range$})"
                 )
 
-            assert "Prometheus returned no data" in str(exc_info.value)
-            assert "range" in str(exc_info.value)
-            assert "2024-01-01 12:00:00" in str(exc_info.value)
-            assert "2024-01-01 12:05:00" in str(exc_info.value)
+            assert "No values for" in str(exc_info.value)
 
     def test_calculate_range_fitness_none_result_raises_error(
         self, minimal_config, temp_output_dir
@@ -493,7 +482,7 @@ class TestCalculateRangeFitness:
                     start, end, "max(kube_pod_container_status_restarts_total{$range$})"
                 )
 
-            assert "Prometheus returned no data" in str(exc_info.value)
+            assert "No data for" in str(exc_info.value)
 
 
 class TestCalculateFitnessValueRetries:

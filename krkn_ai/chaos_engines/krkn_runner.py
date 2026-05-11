@@ -30,6 +30,9 @@ from krkn_ai.utils.rng import rng
 
 logger = get_logger(__name__)
 
+# Matches all ANSI CSI escape sequences (colors, cursor movement, erase, etc.)
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 # TODO: Cleanup of temp kubeconfig after running the script
 
 PODMAN_TEMPLATE = 'podman run -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
@@ -553,8 +556,7 @@ class KrknRunner:
             # TODO: Look into if we can save telemetry data to file from Krkn itself.
             # Hacky way to extract return code from log
             # Strip ANSI escape codes so ASCII art banners don't corrupt JSON parsing
-            ansi_re = re.compile(r"\x1b\[[0-9;]*m")
-            clean_log = ansi_re.sub("", log)
+            clean_log = _ANSI_ESCAPE_RE.sub("", log)
 
             # Find the line with "Chaos data:" and extract JSON from next lines
             lines = clean_log.split("\n")
@@ -597,7 +599,10 @@ class KrknRunner:
                 return default_returncode, None
 
             # Drop ASCII art banner lines — they contain no JSON structural characters
-            json_lines = [l for l in json_lines if any(c in l for c in '"{}[]:')]
+            json_lines = [
+                line for line in json_lines
+                if any(char in line for char in '"{}[]:')
+            ]
 
             # Join all JSON lines into a single string
             json_str = "\n".join(json_lines)

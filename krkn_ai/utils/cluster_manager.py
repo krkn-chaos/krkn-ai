@@ -2,6 +2,7 @@ import re
 from typing import List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
+from kubernetes.client.rest import ApiException
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
@@ -269,7 +270,7 @@ class ClusterManager:
                 logger.debug(
                     "Found %d vmis in namespace %s",
                     len(vmis),
-                    vmis[0]["metadata"]["name"],
+                    namespace.name,
                 )
             else:
                 logger.debug("No VMIs found in namespace %s", namespace.name)
@@ -281,6 +282,21 @@ class ClusterManager:
                 "Filtered %d vmis in namespace %s", len(vmi_list), namespace.name
             )
             return vmi_list
+        except ApiException as e:
+            if e.status == 404:
+                logger.debug(
+                    "KubeVirt CRDs not installed, skipping VMI discovery in namespace %s",
+                    namespace.name,
+                )
+                return []
+            if e.status == 403:
+                logger.error(
+                    "RBAC denied listing virtualmachineinstances in namespace %s. "
+                    "Grant kubevirt.io list permission to the ServiceAccount or use --skip-vmi.",
+                    namespace.name,
+                )
+                raise
+            raise
         except Exception:
             logger.warning("Unable to find VMIs in namespace %s", namespace.name)
             return []

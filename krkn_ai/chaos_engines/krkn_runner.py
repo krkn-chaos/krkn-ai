@@ -597,7 +597,7 @@ class KrknRunner:
                 return default_returncode, None
 
             # Drop ASCII art banner lines — they contain no JSON structural characters
-            json_lines = [l for l in json_lines if re.search(r'["{}\[\]:]', l)]
+            json_lines = [l for l in json_lines if any(c in l for c in '"{}[]:')]
 
             # Join all JSON lines into a single string
             json_str = "\n".join(json_lines)

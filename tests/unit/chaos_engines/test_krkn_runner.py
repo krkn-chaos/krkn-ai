@@ -585,3 +585,66 @@ class TestCalculateFitnessValueRetries:
             # Each retry calls calculate_point_fitness which calls _query_prometheus_single_point
             # for the start point. The guard fails immediately, so 1 Prometheus call per retry = 3 total.
             assert mock_prom_client.process_prom_query_in_range.call_count == 3
+
+
+class TestExtractReturncode:
+    """Tests for __extract_returncode_from_run (bug #181)."""
+
+    def _runner(self, minimal_config, temp_output_dir):
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            return KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+    def _call(self, runner, log):
+        return runner._KrknRunner__extract_returncode_from_run(log, default_returncode=99)
+
+    def test_clean_json(self, minimal_config, temp_output_dir):
+        log = (
+            "preamble\n"
+            "Chaos data:\n"
+            '{"telemetry": {"run_uuid": "abc-123", "scenarios": [{"exit_status": 0}]}}\n'
+        )
+        code, uuid = self._call(self._runner(minimal_config, temp_output_dir), log)
+        assert code == 0
+        assert uuid == "abc-123"
+
+    def test_ascii_art_banner_mid_json(self, minimal_config, temp_output_dir):
+        """Bug #181: banner lines inside the JSON block must be dropped before json.loads."""
+        log = (
+            "Chaos data:\n"
+            "{\n"
+            '  "telemetry": {\n'
+            "  __ _  _ __| | ___ __\n"
+            " | |/ /| '__| |/ / '_ \\\n"
+            " |   < | |  |   <| | | |\n"
+            " |_|\\_\\|_|  |_|\\_\\_| |_|\n"
+            '    "run_uuid": "xyz-999",\n'
+            '    "scenarios": [{"exit_status": 2}]\n'
+            "  }\n"
+            "}\n"
+        )
+        code, uuid = self._call(self._runner(minimal_config, temp_output_dir), log)
+        assert code == 2
+        assert uuid == "xyz-999"
+
+    def test_ansi_codes_stripped(self, minimal_config, temp_output_dir):
+        log = (
+            "\x1b[32mChaos data:\x1b[0m\n"
+            "{\x1b[0m\n"
+            '  \x1b[33m"telemetry"\x1b[0m: {\n'
+            '    "run_uuid": "ansi-test",\n'
+            '    "scenarios": [{"exit_status": 0}]\n'
+            "  }\n"
+            "}\n"
+        )
+        code, uuid = self._call(self._runner(minimal_config, temp_output_dir), log)
+        assert code == 0
+        assert uuid == "ansi-test"
+
+    def test_missing_marker_returns_default(self, minimal_config, temp_output_dir):
+        code, uuid = self._call(self._runner(minimal_config, temp_output_dir), "no marker here\n")
+        assert code == 99
+        assert uuid is None

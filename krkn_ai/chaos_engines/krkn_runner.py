@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import datetime
 import tempfile
@@ -551,8 +552,12 @@ class KrknRunner:
         try:
             # TODO: Look into if we can save telemetry data to file from Krkn itself.
             # Hacky way to extract return code from log
+            # Strip ANSI escape codes so ASCII art banners don't corrupt JSON parsing
+            ansi_re = re.compile(r"\x1b\[[0-9;]*m")
+            clean_log = ansi_re.sub("", log)
+
             # Find the line with "Chaos data:" and extract JSON from next lines
-            lines = log.split("\n")
+            lines = clean_log.split("\n")
             chaos_data_idx = -1
 
             for i, line in enumerate(lines):
@@ -590,6 +595,9 @@ class KrknRunner:
             if not json_lines:
                 logger.warning("Could not extract JSON content from log")
                 return default_returncode, None
+
+            # Drop ASCII art banner lines — they contain no JSON structural characters
+            json_lines = [l for l in json_lines if re.search(r'["{}\[\]:]', l)]
 
             # Join all JSON lines into a single string
             json_str = "\n".join(json_lines)

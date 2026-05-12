@@ -227,6 +227,12 @@ def monitor(ctx, output: str, port: int):
     default=None,
     required=False,
 )
+@click.option(
+    "--probe",
+    is_flag=True,
+    default=False,
+    help="Probe discovered health check URLs for reachability and exclude unreachable ones.",
+)
 @click.pass_context
 def discover(
     ctx,
@@ -237,6 +243,7 @@ def discover(
     node_label: str = ".*",
     verbose: int = 0,
     skip_pod_name: str = None,
+    probe: bool = False,
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
@@ -257,6 +264,10 @@ def discover(
     health_check_urls = cluster_manager.discover_health_check_urls(
         cluster_components.namespaces
     )
+
+    if probe and health_check_urls:
+        logger.info("Probing %d discovered URLs for reachability...", len(health_check_urls))
+        health_check_urls = cluster_manager.probe_health_check_urls(health_check_urls)
 
     cluster_components_data = cluster_components.model_dump(
         mode="json", warnings="none", exclude_defaults=True

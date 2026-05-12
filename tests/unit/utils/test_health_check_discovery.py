@@ -303,3 +303,55 @@ class TestLoadBalancerDiscovery:
         urls = cluster_manager._discover_loadbalancer_urls("default")
 
         assert urls == []
+
+
+class TestProbeHealthCheckUrls:
+    """Tests for probe_health_check_urls reachability filtering."""
+
+    @pytest.fixture
+    def cluster_manager(self):
+        with patch("krkn_ai.utils.cluster_manager.KrknKubernetes"):
+            return ClusterManager("/tmp/fake-kubeconfig")
+
+    def test_reachable_url_kept(self, cluster_manager):
+        """URLs that respond (any HTTP status) are kept."""
+        import urllib.error
+        urls = [{"name": "app", "url": "http://10.0.0.1/health"}]
+        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+            url=None, code=200, msg="OK", hdrs=None, fp=None
+        )):
+            result = cluster_manager.probe_health_check_urls(urls, timeout=1)
+        assert result == urls
+
+    def test_unreachable_url_excluded(self, cluster_manager):
+        """URLs that time out or refuse connection are excluded."""
+        import urllib.error
+        urls = [{"name": "dead", "url": "http://192.0.2.1/health"}]
+        with patch("urllib.request.urlopen", side_effect=OSError("timed out")):
+            result = cluster_manager.probe_health_check_urls(urls, timeout=1)
+        assert result == []
+
+    def test_mixed_urls_filtered(self, cluster_manager):
+        """Only reachable URLs are returned from a mixed list."""
+        import urllib.error
+        urls = [
+            {"name": "ok", "url": "http://10.0.0.1/"},
+            {"name": "dead", "url": "http://192.0.2.1/"},
+        ]
+
+        def side_effect(req, timeout):
+            if "192.0.2.1" in req.full_url:
+                raise OSError("refused")
+            raise urllib.error.HTTPError(url=None, code=404, msg="Not Found", hdrs=None, fp=None)
+
+        with patch("urllib.request.urlopen", side_effect=side_effect):
+            result = cluster_manager.probe_health_check_urls(urls, timeout=1)
+        assert len(result) == 1
+        assert result[0]["name"] == "ok"
+
+    def test_empty_list_returns_empty(self, cluster_manager):
+        """Empty input returns empty output without making any requests."""
+        with patch("urllib.request.urlopen") as mock_open:
+            result = cluster_manager.probe_health_check_urls([], timeout=1)
+        assert result == []
+        mock_open.assert_not_called()

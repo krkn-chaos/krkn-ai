@@ -1,5 +1,7 @@
 import re
 import concurrent.futures
+import urllib.request
+import urllib.error
 from typing import Dict, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client import NetworkingV1Api
@@ -51,6 +53,43 @@ class ClusterManager:
             urls.extend(self._discover_route_urls(ns.name))
             urls.extend(self._discover_loadbalancer_urls(ns.name))
         return urls
+
+    def probe_health_check_urls(
+        self,
+        urls: List[Dict[str, str]],
+        timeout: int = 5,
+    ) -> List[Dict[str, str]]:
+        """
+        Probe each discovered URL with a HEAD request and return only reachable ones.
+
+        Unreachable URLs are logged as warnings and excluded from the result.
+        SSL errors are treated as reachable (endpoint exists, cert may be self-signed).
+
+        Args:
+            urls: List of dicts with 'name' and 'url' keys.
+            timeout: HTTP request timeout in seconds.
+
+        Returns:
+            Filtered list containing only URLs that responded.
+        """
+        reachable: List[Dict[str, str]] = []
+        for entry in urls:
+            url = entry["url"]
+            try:
+                req = urllib.request.Request(url, method="HEAD")
+                urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+                reachable.append(entry)
+                logger.debug("Probe reachable: %s", url)
+            except urllib.error.HTTPError:
+                # Any HTTP response (4xx, 5xx) means the endpoint exists
+                reachable.append(entry)
+                logger.debug("Probe reachable (HTTP error): %s", url)
+            except Exception as e:
+                logger.warning("Probe unreachable, excluding from health checks: %s (%s)", url, e)
+        logger.info(
+            "URL probing: %d/%d endpoints reachable", len(reachable), len(urls)
+        )
+        return reachable
 
     def _discover_ingress_urls(self, namespace: str) -> List[Dict[str, str]]:
         """List Ingress resources and extract host+path URLs."""
@@ -121,7 +160,9 @@ class ClusterManager:
             return results
 
         for route in routes_response.get("items", []):
-            route_name = route["metadata"]["name"]
+            route_name = (route.get("metadata") or {}).get("name")
+            if not route_name:
+                continue
             spec = route.get("spec", {})
             host = spec.get("host")
             if not host:

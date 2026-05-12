@@ -53,6 +53,8 @@ def is_execution_running(output_dir: str) -> bool:
     try:
         with open(results_file, "r") as f:
             data = json.load(f)
+            if not isinstance(data, dict):
+                return False
             status = data.get("status")
             if status in [STATUS_STARTED, STATUS_IN_PROGRESS]:
                 return True
@@ -69,6 +71,8 @@ def get_run_status(output_dir: str) -> Optional[str]:
     try:
         with open(results_file, "r") as f:
             data = json.load(f)
+            if not isinstance(data, dict):
+                return None
             return data.get("status")
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("Failed to read run status from %s: %s", results_file, e)

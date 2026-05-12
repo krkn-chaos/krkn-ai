@@ -293,6 +293,16 @@ class ConfigFile(BaseModel):
     selection_strategy: SelectionStrategy = SelectionStrategy.roulette
     tournament_size: int = 3
 
+    @field_validator("tournament_size", mode="after")
+    @classmethod
+    def validate_tournament_size(cls, value: int) -> int:
+        if value < 2:
+            raise ValueError(
+                "tournament_size must be at least 2. "
+                "Please check the 'tournament_size' parameter in your krkn-ai config file."
+            )
+        return value
+
     population_injection_rate: float = (
         const.POPULATION_INJECTION_RATE
     )  # How often a random samples gets added to new population (0.0-1.0)

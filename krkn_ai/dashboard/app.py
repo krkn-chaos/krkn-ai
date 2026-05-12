@@ -29,6 +29,9 @@ from krkn_ai.dashboard.tabs.health_checks import render_health_checks
 from krkn_ai.dashboard.tabs.detailed_scenarios import render_detailed_scenarios
 from krkn_ai.dashboard.tabs.logs import render_logs
 from krkn_ai.dashboard.tabs.config import render_config
+from krkn_ai.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def get_monitor_config():
@@ -53,8 +56,8 @@ def is_execution_running(output_dir: str) -> bool:
             status = data.get("status")
             if status in [STATUS_STARTED, STATUS_IN_PROGRESS]:
                 return True
-    except Exception:
-        pass
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read run status from %s: %s", results_file, e)
     return False
 
 
@@ -67,7 +70,8 @@ def get_run_status(output_dir: str) -> Optional[str]:
         with open(results_file, "r") as f:
             data = json.load(f)
             return data.get("status")
-    except Exception:
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read run status from %s: %s", results_file, e)
         return None
 
 

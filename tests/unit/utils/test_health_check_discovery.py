@@ -70,7 +70,7 @@ class TestHealthCheckDiscovery:
         urls = cluster_manager._discover_ingress_urls("default")
 
         assert len(urls) == 1
-        assert urls[0]["name"] == "my-ingress-app.example.com"
+        assert urls[0]["name"] == "my-ingress-app.example.com-api"
         assert urls[0]["url"] == "http://app.example.com/api"
 
     def test_discover_ingress_urls_uses_https_for_tls_hosts(self, cluster_manager):
@@ -193,5 +193,5 @@ class TestHealthCheckDiscovery:
 
         assert len(urls) == 2
         names = {u["name"] for u in urls}
-        assert "web-app.example.com" in names
+        assert "web-app.example.com-root" in names
         assert "api-route" in names

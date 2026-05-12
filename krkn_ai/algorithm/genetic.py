@@ -44,11 +44,11 @@ class GeneticAlgorithm:
         output_dir: str,
         format: str,
         runner_type: KrknRunnerType = None,
-        run_uuid: str = str(uuid.uuid4()),
+        run_uuid: Optional[str] = None,
     ):
         self.config = config
         self.format = format
-        self.run_uuid = run_uuid
+        self.run_uuid = run_uuid if run_uuid is not None else str(uuid.uuid4())
 
         # Organize results under run_uuid subdirectory
         self.output_dir = output_dir

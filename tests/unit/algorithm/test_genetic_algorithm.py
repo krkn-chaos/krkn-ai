@@ -33,6 +33,22 @@ class TestGeneticAlgorithmInitialization:
                 assert ga.population == []
                 assert len(ga.best_of_generation) == 0
 
+    def test_init_generates_unique_run_uuid(self, minimal_config, temp_output_dir):
+        """Test initialization generates a unique run UUID per instance"""
+        with patch("krkn_ai.algorithm.genetic.KrknRunner"):
+            with patch(
+                "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+            ) as mock_gen:
+                mock_gen.return_value = [("pod_scenarios", Mock)]
+                first = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+                second = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+
+                assert first.run_uuid != second.run_uuid
+
     def test_init_with_population_size_less_than_2(
         self, minimal_config, temp_output_dir
     ):

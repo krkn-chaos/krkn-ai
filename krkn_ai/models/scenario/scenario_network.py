@@ -71,8 +71,7 @@ class NetworkScenario(Scenario):
                 "No nodes found with interfaces in cluster components"
             )
 
-        # TODO: Add support for ingress traffic type
-        self.traffic_type.value = "egress"
+        self.traffic_type.mutate()
         self.execution.mutate()
 
         if self.traffic_type.value == "ingress":

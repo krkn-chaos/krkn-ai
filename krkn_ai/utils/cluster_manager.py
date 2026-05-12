@@ -2,6 +2,7 @@ import re
 import concurrent.futures
 from typing import Dict, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
+from kubernetes.client import NetworkingV1Api
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
@@ -31,7 +32,97 @@ class ClusterManager:
         self.api_client = self.krkn_k8s.api_client
         self.core_api = self.krkn_k8s.cli
         self.custom_obj_api = self.krkn_k8s.custom_object_client
+        self.networking_api = NetworkingV1Api(self.api_client)
         logger.debug("ClusterManager initialized with kubeconfig: %s", kubeconfig)
+
+    def discover_health_check_urls(
+        self, namespaces: List[Namespace]
+    ) -> List[Dict[str, str]]:
+        """
+        Discover health check URLs from Kubernetes Ingresses and OpenShift Routes
+        in the given namespaces.
+
+        Returns a list of dicts with 'name' and 'url' keys suitable for
+        populating health_checks.applications in the config.
+        """
+        urls: List[Dict[str, str]] = []
+        for ns in namespaces:
+            urls.extend(self._discover_ingress_urls(ns.name))
+            urls.extend(self._discover_route_urls(ns.name))
+        return urls
+
+    def _discover_ingress_urls(self, namespace: str) -> List[Dict[str, str]]:
+        """List Ingress resources and extract host+path URLs."""
+        results: List[Dict[str, str]] = []
+        try:
+            ingresses = self.networking_api.list_namespaced_ingress(
+                namespace=namespace
+            ).items
+        except Exception as e:
+            logger.warning(
+                "Failed to list Ingresses in namespace %s: %s", namespace, e
+            )
+            return results
+
+        for ing in ingresses:
+            ing_name = ing.metadata.name
+            tls_hosts = set()
+            if ing.spec.tls:
+                for tls in ing.spec.tls:
+                    if tls.hosts:
+                        tls_hosts.update(tls.hosts)
+
+            if not ing.spec.rules:
+                continue
+            for rule in ing.spec.rules:
+                host = rule.host
+                if not host:
+                    continue
+                scheme = "https" if host in tls_hosts else "http"
+                if rule.http and rule.http.paths:
+                    for path_obj in rule.http.paths:
+                        path = path_obj.path or "/"
+                        url = f"{scheme}://{host}{path}"
+                        results.append({"name": f"{ing_name}-{host}", "url": url})
+                else:
+                    results.append(
+                        {"name": f"{ing_name}-{host}", "url": f"{scheme}://{host}/"}
+                    )
+        logger.debug(
+            "Discovered %d Ingress URLs in namespace %s", len(results), namespace
+        )
+        return results
+
+    def _discover_route_urls(self, namespace: str) -> List[Dict[str, str]]:
+        """List OpenShift Route resources and extract URLs. Graceful no-op if CRD absent."""
+        results: List[Dict[str, str]] = []
+        try:
+            routes_response = self.custom_obj_api.list_namespaced_custom_object(
+                group="route.openshift.io",
+                version="v1",
+                namespace=namespace,
+                plural="routes",
+            )
+        except Exception:
+            # Route CRD not present or not accessible; skip silently
+            return results
+
+        for route in routes_response.get("items", []):
+            route_name = route["metadata"]["name"]
+            spec = route.get("spec", {})
+            host = spec.get("host")
+            if not host:
+                continue
+            tls = spec.get("tls")
+            scheme = "https" if tls else "http"
+            path = spec.get("path", "/")
+            url = f"{scheme}://{host}{path}"
+            results.append({"name": route_name, "url": url})
+
+        logger.debug(
+            "Discovered %d Route URLs in namespace %s", len(results), namespace
+        )
+        return results
 
     def discover_components(
         self,

@@ -82,10 +82,11 @@ class ClusterManager:
                     for path_obj in rule.http.paths:
                         path = path_obj.path or "/"
                         url = f"{scheme}://{host}{path}"
-                        results.append({"name": f"{ing_name}-{host}", "url": url})
+                        path_slug = path.strip("/").replace("/", "-") or "root"
+                        results.append({"name": f"{ing_name}-{host}-{path_slug}", "url": url})
                 else:
                     results.append(
-                        {"name": f"{ing_name}-{host}", "url": f"{scheme}://{host}/"}
+                        {"name": f"{ing_name}-{host}-root", "url": f"{scheme}://{host}/"}
                     )
         logger.debug(
             "Discovered %d Ingress URLs in namespace %s", len(results), namespace
@@ -95,6 +96,7 @@ class ClusterManager:
     def _discover_route_urls(self, namespace: str) -> List[Dict[str, str]]:
         """List OpenShift Route resources and extract URLs. Graceful no-op if CRD absent."""
         results: List[Dict[str, str]] = []
+        from kubernetes.client.exceptions import ApiException
         try:
             routes_response = self.custom_obj_api.list_namespaced_custom_object(
                 group="route.openshift.io",
@@ -102,8 +104,18 @@ class ClusterManager:
                 namespace=namespace,
                 plural="routes",
             )
-        except Exception:
-            # Route CRD not present or not accessible; skip silently
+        except ApiException as e:
+            if e.status == 404 or "doesn't have a resource type" in str(e.body or ""):
+                # Route CRD not present — expected on non-OpenShift clusters
+                return results
+            logger.warning(
+                "Failed to list OpenShift Routes in namespace %s: %s", namespace, e
+            )
+            return results
+        except Exception as e:
+            logger.warning(
+                "Unexpected error listing Routes in namespace %s: %s", namespace, e
+            )
             return results
 
         for route in routes_response.get("items", []):

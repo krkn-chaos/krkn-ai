@@ -44,6 +44,9 @@ fitness_function:
   include_health_check_failure: true
   include_health_check_response_time: true
 
+{% if health_checks %}
+{{ health_checks }}
+{% else %}
 # health_checks:
 #   stop_watcher_on_failure: false
 #   applications:
@@ -59,6 +62,7 @@ fitness_function:
 #     url: "$HOST/user/uniqueid"
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
+{% endif %}
 
 
 scenario:

@@ -121,7 +121,7 @@ class ScenarioFactory:
             _, cls = rng.choice(candidates)
             return cls(cluster_components=active_components)
         except Exception as error:
-            raise ScenarioInitError("Unable to initialize scenario: %s", error)
+            raise ScenarioInitError("Unable to initialize scenario: %s" % error)
 
     @staticmethod
     def create_dummy_scenario():

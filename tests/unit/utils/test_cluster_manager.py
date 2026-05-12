@@ -483,3 +483,22 @@ class TestClusterManager:
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
         assert interfaces == []
+
+    def test_list_vmis_logs_namespace_name_not_vmi_name(self, cluster_manager):
+        """list_vmis debug log must show namespace name, not the first VMI's metadata name"""
+        namespace = Namespace(name="production", pods=[], services=[])
+        cluster_manager.custom_obj_api.list_namespaced_custom_object.return_value = {
+            "items": [
+                {"metadata": {"name": "vmi-abc-123"}},
+                {"metadata": {"name": "vmi-xyz-456"}},
+            ]
+        }
+
+        with patch("krkn_ai.utils.cluster_manager.logger") as mock_logger:
+            cluster_manager.list_vmis(namespace)
+
+        debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
+        found_call = next((c for c in debug_calls if "Found" in c and "vmis" in c), None)
+        assert found_call is not None
+        assert "production" in found_call
+        assert "vmi-abc-123" not in found_call

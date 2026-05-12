@@ -269,7 +269,7 @@ class ClusterManager:
                 logger.debug(
                     "Found %d vmis in namespace %s",
                     len(vmis),
-                    vmis[0]["metadata"]["name"],
+                    namespace.name,
                 )
             else:
                 logger.debug("No VMIs found in namespace %s", namespace.name)

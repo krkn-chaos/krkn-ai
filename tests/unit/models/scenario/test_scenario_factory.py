@@ -114,3 +114,24 @@ class TestScenarioFactory:
         scenario = ScenarioFactory.create_dummy_scenario()
         assert isinstance(scenario, DummyScenario)
         assert scenario._cluster_components == ClusterComponents()
+
+    def test_generate_random_scenario_error_message_is_string_not_tuple(self):
+        """ScenarioInitError message must be a readable string, not a raw tuple"""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            cluster_components=cluster,
+        )
+
+        class FailingScenario:
+            def __init__(self, **kwargs):
+                raise ValueError("cluster components missing")
+
+        candidates = [("failing", FailingScenario)]
+        with pytest.raises(ScenarioInitError) as exc_info:
+            ScenarioFactory.generate_random_scenario(config, candidates)
+
+        message = str(exc_info.value)
+        assert "cluster components missing" in message
+        assert message.startswith("(") is False

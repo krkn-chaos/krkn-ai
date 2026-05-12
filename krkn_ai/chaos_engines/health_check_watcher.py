@@ -138,7 +138,7 @@ class HealthCheckWatcher:
     ) -> float:
         score: float = 0.0
         total = 0
-        for _, results in health_check_results.items():
+        for url, results in health_check_results.items():
             response_times = []
             for result in results:
                 if result.success:
@@ -146,8 +146,9 @@ class HealthCheckWatcher:
 
             if len(response_times) < 4:  # Not enough data to calculate outliers
                 logger.debug(
-                    "Skipping response time outlier calculation for URL "
+                    "Skipping response time outlier calculation for URL %s "
                     "(only %d successful checks, need at least 4)",
+                    url,
                     len(response_times),
                 )
                 continue

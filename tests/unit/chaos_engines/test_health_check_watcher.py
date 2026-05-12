@@ -209,9 +209,8 @@ class TestHealthCheckWatcherResults:
         # Should return 0 when less than 4 successful checks
         assert score == 0
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_response_time_skips_insufficient_url_processes_others(
-        self, mock_get
+        self,
     ):
         """Test that summarize_response_time skips URLs with < 4 data points
         but still processes remaining URLs with sufficient data.
@@ -226,12 +225,18 @@ class TestHealthCheckWatcherResults:
         # URL A: only 2 successful checks (insufficient, should be skipped)
         url_a_results = [
             HealthCheckResult(
-                name="app-a", status_code=200, success=True,
-                response_time=0.1, error=None,
+                name="app-a",
+                status_code=200,
+                success=True,
+                response_time=0.1,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-a", status_code=200, success=True,
-                response_time=0.15, error=None,
+                name="app-a",
+                status_code=200,
+                success=True,
+                response_time=0.15,
+                error=None,
             ),
         ]
 
@@ -239,44 +244,74 @@ class TestHealthCheckWatcherResults:
         # 8 tightly clustered normal times + 2 extreme outliers ensures IQR detection works
         url_b_results = [
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.10, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.10,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.11, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.11,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.10, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.10,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.12, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.12,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.10, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.10,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.11, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.11,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.10, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.10,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=0.12, error=None,
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=0.12,
+                error=None,
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=10.0, error=None,  # extreme outlier
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=10.0,
+                error=None,  # extreme outlier
             ),
             HealthCheckResult(
-                name="app-b", status_code=200, success=True,
-                response_time=10.0, error=None,  # extreme outlier
+                name="app-b",
+                status_code=200,
+                success=True,
+                response_time=10.0,
+                error=None,  # extreme outlier
             ),
         ]
 
@@ -294,10 +329,7 @@ class TestHealthCheckWatcherResults:
             "the method must not abort when URL A has insufficient data"
         )
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
-    def test_summarize_response_time_all_urls_insufficient_returns_zero(
-        self, mock_get
-    ):
+    def test_summarize_response_time_all_urls_insufficient_returns_zero(self):
         """Test that summarize_response_time returns 0 when ALL URLs have
         insufficient data (< 4 data points each)."""
         config = HealthCheckConfig(applications=[])
@@ -306,18 +338,27 @@ class TestHealthCheckWatcherResults:
         results = {
             "http://app-a/health": [
                 HealthCheckResult(
-                    name="app-a", status_code=200, success=True,
-                    response_time=0.1, error=None,
+                    name="app-a",
+                    status_code=200,
+                    success=True,
+                    response_time=0.1,
+                    error=None,
                 ),
             ],
             "http://app-b/health": [
                 HealthCheckResult(
-                    name="app-b", status_code=200, success=True,
-                    response_time=0.2, error=None,
+                    name="app-b",
+                    status_code=200,
+                    success=True,
+                    response_time=0.2,
+                    error=None,
                 ),
                 HealthCheckResult(
-                    name="app-b", status_code=200, success=True,
-                    response_time=0.3, error=None,
+                    name="app-b",
+                    status_code=200,
+                    success=True,
+                    response_time=0.3,
+                    error=None,
                 ),
             ],
         }

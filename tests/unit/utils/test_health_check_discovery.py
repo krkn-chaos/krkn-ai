@@ -187,6 +187,8 @@ class TestHealthCheckDiscovery:
                 }
             ]
         }
+        # No LoadBalancer services
+        cluster_manager.core_api.list_namespaced_service.return_value.items = []
 
         namespaces = [Namespace(name="default")]
         urls = cluster_manager.discover_health_check_urls(namespaces)
@@ -195,3 +197,109 @@ class TestHealthCheckDiscovery:
         names = {u["name"] for u in urls}
         assert "web-app.example.com-root" in names
         assert "api-route" in names
+
+
+class TestLoadBalancerDiscovery:
+    """Test LoadBalancer Service URL discovery."""
+
+    @pytest.fixture
+    def mock_krkn_k8s(self):
+        mock_k8s = Mock()
+        mock_k8s.apps_api = Mock()
+        mock_k8s.api_client = Mock()
+        mock_k8s.cli = Mock()
+        mock_k8s.custom_object_client = Mock()
+        mock_k8s.list_namespaces = Mock(return_value=["default"])
+        return mock_k8s
+
+    @pytest.fixture
+    def cluster_manager(self, mock_krkn_k8s):
+        with patch(
+            "krkn_ai.utils.cluster_manager.KrknKubernetes",
+            return_value=mock_krkn_k8s,
+        ):
+            with patch(
+                "krkn_ai.utils.cluster_manager.NetworkingV1Api"
+            ):
+                mgr = ClusterManager(kubeconfig="/tmp/test-kubeconfig")
+                return mgr
+
+    def _make_lb_service(self, name, ingress_entries, ports=None):
+        svc = Mock()
+        svc.metadata.name = name
+        svc.spec.type = "LoadBalancer"
+        svc.spec.ports = ports or []
+        if ingress_entries is not None:
+            svc.status.load_balancer.ingress = ingress_entries
+        else:
+            svc.status.load_balancer.ingress = None
+        return svc
+
+    def _make_ingress_entry(self, ip=None, hostname=None):
+        entry = Mock()
+        entry.ip = ip
+        entry.hostname = hostname
+        return entry
+
+    def _make_port(self, port):
+        p = Mock()
+        p.port = port
+        return p
+
+    def test_discover_loadbalancer_urls_with_ip(self, cluster_manager):
+        """Test LoadBalancer with IP address."""
+        svc = self._make_lb_service(
+            "my-lb", [self._make_ingress_entry(ip="1.2.3.4")],
+            ports=[self._make_port(80)]
+        )
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
+
+        urls = cluster_manager._discover_loadbalancer_urls("default")
+
+        assert len(urls) == 1
+        assert urls[0] == {"name": "my-lb", "url": "http://1.2.3.4"}
+
+    def test_discover_loadbalancer_urls_with_hostname(self, cluster_manager):
+        """Test LoadBalancer with hostname."""
+        svc = self._make_lb_service(
+            "aws-lb", [self._make_ingress_entry(hostname="abc.elb.amazonaws.com")],
+            ports=[self._make_port(80)]
+        )
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
+
+        urls = cluster_manager._discover_loadbalancer_urls("default")
+
+        assert len(urls) == 1
+        assert urls[0] == {"name": "aws-lb", "url": "http://abc.elb.amazonaws.com"}
+
+    def test_discover_loadbalancer_urls_https_on_port_443(self, cluster_manager):
+        """Test that port 443 triggers https scheme."""
+        svc = self._make_lb_service(
+            "secure-lb", [self._make_ingress_entry(ip="10.0.0.1")],
+            ports=[self._make_port(443)]
+        )
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
+
+        urls = cluster_manager._discover_loadbalancer_urls("default")
+
+        assert len(urls) == 1
+        assert urls[0] == {"name": "secure-lb", "url": "https://10.0.0.1"}
+
+    def test_discover_loadbalancer_urls_empty_status(self, cluster_manager):
+        """Test LoadBalancer with no ingress status returns nothing."""
+        svc = self._make_lb_service("pending-lb", None)
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
+
+        urls = cluster_manager._discover_loadbalancer_urls("default")
+
+        assert urls == []
+
+    def test_discover_loadbalancer_urls_api_error(self, cluster_manager):
+        """Test that API errors return empty list with warning."""
+        cluster_manager.core_api.list_namespaced_service.side_effect = Exception(
+            "forbidden"
+        )
+
+        urls = cluster_manager._discover_loadbalancer_urls("default")
+
+        assert urls == []

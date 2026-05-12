@@ -285,8 +285,8 @@ class KrknRunner:
 
         # Create JSON for krknctl graph runner
         scenario_json = self.__expand_composite_json(scenario)
-        json_file = tempfile.mktemp(suffix=".json", dir=graph_json_directory)
-        with open(json_file, "w", encoding="utf-8") as f:
+        fd, json_file = tempfile.mkstemp(suffix=".json", dir=graph_json_directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
         logger.info("Created scenario json in path: %s", json_file)
 

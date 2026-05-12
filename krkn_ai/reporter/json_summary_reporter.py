@@ -281,10 +281,10 @@ class JSONSummaryReporter:
         breakdown: Dict[str, Any] = {}
         for slo_id, data in slo_data.items():
             breakdown[str(slo_id)] = {
-                "avg_fitness_score": round(
+                "fitness_score": round(
                     sum(data["fitness_scores"]) / len(data["fitness_scores"]), 4
                 ),
-                "avg_weighted_score": round(
+                "weighted_score": round(
                     sum(data["weighted_scores"]) / len(data["weighted_scores"]), 4
                 ),
             }

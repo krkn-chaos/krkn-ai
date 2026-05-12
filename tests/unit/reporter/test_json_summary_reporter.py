@@ -168,10 +168,10 @@ class TestJSONSummaryReporterSLOBreakdown:
         assert slo is not None
         assert "1" in slo
         assert "2" in slo
-        assert slo["1"]["avg_fitness_score"] == round((0.8 + 0.9) / 2, 4)
-        assert slo["1"]["avg_weighted_score"] == round((0.4 + 0.45) / 2, 4)
-        assert slo["2"]["avg_fitness_score"] == round((0.6 + 0.7) / 2, 4)
-        assert slo["2"]["avg_weighted_score"] == round((0.3 + 0.35) / 2, 4)
+        assert slo["1"]["fitness_score"] == round((0.8 + 0.9) / 2, 4)
+        assert slo["1"]["weighted_score"] == round((0.4 + 0.45) / 2, 4)
+        assert slo["2"]["fitness_score"] == round((0.6 + 0.7) / 2, 4)
+        assert slo["2"]["weighted_score"] == round((0.3 + 0.35) / 2, 4)
 
     def test_slo_breakdown_none_when_no_scores(self):
         config = _make_config()

@@ -210,6 +210,122 @@ class TestHealthCheckWatcherResults:
         assert score == 0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    def test_summarize_response_time_skips_insufficient_url_processes_others(
+        self, mock_get
+    ):
+        """Test that summarize_response_time skips URLs with < 4 data points
+        but still processes remaining URLs with sufficient data.
+
+        This is a regression test for the early-return bug where `return 0`
+        inside the for-loop would abort the entire method when any single URL
+        had insufficient data, silently dropping outlier data from other URLs.
+        """
+        config = HealthCheckConfig(applications=[])
+        watcher = HealthCheckWatcher(config)
+
+        # URL A: only 2 successful checks (insufficient, should be skipped)
+        url_a_results = [
+            HealthCheckResult(
+                name="app-a", status_code=200, success=True,
+                response_time=0.1, error=None,
+            ),
+            HealthCheckResult(
+                name="app-a", status_code=200, success=True,
+                response_time=0.15, error=None,
+            ),
+        ]
+
+        # URL B: 10 successful checks with clear outliers (should be processed)
+        # 8 tightly clustered normal times + 2 extreme outliers ensures IQR detection works
+        url_b_results = [
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.10, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.11, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.10, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.12, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.10, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.11, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.10, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=0.12, error=None,
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=10.0, error=None,  # extreme outlier
+            ),
+            HealthCheckResult(
+                name="app-b", status_code=200, success=True,
+                response_time=10.0, error=None,  # extreme outlier
+            ),
+        ]
+
+        results = {
+            "http://app-a/health": url_a_results,
+            "http://app-b/health": url_b_results,
+        }
+
+        score = watcher.summarize_response_time(results)
+
+        # URL A should be skipped (< 4 data points), URL B should be processed.
+        # URL B has 2 outliers out of 10 results -> score = (2/10) * 10 = 2.0
+        assert score > 0, (
+            "Score should be > 0 because URL B has outliers; "
+            "the method must not abort when URL A has insufficient data"
+        )
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    def test_summarize_response_time_all_urls_insufficient_returns_zero(
+        self, mock_get
+    ):
+        """Test that summarize_response_time returns 0 when ALL URLs have
+        insufficient data (< 4 data points each)."""
+        config = HealthCheckConfig(applications=[])
+        watcher = HealthCheckWatcher(config)
+
+        results = {
+            "http://app-a/health": [
+                HealthCheckResult(
+                    name="app-a", status_code=200, success=True,
+                    response_time=0.1, error=None,
+                ),
+            ],
+            "http://app-b/health": [
+                HealthCheckResult(
+                    name="app-b", status_code=200, success=True,
+                    response_time=0.2, error=None,
+                ),
+                HealthCheckResult(
+                    name="app-b", status_code=200, success=True,
+                    response_time=0.3, error=None,
+                ),
+            ],
+        }
+
+        score = watcher.summarize_response_time(results)
+        assert score == 0.0
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
         """Test health check handles request exceptions gracefully"""
         # Mock request to raise exception

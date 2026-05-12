@@ -293,15 +293,17 @@ class ConfigFile(BaseModel):
     selection_strategy: SelectionStrategy = SelectionStrategy.roulette
     tournament_size: int = 3
 
-    @field_validator("tournament_size", mode="after")
-    @classmethod
-    def validate_tournament_size(cls, value: int) -> int:
-        if value < 2:
+    @model_validator(mode="after")
+    def validate_tournament_size(self) -> "ConfigFile":
+        if (
+            self.selection_strategy == SelectionStrategy.tournament
+            and self.tournament_size < 2
+        ):
             raise ValueError(
-                "tournament_size must be at least 2. "
+                "tournament_size must be at least 2 when selection_strategy is 'tournament'. "
                 "Please check the 'tournament_size' parameter in your krkn-ai config file."
             )
-        return value
+        return self
 
     population_injection_rate: float = (
         const.POPULATION_INJECTION_RATE

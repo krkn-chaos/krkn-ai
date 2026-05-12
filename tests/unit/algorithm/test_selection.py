@@ -246,18 +246,32 @@ class TestSelection:
 class TestSelectionConfig:
     """Test selection strategy configuration validation"""
 
-    def test_tournament_size_below_minimum_raises(self):
-        """tournament_size < 2 should raise ValidationError"""
+    def test_tournament_size_below_minimum_raises_when_strategy_is_tournament(self):
+        """tournament_size < 2 should raise ValidationError only when strategy is tournament"""
         import pytest
-        from krkn_ai.models.config import ConfigFile
+        from krkn_ai.models.config import ConfigFile, SelectionStrategy
 
         with pytest.raises(Exception, match="tournament_size must be at least 2"):
             ConfigFile(
                 kubeconfig_file_path="/tmp/kube",
+                selection_strategy=SelectionStrategy.tournament,
                 tournament_size=1,
                 fitness_function={"query": "up"},
                 cluster_components={},
             )
+
+    def test_tournament_size_below_minimum_allowed_when_strategy_is_roulette(self):
+        """tournament_size < 2 should be accepted when strategy is roulette"""
+        from krkn_ai.models.config import ConfigFile, SelectionStrategy
+
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kube",
+            selection_strategy=SelectionStrategy.roulette,
+            tournament_size=1,
+            fitness_function={"query": "up"},
+            cluster_components={},
+        )
+        assert config.tournament_size == 1
 
     def test_tournament_size_minimum_accepted(self):
         """tournament_size = 2 should be accepted"""

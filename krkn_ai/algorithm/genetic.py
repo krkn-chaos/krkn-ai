@@ -99,6 +99,7 @@ class GeneticAlgorithm:
         self.end_time: Optional[datetime.datetime] = None
         self.seed: Optional[int] = None  # Seed can be set externally if needed
         self.completed_generations: int = 0
+        self.stopping_reason: Optional[str] = None
 
         if self.config.population_size < 2:
             raise PopulationSizeError("Population size should be at least 2")
@@ -313,6 +314,7 @@ class GeneticAlgorithm:
         should_stop, reason = self.should_stop(cur_generation, elapsed_time)
         if should_stop:
             self.end_time = datetime.datetime.now(datetime.timezone.utc)
+            self.stopping_reason = reason
             logger.info("Stopping algorithm: %s", reason)
             logger.info(
                 "Completed %d generations in %s",
@@ -773,6 +775,7 @@ class GeneticAlgorithm:
             end_time=self.end_time,
             completed_generations=self.completed_generations,
             seed=self.seed,
+            stopping_reason=self.stopping_reason,
         )
         summary_reporter.save(self.output_dir)
 

@@ -5,6 +5,7 @@ JSON Summary Reporter for generating unified results.json files.
 import json
 import os
 import datetime
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from krkn_ai.models.app import CommandRunResult
@@ -34,6 +35,7 @@ class JSONSummaryReporter:
         end_time: Optional[datetime.datetime] = None,
         completed_generations: int = 0,
         seed: Optional[int] = None,
+        stopping_reason: Optional[str] = None,
     ):
         """
         Initialize the JSON summary reporter.
@@ -47,6 +49,7 @@ class JSONSummaryReporter:
             end_time: When the run ended.
             completed_generations: Number of generations completed.
             seed: Random seed used for the run (if any).
+            stopping_reason: Human-readable reason the algorithm stopped.
         """
         self.run_uuid = run_uuid
         self.config = config
@@ -57,6 +60,7 @@ class JSONSummaryReporter:
         self.end_time = end_time
         self.completed_generations = completed_generations
         self.seed = seed
+        self.stopping_reason = stopping_reason
         self.status = STATUS_COMPLETED
 
     def generate_summary(self) -> Dict[str, Any]:
@@ -88,6 +92,11 @@ class JSONSummaryReporter:
         if all_fitness_scores:
             best_fitness_score = max(all_fitness_scores)
 
+        # Get min fitness score
+        min_fitness_score = 0.0
+        if all_fitness_scores:
+            min_fitness_score = min(all_fitness_scores)
+
         # Count unique scenarios by their string representation
         unique_scenarios = set()
         for result in self.seen_population.values():
@@ -99,6 +108,9 @@ class JSONSummaryReporter:
         # Generate best scenarios list (sorted by fitness score, top 10)
         best_scenarios = self._build_best_scenarios()
 
+        # Generate worst scenarios list (sorted by fitness score, bottom 10)
+        worst_scenarios = self._build_worst_scenarios()
+
         # Build the results summary
         results_summary: Dict[str, Any] = {
             "run_id": self.run_uuid,
@@ -107,6 +119,7 @@ class JSONSummaryReporter:
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "duration_seconds": round(duration_seconds, 2),
             "status": self.status,
+            "stopping_reason": self.stopping_reason,
             "config": {
                 "generations": self.config.generations,
                 "population_size": self.config.population_size,
@@ -120,10 +133,14 @@ class JSONSummaryReporter:
                 "unique_scenarios": len(unique_scenarios),
                 "generations_completed": self.completed_generations,
                 "best_fitness_score": round(best_fitness_score, 4),
+                "min_fitness_score": round(min_fitness_score, 4),
                 "average_fitness_score": round(average_fitness_score, 4),
             },
             "best_scenarios": best_scenarios,
+            "worst_scenarios": worst_scenarios,
             "fitness_progression": fitness_progression,
+            "health_check_summary": self._build_health_check_summary(),
+            "slo_breakdown": self._build_slo_breakdown(),
         }
 
         if self.baseline_result is not None:
@@ -184,6 +201,95 @@ class JSONSummaryReporter:
                 }
             )
         return best_scenarios
+
+    def _build_worst_scenarios(self) -> List[Dict[str, Any]]:
+        """Build ranked list of worst scenarios (bottom 10)."""
+        sorted_results = sorted(
+            self.seen_population.values(),
+            key=lambda x: x.fitness_result.fitness_score,
+        )
+        worst_scenarios = []
+        for rank, result in enumerate(sorted_results[:10], start=1):
+            scenario_params = {}
+            if hasattr(result.scenario, "parameters"):
+                scenario_params = {
+                    param.get_name(): param.get_value()
+                    for param in result.scenario.parameters
+                }
+
+            worst_scenarios.append(
+                {
+                    "rank": rank,
+                    "scenario_id": result.scenario_id,
+                    "generation": result.generation_id,
+                    "fitness_score": result.fitness_result.fitness_score,
+                    "scenario_type": result.scenario.name,
+                    "parameters": scenario_params,
+                }
+            )
+        return worst_scenarios
+
+    def _build_health_check_summary(self) -> Optional[Dict[str, Any]]:
+        """Aggregate health check data across all scenarios, per component."""
+        component_data: Dict[str, List[Any]] = defaultdict(list)
+
+        for result in self.seen_population.values():
+            for component_results in result.health_check_results.values():
+                if not component_results:
+                    continue
+                component_name = component_results[0].name
+                component_data[component_name].extend(component_results)
+
+        if not component_data:
+            return None
+
+        summary: Dict[str, Any] = {}
+        for component_name, checks in component_data.items():
+            response_times = [c.response_time for c in checks]
+            success_count = sum(1 for c in checks if c.success)
+            failure_count = len(checks) - success_count
+            total_checks = len(checks)
+
+            summary[component_name] = {
+                "min_response_time": round(min(response_times), 4),
+                "max_response_time": round(max(response_times), 4),
+                "avg_response_time": round(
+                    sum(response_times) / len(response_times), 4
+                ),
+                "total_checks": total_checks,
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "success_rate": round(success_count / total_checks, 4),
+            }
+
+        return summary
+
+    def _build_slo_breakdown(self) -> Optional[Dict[str, Any]]:
+        """Aggregate per-SLO fitness scores across all scenarios."""
+        slo_data: Dict[int, Dict[str, List[float]]] = defaultdict(
+            lambda: {"fitness_scores": [], "weighted_scores": []}
+        )
+
+        for result in self.seen_population.values():
+            for score in result.fitness_result.scores:
+                slo_data[score.id]["fitness_scores"].append(score.fitness_score)
+                slo_data[score.id]["weighted_scores"].append(score.weighted_score)
+
+        if not slo_data:
+            return None
+
+        breakdown: Dict[str, Any] = {}
+        for slo_id, data in slo_data.items():
+            breakdown[str(slo_id)] = {
+                "avg_fitness_score": round(
+                    sum(data["fitness_scores"]) / len(data["fitness_scores"]), 4
+                ),
+                "avg_weighted_score": round(
+                    sum(data["weighted_scores"]) / len(data["weighted_scores"]), 4
+                ),
+            }
+
+        return breakdown
 
     def save(self, output_dir: str):
         """

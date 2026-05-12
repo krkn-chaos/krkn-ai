@@ -3,7 +3,7 @@ ClusterManager unit tests
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from krkn_ai.utils.cluster_manager import ClusterManager
 from krkn_ai.models.cluster_components import Namespace
@@ -451,8 +451,15 @@ class TestClusterManager:
             Exception("Metrics API error")
         )
 
-        # Mock interfaces failure
-        with patch("krkn_ai.utils.cluster_manager.run_shell", return_value=("", 1)):
+        # Mock interface enumeration failure
+        with (
+            patch.object(
+                cluster_manager,
+                "list_node_interfaces",
+                side_effect=Exception("Interface discovery error"),
+            ),
+            patch("krkn_ai.utils.cluster_manager.logger.warning") as mock_warning,
+        ):
             nodes = cluster_manager.list_nodes()
 
         assert len(nodes) == 1
@@ -460,6 +467,12 @@ class TestClusterManager:
         assert nodes[0].free_cpu == -1  # Error indicator
         assert nodes[0].free_mem == -1  # Error indicator
         assert nodes[0].interfaces == []  # Empty on failure
+        mock_warning.assert_any_call(
+            "Failed to list node interfaces for node %s: %s. "
+            "network-scenarios will skip this node.",
+            "test-node",
+            ANY,
+        )
 
     def test_list_node_interfaces_filters_network_interfaces(self, cluster_manager):
         """Test list_node_interfaces filters and returns only ens/eth interfaces"""

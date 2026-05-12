@@ -357,8 +357,10 @@ class ClusterManager:
                     node.metadata.name
                 )
             except Exception as e:
-                logger.error(
-                    "Failed to list node interfaces for node %s: %s",
+                node_component.interfaces = []
+                logger.warning(
+                    "Failed to list node interfaces for node %s: %s. "
+                    "network-scenarios will skip this node.",
                     node.metadata.name,
                     e,
                 )

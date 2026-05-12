@@ -1,4 +1,9 @@
 kubeconfig_file_path: "{{ kubeconfig_file_path }}"
+{% if prometheus_url %}
+
+# Prometheus endpoint auto-discovered: {{ prometheus_url }}
+# Set PROMETHEUS_URL={{ prometheus_url }} before running krkn-ai
+{% endif %}
 
 baseline:
   enable: true
@@ -37,12 +42,27 @@ elastic:
   index: "krkn-ai"  # Index prefix for storing Krkn-AI config and results
 
 
+{% if suggested_queries %}
+# Fitness function queries suggested from discovered Prometheus metrics
+# Scoped to namespaces: {{ discovered_namespaces | join(', ') }}
+fitness_function:
+  query: '{{ suggested_queries[0] }}'
+  type: point
+  include_krkn_failure: true
+  include_health_check_failure: true
+  include_health_check_response_time: true
+
+# Additional suggested queries (uncomment to use):
+{% for q in suggested_queries[1:] %}#   query: '{{ q }}'
+{% endfor %}
+{% else %}
 fitness_function:
   query: 'sum(kube_pod_container_status_restarts_total)'
   type: point
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
+{% endif %}
 
 # health_checks:
 #   stop_watcher_on_failure: false

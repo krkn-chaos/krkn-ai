@@ -10,7 +10,11 @@ environment.globals["enumerate"] = enumerate
 
 
 def create_krkn_ai_template(
-    kubeconfig_file_path: str, cluster_component_data: dict
+    kubeconfig_file_path: str,
+    cluster_component_data: dict,
+    prometheus_url: str = "",
+    suggested_queries: list[str] | None = None,
+    discovered_namespaces: list[str] | None = None,
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
@@ -39,4 +43,7 @@ def create_krkn_ai_template(
     return template.render(
         kubeconfig_file_path=kubeconfig_file_path,
         cluster_components=cluster_components_indented,
+        prometheus_url=prometheus_url,
+        suggested_queries=suggested_queries or [],
+        discovered_namespaces=discovered_namespaces or [],
     )

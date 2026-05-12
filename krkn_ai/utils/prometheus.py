@@ -144,6 +144,75 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         return ""
 
 
+def suggest_fitness_queries(
+    prom_client: KrknPrometheus, namespaces: list[str]
+) -> list[str]:
+    """
+    Suggests chaos-relevant PromQL fitness function queries based on available metrics.
+
+    Queries available Prometheus metrics and returns PromQL expressions scoped
+    to the provided namespaces. Returns an empty list on any failure.
+
+    Args:
+        prom_client: An initialized KrknPrometheus client.
+        namespaces: List of namespace names to scope queries to.
+
+    Returns:
+        A list of PromQL query strings (max 5), ordered by relevance.
+    """
+    # Priority-ordered chaos-relevant metrics with their query templates
+    metric_templates = [
+        (
+            "kube_pod_container_status_restarts_total",
+            "sum(kube_pod_container_status_restarts_total{{{ns_filter}}})",
+        ),
+        (
+            "container_cpu_usage_seconds_total",
+            "sum(rate(container_cpu_usage_seconds_total{{{ns_filter}}}[5m]))",
+        ),
+        (
+            "container_memory_working_set_bytes",
+            "sum(container_memory_working_set_bytes{{{ns_filter}}})",
+        ),
+        (
+            "kube_pod_status_phase",
+            "count(kube_pod_status_phase{{{ns_filter},phase!=\"Running\"}} == 1)",
+        ),
+        (
+            "http_requests_total",
+            "sum(rate(http_requests_total{{{ns_filter}}}[5m]))",
+        ),
+        (
+            "http_request_duration_seconds_count",
+            "sum(rate(http_request_duration_seconds_count{{{ns_filter}}}[5m]))",
+        ),
+    ]
+
+    try:
+        available_metrics = prom_client.prom_cli.all_metrics()
+    except Exception as e:
+        logger.debug("Failed to fetch metrics from Prometheus: %s", e)
+        return []
+
+    if not available_metrics:
+        return []
+
+    available_set = set(available_metrics)
+    ns_filter = ""
+    if namespaces:
+        ns_regex = "|".join(namespaces)
+        ns_filter = f'namespace=~"{ns_regex}"'
+
+    queries: list[str] = []
+    for metric_name, template in metric_templates:
+        if metric_name in available_set:
+            queries.append(template.format(ns_filter=ns_filter))
+        if len(queries) >= 5:
+            break
+
+    return queries
+
+
 def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     """
     Validates connection parameters and initializes the Prometheus client.

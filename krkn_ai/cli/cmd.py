@@ -19,6 +19,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.utils.prometheus import create_prometheus_client, suggest_fitness_queries
 
 
 @click.group(context_settings={"show_default": True})
@@ -258,7 +259,37 @@ def discover(
         mode="json", warnings="none", exclude_defaults=True
     )
 
-    template = create_krkn_ai_template(kubeconfig, cluster_components_data)
+    # Prometheus auto-discovery (optional, never crashes discover)
+    prometheus_url = ""
+    suggested_queries: list[str] = []
+    discovered_namespaces = [ns.name for ns in cluster_components.namespaces]
+
+    try:
+        prom_client = create_prometheus_client(kubeconfig)
+        prometheus_url = prom_client.prom_cli.url
+        logger.info("Prometheus endpoint discovered: %s", prometheus_url)
+        try:
+            suggested_queries = suggest_fitness_queries(
+                prom_client, discovered_namespaces
+            )
+            if suggested_queries:
+                logger.info(
+                    "Suggested %d fitness function queries", len(suggested_queries)
+                )
+        except Exception as e:
+            logger.warning("Failed to suggest fitness queries: %s", e)
+    except Exception as e:
+        logger.warning(
+            "Prometheus auto-discovery unavailable, using default fitness query: %s", e
+        )
+
+    template = create_krkn_ai_template(
+        kubeconfig,
+        cluster_components_data,
+        prometheus_url=prometheus_url,
+        suggested_queries=suggested_queries,
+        discovered_namespaces=discovered_namespaces,
+    )
 
     with open(output, "w") as f:
         f.write(template)

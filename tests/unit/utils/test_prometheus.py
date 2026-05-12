@@ -5,7 +5,11 @@ Unit tests for Prometheus utility functions and client creation logic using Kube
 import os
 import pytest
 from unittest.mock import Mock, patch
-from krkn_ai.utils.prometheus import is_openshift, create_prometheus_client
+from krkn_ai.utils.prometheus import (
+    is_openshift,
+    create_prometheus_client,
+    suggest_fitness_queries,
+)
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 
@@ -141,3 +145,82 @@ class TestPrometheusUtils:
             create_prometheus_client("/tmp/test-kubeconfig")
             args, _ = mock_prom_class.call_args
             assert args[0] == "https://my-prom"
+
+
+class TestSuggestFitnessQueries:
+    """Tests for suggest_fitness_queries function."""
+
+    def test_returns_scoped_queries_for_available_metrics(self):
+        """Should return PromQL queries scoped to namespaces for matching metrics."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = [
+            "kube_pod_container_status_restarts_total",
+            "container_cpu_usage_seconds_total",
+            "unrelated_metric",
+        ]
+
+        result = suggest_fitness_queries(mock_client, ["ns1", "ns2"])
+
+        assert len(result) == 2
+        assert 'namespace=~"ns1|ns2"' in result[0]
+        assert "kube_pod_container_status_restarts_total" in result[0]
+        assert "container_cpu_usage_seconds_total" in result[1]
+
+    def test_returns_empty_list_when_no_relevant_metrics(self):
+        """Should return empty list when no chaos-relevant metrics are found."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = [
+            "go_gc_duration_seconds",
+            "process_cpu_seconds_total",
+        ]
+
+        result = suggest_fitness_queries(mock_client, ["default"])
+
+        assert result == []
+
+    def test_returns_empty_list_on_exception(self):
+        """Should return empty list when all_metrics() raises."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.side_effect = Exception("Connection refused")
+
+        result = suggest_fitness_queries(mock_client, ["ns1"])
+
+        assert result == []
+
+    def test_handles_empty_namespace_list(self):
+        """Should generate queries without namespace filter when namespaces is empty."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = [
+            "kube_pod_container_status_restarts_total",
+        ]
+
+        result = suggest_fitness_queries(mock_client, [])
+
+        assert len(result) == 1
+        assert "namespace" not in result[0]
+        assert "kube_pod_container_status_restarts_total{}" in result[0]
+
+    def test_returns_max_five_queries(self):
+        """Should return at most 5 queries even if more metrics match."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = [
+            "kube_pod_container_status_restarts_total",
+            "container_cpu_usage_seconds_total",
+            "container_memory_working_set_bytes",
+            "kube_pod_status_phase",
+            "http_requests_total",
+            "http_request_duration_seconds_count",
+        ]
+
+        result = suggest_fitness_queries(mock_client, ["ns1"])
+
+        assert len(result) == 5
+
+    def test_returns_empty_list_when_all_metrics_returns_empty(self):
+        """Should return empty list when Prometheus has no metrics."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = []
+
+        result = suggest_fitness_queries(mock_client, ["ns1"])
+
+        assert result == []

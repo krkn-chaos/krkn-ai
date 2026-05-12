@@ -49,6 +49,7 @@ class ClusterManager:
         for ns in namespaces:
             urls.extend(self._discover_ingress_urls(ns.name))
             urls.extend(self._discover_route_urls(ns.name))
+            urls.extend(self._discover_loadbalancer_urls(ns.name))
         return urls
 
     def _discover_ingress_urls(self, namespace: str) -> List[Dict[str, str]]:
@@ -133,6 +134,38 @@ class ClusterManager:
 
         logger.debug(
             "Discovered %d Route URLs in namespace %s", len(results), namespace
+        )
+        return results
+
+    def _discover_loadbalancer_urls(self, namespace: str) -> List[Dict[str, str]]:
+        """List Services with type LoadBalancer and extract external URLs."""
+        results: List[Dict[str, str]] = []
+        try:
+            services = self.core_api.list_namespaced_service(
+                namespace=namespace
+            ).items
+        except Exception as e:
+            logger.warning(
+                "Failed to list Services in namespace %s: %s", namespace, e
+            )
+            return results
+
+        for svc in services:
+            if svc.spec.type != "LoadBalancer":
+                continue
+            ingress_list = (svc.status.load_balancer.ingress or []) if svc.status.load_balancer else []
+            if not ingress_list:
+                continue
+            has_443 = any(p.port == 443 for p in (svc.spec.ports or []))
+            scheme = "https" if has_443 else "http"
+            for entry in ingress_list:
+                host = entry.ip or entry.hostname
+                if not host:
+                    continue
+                results.append({"name": svc.metadata.name, "url": f"{scheme}://{host}"})
+
+        logger.debug(
+            "Discovered %d LoadBalancer URLs in namespace %s", len(results), namespace
         )
         return results
 

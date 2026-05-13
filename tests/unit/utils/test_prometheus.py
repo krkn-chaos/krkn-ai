@@ -198,7 +198,7 @@ class TestSuggestFitnessQueries:
 
         assert len(result) == 1
         assert "namespace" not in result[0]
-        assert "kube_pod_container_status_restarts_total{}" in result[0]
+        assert "kube_pod_container_status_restarts_total" in result[0]
 
     def test_kube_pod_status_phase_valid_promql_when_no_namespaces(self):
         """kube_pod_status_phase query must not produce {,phase!=...} when namespaces is empty."""

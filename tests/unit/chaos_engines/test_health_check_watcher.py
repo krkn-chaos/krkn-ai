@@ -236,6 +236,67 @@ class TestHealthCheckWatcherResults:
                 assert result.error is not None
 
 
+class TestSummarizeResponseTimeContinue:
+    """Regression tests for issue #259: continue instead of early return"""
+
+    def test_skips_insufficient_url_processes_remaining(self):
+        """First URL has <4 data points, second has outliers -> score > 0"""
+        config = HealthCheckConfig(applications=[])
+        watcher = HealthCheckWatcher(config)
+
+        results = {
+            "http://short.example.com": [
+                HealthCheckResult(
+                    name="short", response_time=0.1, status_code=200, success=True
+                ),
+            ],
+            "http://long.example.com": [
+                HealthCheckResult(
+                    name="long", response_time=0.1, status_code=200, success=True
+                ),
+                HealthCheckResult(
+                    name="long", response_time=0.12, status_code=200, success=True
+                ),
+                HealthCheckResult(
+                    name="long", response_time=0.11, status_code=200, success=True
+                ),
+                HealthCheckResult(
+                    name="long", response_time=0.13, status_code=200, success=True
+                ),
+                HealthCheckResult(
+                    name="long", response_time=5.0, status_code=200, success=True
+                ),
+            ],
+        }
+
+        score = watcher.summarize_response_time(results)
+        assert score > 0
+
+    def test_all_urls_insufficient_returns_zero(self):
+        """All URLs have <4 data points -> returns 0.0"""
+        config = HealthCheckConfig(applications=[])
+        watcher = HealthCheckWatcher(config)
+
+        results = {
+            "http://a.example.com": [
+                HealthCheckResult(
+                    name="a", response_time=0.1, status_code=200, success=True
+                ),
+            ],
+            "http://b.example.com": [
+                HealthCheckResult(
+                    name="b", response_time=0.2, status_code=200, success=True
+                ),
+                HealthCheckResult(
+                    name="b", response_time=0.3, status_code=200, success=True
+                ),
+            ],
+        }
+
+        score = watcher.summarize_response_time(results)
+        assert score == 0.0
+
+
 class TestHealthCheckWatcherHeaders:
     """Test header merging and env-var resolution"""
 

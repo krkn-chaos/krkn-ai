@@ -6,7 +6,14 @@ import datetime
 
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
-from krkn_ai.models.config import ConfigFile, FitnessFunction, FitnessFunctionType, ScenarioConfig, PodScenarioConfig, HealthCheckResult
+from krkn_ai.models.config import (
+    ConfigFile,
+    FitnessFunction,
+    FitnessFunctionType,
+    ScenarioConfig,
+    PodScenarioConfig,
+    HealthCheckResult,
+)
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.cluster_components import ClusterComponents
 
@@ -93,8 +100,12 @@ class TestJSONSummaryReporterHealthCheckSummary:
             scenario=s1,
             health_check_results={
                 "app1": [
-                    HealthCheckResult(name="app1", response_time=0.1, status_code=200, success=True),
-                    HealthCheckResult(name="app1", response_time=0.3, status_code=200, success=True),
+                    HealthCheckResult(
+                        name="app1", response_time=0.1, status_code=200, success=True
+                    ),
+                    HealthCheckResult(
+                        name="app1", response_time=0.3, status_code=200, success=True
+                    ),
                 ]
             },
         )
@@ -104,7 +115,9 @@ class TestJSONSummaryReporterHealthCheckSummary:
             scenario=s2,
             health_check_results={
                 "app1": [
-                    HealthCheckResult(name="app1", response_time=0.5, status_code=500, success=False),
+                    HealthCheckResult(
+                        name="app1", response_time=0.5, status_code=500, success=False
+                    ),
                 ]
             },
         )
@@ -153,8 +166,12 @@ class TestJSONSummaryReporterSLOBreakdown:
         ]
         s1 = _make_scenario(end_value=100)
         s2 = _make_scenario(end_value=200)
-        r1 = _make_result(scenario_id=1, fitness_score=5.0, slo_scores=scores1, scenario=s1)
-        r2 = _make_result(scenario_id=2, fitness_score=8.0, slo_scores=scores2, scenario=s2)
+        r1 = _make_result(
+            scenario_id=1, fitness_score=5.0, slo_scores=scores1, scenario=s1
+        )
+        r2 = _make_result(
+            scenario_id=2, fitness_score=8.0, slo_scores=scores2, scenario=s2
+        )
         seen = {s1: r1, s2: r2}
 
         reporter = JSONSummaryReporter(

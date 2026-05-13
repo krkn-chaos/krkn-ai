@@ -266,7 +266,9 @@ def discover(
     )
 
     if probe and health_check_urls:
-        logger.info("Probing %d discovered URLs for reachability...", len(health_check_urls))
+        logger.info(
+            "Probing %d discovered URLs for reachability...", len(health_check_urls)
+        )
         health_check_urls = cluster_manager.probe_health_check_urls(health_check_urls)
 
     cluster_components_data = cluster_components.model_dump(

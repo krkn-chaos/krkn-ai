@@ -218,9 +218,7 @@ class TestLoadBalancerDiscovery:
             "krkn_ai.utils.cluster_manager.KrknKubernetes",
             return_value=mock_krkn_k8s,
         ):
-            with patch(
-                "krkn_ai.utils.cluster_manager.NetworkingV1Api"
-            ):
+            with patch("krkn_ai.utils.cluster_manager.NetworkingV1Api"):
                 mgr = ClusterManager(kubeconfig="/tmp/test-kubeconfig")
                 return mgr
 
@@ -249,8 +247,9 @@ class TestLoadBalancerDiscovery:
     def test_discover_loadbalancer_urls_with_ip(self, cluster_manager):
         """Test LoadBalancer with IP address."""
         svc = self._make_lb_service(
-            "my-lb", [self._make_ingress_entry(ip="1.2.3.4")],
-            ports=[self._make_port(80)]
+            "my-lb",
+            [self._make_ingress_entry(ip="1.2.3.4")],
+            ports=[self._make_port(80)],
         )
         cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
 
@@ -262,8 +261,9 @@ class TestLoadBalancerDiscovery:
     def test_discover_loadbalancer_urls_with_hostname(self, cluster_manager):
         """Test LoadBalancer with hostname."""
         svc = self._make_lb_service(
-            "aws-lb", [self._make_ingress_entry(hostname="abc.elb.amazonaws.com")],
-            ports=[self._make_port(80)]
+            "aws-lb",
+            [self._make_ingress_entry(hostname="abc.elb.amazonaws.com")],
+            ports=[self._make_port(80)],
         )
         cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
 
@@ -275,8 +275,9 @@ class TestLoadBalancerDiscovery:
     def test_discover_loadbalancer_urls_https_on_port_443(self, cluster_manager):
         """Test that port 443 triggers https scheme."""
         svc = self._make_lb_service(
-            "secure-lb", [self._make_ingress_entry(ip="10.0.0.1")],
-            ports=[self._make_port(443)]
+            "secure-lb",
+            [self._make_ingress_entry(ip="10.0.0.1")],
+            ports=[self._make_port(443)],
         )
         cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
 
@@ -316,16 +317,19 @@ class TestProbeHealthCheckUrls:
     def test_reachable_url_kept(self, cluster_manager):
         """URLs that respond (any HTTP status) are kept."""
         import urllib.error
+
         urls = [{"name": "app", "url": "http://10.0.0.1/health"}]
-        with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
-            url=None, code=200, msg="OK", hdrs=None, fp=None
-        )):
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                url=None, code=200, msg="OK", hdrs=None, fp=None
+            ),
+        ):
             result = cluster_manager.probe_health_check_urls(urls, timeout=1)
         assert result == urls
 
     def test_unreachable_url_excluded(self, cluster_manager):
         """URLs that time out or refuse connection are excluded."""
-        import urllib.error
         urls = [{"name": "dead", "url": "http://192.0.2.1/health"}]
         with patch("urllib.request.urlopen", side_effect=OSError("timed out")):
             result = cluster_manager.probe_health_check_urls(urls, timeout=1)
@@ -334,6 +338,7 @@ class TestProbeHealthCheckUrls:
     def test_mixed_urls_filtered(self, cluster_manager):
         """Only reachable URLs are returned from a mixed list."""
         import urllib.error
+
         urls = [
             {"name": "ok", "url": "http://10.0.0.1/"},
             {"name": "dead", "url": "http://192.0.2.1/"},
@@ -342,7 +347,9 @@ class TestProbeHealthCheckUrls:
         def side_effect(req, timeout):
             if "192.0.2.1" in req.full_url:
                 raise OSError("refused")
-            raise urllib.error.HTTPError(url=None, code=404, msg="Not Found", hdrs=None, fp=None)
+            raise urllib.error.HTTPError(
+                url=None, code=404, msg="Not Found", hdrs=None, fp=None
+            )
 
         with patch("urllib.request.urlopen", side_effect=side_effect):
             result = cluster_manager.probe_health_check_urls(urls, timeout=1)

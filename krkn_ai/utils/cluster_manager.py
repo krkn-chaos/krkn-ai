@@ -85,10 +85,10 @@ class ClusterManager:
                 reachable.append(entry)
                 logger.debug("Probe reachable (HTTP error): %s", url)
             except Exception as e:
-                logger.warning("Probe unreachable, excluding from health checks: %s (%s)", url, e)
-        logger.info(
-            "URL probing: %d/%d endpoints reachable", len(reachable), len(urls)
-        )
+                logger.warning(
+                    "Probe unreachable, excluding from health checks: %s (%s)", url, e
+                )
+        logger.info("URL probing: %d/%d endpoints reachable", len(reachable), len(urls))
         return reachable
 
     def _discover_ingress_urls(self, namespace: str) -> List[Dict[str, str]]:
@@ -99,9 +99,7 @@ class ClusterManager:
                 namespace=namespace
             ).items
         except Exception as e:
-            logger.warning(
-                "Failed to list Ingresses in namespace %s: %s", namespace, e
-            )
+            logger.warning("Failed to list Ingresses in namespace %s: %s", namespace, e)
             return results
 
         for ing in ingresses:
@@ -124,10 +122,15 @@ class ClusterManager:
                         path = path_obj.path or "/"
                         url = f"{scheme}://{host}{path}"
                         path_slug = path.strip("/").replace("/", "-") or "root"
-                        results.append({"name": f"{ing_name}-{host}-{path_slug}", "url": url})
+                        results.append(
+                            {"name": f"{ing_name}-{host}-{path_slug}", "url": url}
+                        )
                 else:
                     results.append(
-                        {"name": f"{ing_name}-{host}-root", "url": f"{scheme}://{host}/"}
+                        {
+                            "name": f"{ing_name}-{host}-root",
+                            "url": f"{scheme}://{host}/",
+                        }
                     )
         logger.debug(
             "Discovered %d Ingress URLs in namespace %s", len(results), namespace
@@ -138,6 +141,7 @@ class ClusterManager:
         """List OpenShift Route resources and extract URLs. Graceful no-op if CRD absent."""
         results: List[Dict[str, str]] = []
         from kubernetes.client.exceptions import ApiException
+
         try:
             routes_response = self.custom_obj_api.list_namespaced_custom_object(
                 group="route.openshift.io",
@@ -182,19 +186,19 @@ class ClusterManager:
         """List Services with type LoadBalancer and extract external URLs."""
         results: List[Dict[str, str]] = []
         try:
-            services = self.core_api.list_namespaced_service(
-                namespace=namespace
-            ).items
+            services = self.core_api.list_namespaced_service(namespace=namespace).items
         except Exception as e:
-            logger.warning(
-                "Failed to list Services in namespace %s: %s", namespace, e
-            )
+            logger.warning("Failed to list Services in namespace %s: %s", namespace, e)
             return results
 
         for svc in services:
             if svc.spec.type != "LoadBalancer":
                 continue
-            ingress_list = (svc.status.load_balancer.ingress or []) if svc.status.load_balancer else []
+            ingress_list = (
+                (svc.status.load_balancer.ingress or [])
+                if svc.status.load_balancer
+                else []
+            )
             if not ingress_list:
                 continue
             has_443 = any(p.port == 443 for p in (svc.spec.ports or []))

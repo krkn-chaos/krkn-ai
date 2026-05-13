@@ -21,13 +21,25 @@ class TestCreateKrknAiTemplate:
             discovered_namespaces=["ns1"],
         )
 
-        assert "Prometheus endpoint auto-discovered: https://prometheus.example.com" in result
+        assert (
+            "Prometheus endpoint auto-discovered: https://prometheus.example.com"
+            in result
+        )
         assert "PROMETHEUS_URL=https://prometheus.example.com" in result
-        assert "Fitness function queries suggested from discovered Prometheus metrics" in result
-        assert 'query: \'sum(kube_pod_container_status_restarts_total{namespace=~"ns1"})\'' in result
+        assert (
+            "Fitness function queries suggested from discovered Prometheus metrics"
+            in result
+        )
+        assert (
+            "query: 'sum(kube_pod_container_status_restarts_total{namespace=~\"ns1\"})'"
+            in result
+        )
         assert "Scoped to namespaces: ns1" in result
         # Second query should be commented
-        assert '#   query: \'sum(rate(container_cpu_usage_seconds_total{namespace=~"ns1"}[5m]))\'' in result
+        assert (
+            "#   query: 'sum(rate(container_cpu_usage_seconds_total{namespace=~\"ns1\"}[5m]))'"
+            in result
+        )
 
     def test_template_without_suggested_queries(self):
         """Should render default fitness_function when no suggestions available."""

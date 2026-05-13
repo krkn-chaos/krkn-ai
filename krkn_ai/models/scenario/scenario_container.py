@@ -66,13 +66,18 @@ class ContainerScenario(Scenario):
         # pod_label is a string of the form "key=value"
         self.label_selector.value = "{}={}".format(label, labels[label])
 
-        self.disruption_count.value = rng.randint(1, len(pod.containers))
+        # Count pods matching the selected label in this namespace
+        matching_pods = [
+            p
+            for p in namespace.pods
+            if label in p.labels and p.labels[label] == labels[label]
+        ]
+        self.disruption_count.value = rng.randint(1, max(1, len(matching_pods)))
 
-        if self.disruption_count.value == 1:
-            # TODO: Verify whether we need to keep it empty or use regex pattern to match all container
+        # Randomly decide whether to target all containers or a specific one
+        if rng.choice([True, False]):
             self.container_name.value = ".*"
         else:
-            # Select specific container to kill in the pod
             self.container_name.value = rng.choice([x.name for x in pod.containers])
 
         self.action.value = rng.choice(["1", "9"])

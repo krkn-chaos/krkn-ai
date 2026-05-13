@@ -92,7 +92,6 @@ class TestContainerScenario:
         assert scenario.name == "container-scenarios"
         assert scenario.namespace.value == "test-ns"
         assert scenario.disruption_count.value >= 1
-        assert scenario.disruption_count.value <= len(pod.containers)
 
     def test_container_scenario_raises_error_when_no_pods_with_labels(self):
         """Test that ContainerScenario raises error when no pods have labels"""
@@ -104,6 +103,65 @@ class TestContainerScenario:
             ScenarioParameterInitError, match="No pods found with labels"
         ):
             ContainerScenario(cluster_components=cluster)
+
+    def test_container_name_is_valid_choice(self):
+        """Test that container_name is either '.*' or a valid container name"""
+        pod = Pod(
+            name="test-pod",
+            labels={"app": "web"},
+            containers=[
+                Container(name="nginx"),
+                Container(name="sidecar"),
+                Container(name="init"),
+            ],
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        valid_names = {".*", "nginx", "sidecar", "init"}
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.container_name.value in valid_names
+
+    def test_disruption_count_bounded_by_matching_pods(self):
+        """Test that disruption_count is bounded by number of pods matching the label"""
+        pods = [
+            Pod(
+                name=f"pod-{i}",
+                labels={"app": "web"},
+                containers=[Container(name="c1")],
+            )
+            for i in range(5)
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.disruption_count.value >= 1
+            assert scenario.disruption_count.value <= 5
+
+    def test_disruption_count_not_bounded_by_container_count(self):
+        """Test that disruption_count can exceed the number of containers in a pod"""
+        # 1 container per pod, but 3 pods matching the label
+        pods = [
+            Pod(
+                name=f"pod-{i}",
+                labels={"app": "web"},
+                containers=[Container(name="only-container")],
+            )
+            for i in range(3)
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        saw_gt_1 = False
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            if scenario.disruption_count.value > 1:
+                saw_gt_1 = True
+        # With 3 matching pods, disruption_count can be 2 or 3
+        assert saw_gt_1
 
 
 class TestNodeCPUHogScenario:

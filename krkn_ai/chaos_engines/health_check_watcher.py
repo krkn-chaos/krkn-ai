@@ -145,7 +145,11 @@ class HealthCheckWatcher:
                     response_times.append(result.response_time)
 
             if len(response_times) < 4:  # Not enough data to calculate outliers
-                return 0
+                logger.debug(
+                    f"Skipping URL with insufficient data points "
+                    f"({len(response_times)} < 4)"
+                )
+                continue
 
             q1 = np.percentile(response_times, 25)
             q3 = np.percentile(response_times, 75)

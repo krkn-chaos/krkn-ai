@@ -163,6 +163,16 @@ class TestContainerScenario:
         # With 3 matching pods, disruption_count can be 2 or 3
         assert saw_gt_1
 
+    def test_container_name_uses_wildcard_when_pod_has_no_containers(self):
+        """Test that container_name defaults to '.*' when pod has no containers (no IndexError)."""
+        pod = Pod(name="empty-pod", labels={"app": "web"}, containers=[])
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(20):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.container_name.value == ".*"
+
 
 class TestNodeCPUHogScenario:
     """Test NodeCPUHogScenario class"""

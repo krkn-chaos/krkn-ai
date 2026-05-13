@@ -74,8 +74,9 @@ class ContainerScenario(Scenario):
         ]
         self.disruption_count.value = rng.randint(1, max(1, len(matching_pods)))
 
-        # Randomly decide whether to target all containers or a specific one
-        if rng.choice([True, False]):
+        # Randomly decide whether to target all containers or a specific one.
+        # Always use ".*" when the pod has no containers to avoid IndexError.
+        if not pod.containers or rng.choice([True, False]):
             self.container_name.value = ".*"
         else:
             self.container_name.value = rng.choice([x.name for x in pod.containers])

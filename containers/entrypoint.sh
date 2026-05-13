@@ -61,7 +61,7 @@ case "$MODE_LOWER" in
         if [ -n "$POD_LABEL" ]; then
             CMD+=(--pod-label "$POD_LABEL")
         fi
-        if [ -n "$POD_LABEL" ]; then
+        if [ -n "$NODE_LABEL" ]; then
             CMD+=(--node-label "$NODE_LABEL")
         fi
         if [ -n "$SKIP_POD_NAME" ]; then
@@ -94,34 +94,34 @@ case "$MODE_LOWER" in
         fi
 
         # Build the command
-        CMD="krkn_ai run --config $CONFIG_FILE --output $OUTPUT_DIR --kubeconfig $KUBECONFIG"
+        CMD=(krkn_ai run --config "$CONFIG_FILE" --output "$OUTPUT_DIR" --kubeconfig "$KUBECONFIG")
 
         # Add optional parameters
         if [ -n "$FORMAT" ]; then
-            CMD="$CMD --format $FORMAT"
+            CMD+=(--format "$FORMAT")
         fi
 
         if [ -n "$RUNNER_TYPE" ]; then
-            CMD="$CMD --runner-type $RUNNER_TYPE"
+            CMD+=(--runner-type "$RUNNER_TYPE")
         fi
 
         # Add extra parameters (comma-separated key=value pairs)
         if [ -n "$EXTRA_PARAMS" ]; then
             IFS=',' read -ra PARAMS <<< "$EXTRA_PARAMS"
             for param in "${PARAMS[@]}"; do
-                CMD="$CMD --param $param"
+                CMD+=(--param "$param")
             done
         fi
 
         # Add verbosity flags
         if [ "$VERBOSE" -ge 1 ]; then
             for ((i=0; i<$VERBOSE; i++)); do
-                CMD="$CMD -v"
+                CMD+=(-v)
             done
         fi
 
-        echo "Executing: $CMD"
-        eval $CMD
+        echo "Executing: ${CMD[*]}"
+        "${CMD[@]}"
         ;;
 
     *)

@@ -3,6 +3,7 @@ Unit tests for Prometheus utility functions and client creation logic using Kube
 """
 
 import os
+import re
 import pytest
 from unittest.mock import Mock, patch
 from krkn_ai.utils.prometheus import (
@@ -150,24 +151,66 @@ class TestPrometheusUtils:
 class TestSuggestFitnessQueries:
     """Tests for suggest_fitness_queries()."""
 
-    def test_empty_namespaces_no_leading_comma(self):
-        """Every query must be valid PromQL when no namespaces are given."""
-        queries = suggest_fitness_queries([])
-        assert queries, "Expected at least one suggested query"
+    ALL_METRICS = [
+        "kube_pod_container_status_restarts_total",
+        "kube_pod_status_phase",
+        "kube_pod_container_status_waiting",
+    ]
+
+    def _make_client(self, metrics=None, raises=False):
+        prom_cli = Mock()
+        if raises:
+            prom_cli.all_metrics.side_effect = Exception("connection refused")
+        else:
+            prom_cli.all_metrics.return_value = (
+                metrics if metrics is not None else self.ALL_METRICS
+            )
+        client = Mock()
+        client.prom_cli = prom_cli
+        return client
+
+    def test_all_metrics_empty_namespaces_no_leading_comma(self):
+        """All 3 queries returned; no {, in any selector when namespaces=[]."""
+        queries = suggest_fitness_queries(self._make_client(), [])
+        assert len(queries) == 3
         for q in queries:
             assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
 
-    def test_namespaces_scoped_queries(self):
-        """Queries should contain a namespace regex selector when namespaces provided."""
-        queries = suggest_fitness_queries(["default", "kube-system"])
+    def test_all_metrics_namespaces_scoped(self):
+        """Queries contain anchored namespace=~'^(...)$' filter when multiple namespaces given."""
+        namespaces = ["default", "kube-system"]
+        queries = suggest_fitness_queries(self._make_client(), namespaces)
+        assert len(queries) == 3
         for q in queries:
             assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
-        scoped = [q for q in queries if 'namespace=~"default|kube-system"' in q]
-        assert scoped, "Expected at least one namespace-scoped query"
+        escaped = "|".join(re.escape(ns) for ns in namespaces)
+        expected = f'namespace=~"^({escaped})$"'
+        assert any(expected in q for q in queries)
 
-    def test_single_namespace(self):
-        """Single-namespace list should produce valid PromQL selectors."""
-        queries = suggest_fitness_queries(["my-app"])
-        for q in queries:
-            assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
-        assert any('namespace=~"my-app"' in q for q in queries)
+    def test_single_namespace_exact_match(self):
+        """Single namespace produces an exact-match selector, not a regex."""
+        queries = suggest_fitness_queries(self._make_client(), ["default"])
+        assert len(queries) == 3
+        expected = f'namespace="{re.escape("default")}"'
+        assert all(expected in q for q in queries)
+        assert all("=~" not in q for q in queries)
+
+    def test_namespace_metachar_escaped(self):
+        """Namespace names with regex metacharacters are escaped before use."""
+        queries = suggest_fitness_queries(self._make_client(), ["team[1]"])
+        assert len(queries) == 3
+        expected = f'namespace="{re.escape("team[1]")}"'
+        assert all(expected in q for q in queries)
+
+    def test_only_one_metric_available(self):
+        """Only the query whose metric is present in Prometheus is returned."""
+        queries = suggest_fitness_queries(
+            self._make_client(metrics=["kube_pod_status_phase"]), []
+        )
+        assert len(queries) == 1
+        assert "kube_pod_status_phase" in queries[0]
+
+    def test_all_metrics_raises_returns_empty(self):
+        """Returns [] without raising when all_metrics() fails."""
+        queries = suggest_fitness_queries(self._make_client(raises=True), [])
+        assert queries == []

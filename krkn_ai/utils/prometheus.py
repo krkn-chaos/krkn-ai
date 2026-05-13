@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
@@ -17,33 +18,62 @@ def _build_selector(*filters: str) -> str:
     return "{" + ",".join(parts) + "}"
 
 
-def suggest_fitness_queries(namespaces: List[str]) -> List[str]:
+def suggest_fitness_queries(
+    prom_client: KrknPrometheus, namespaces: List[str]
+) -> List[str]:
     """
-    Return a list of suggested PromQL queries scoped to the given namespaces.
+    Return PromQL queries scoped to *namespaces* for metrics that actually
+    exist in Prometheus.
 
-    When *namespaces* is empty the queries cover all namespaces.  The function
-    never produces selectors with a leading comma (e.g. ``{,phase!="Running"}``),
-    which would be invalid PromQL.
+    Queries are only included when the backing metric is present in the
+    cluster's Prometheus instance, preventing suggestions that would return
+    no data.  If the metric list cannot be fetched for any reason the
+    function returns ``[]`` rather than raising.
 
     Args:
-        namespaces: Namespace names to scope the queries.  Pass ``[]`` for
-                    cluster-wide queries.
+        prom_client: Live Prometheus client (``KrknPrometheus``).
+        namespaces:  Namespace names to scope the queries.  Pass ``[]`` for
+                     cluster-wide queries.
 
     Returns:
         List of PromQL query strings suitable for use as fitness functions.
     """
-    ns_filter = f'namespace=~"{"|".join(namespaces)}"' if namespaces else ""
+    try:
+        available: List[str] = prom_client.prom_cli.all_metrics()
+    except Exception:
+        logger.warning(
+            "Unable to fetch metric list from Prometheus; skipping suggestions"
+        )
+        return []
+
+    clean = [re.escape(ns.strip()) for ns in namespaces if ns.strip()]
+    if len(clean) == 1:
+        ns_filter = f'namespace="{clean[0]}"'
+    elif len(clean) > 1:
+        ns_filter = f'namespace=~"^({"|".join(clean)})$"'
+    else:
+        ns_filter = ""
 
     restarts_sel = _build_selector(ns_filter)
     non_running_sel = _build_selector(ns_filter, 'phase!="Running"')
     waiting_sel = _build_selector(ns_filter)
 
-    queries = [
-        f"sum(kube_pod_container_status_restarts_total{restarts_sel})",
-        f"count(kube_pod_status_phase{non_running_sel} or vector(0)) - 1",
-        f"sum(kube_pod_container_status_waiting{waiting_sel})",
+    candidates = [
+        (
+            "kube_pod_container_status_restarts_total",
+            f"sum(kube_pod_container_status_restarts_total{restarts_sel})",
+        ),
+        (
+            "kube_pod_status_phase",
+            f"count(kube_pod_status_phase{non_running_sel} == 1)",
+        ),
+        (
+            "kube_pod_container_status_waiting",
+            f"sum(kube_pod_container_status_waiting{waiting_sel})",
+        ),
     ]
-    return queries
+
+    return [query for metric, query in candidates if metric in available]
 
 
 def is_openshift(kubeconfig: str) -> bool:

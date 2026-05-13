@@ -112,10 +112,11 @@ class NodeCPUPercentageParameter(BaseParameter):
     value: int = 50
 
     def mutate(self):
+        delta = rng.randint(1, 35) * self.value / 100
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            self.value += max(1, int(delta))
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
+            self.value -= max(1, int(delta))
         self.value = int(self.value)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
@@ -134,10 +135,11 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
+        delta = rng.randint(1, 35) * self.value / 100
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            self.value += max(1, int(delta))
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
+            self.value -= max(1, int(delta))
         self.value = int(self.value)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
@@ -501,10 +503,11 @@ class IOWriteBytesParameter(BaseParameter):
         """
         Mutate the percentage value between 1 and 100.
         """
+        delta = rng.randint(1, 35) * self.value / 100
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            self.value += max(1, int(delta))
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
+            self.value -= max(1, int(delta))
         self.value = int(self.value)
         self.value = max(self.value, 1)
         self.value = min(self.value, 100)

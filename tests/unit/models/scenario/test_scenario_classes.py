@@ -91,8 +91,11 @@ class TestContainerScenario:
         scenario = ContainerScenario(cluster_components=cluster)
         assert scenario.name == "container-scenarios"
         assert scenario.namespace.value == "test-ns"
-        assert scenario.disruption_count.value >= 1
-        assert scenario.disruption_count.value <= len(pod.containers)
+        assert scenario.disruption_count.value == 1  # only 1 matching pod in namespace
+        assert (
+            scenario.container_name.value == ".*"
+            or scenario.container_name.value in ["container1", "container2"]
+        )
 
     def test_container_scenario_raises_error_when_no_pods_with_labels(self):
         """Test that ContainerScenario raises error when no pods have labels"""

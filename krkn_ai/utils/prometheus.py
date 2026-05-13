@@ -1,4 +1,5 @@
 import os
+from typing import List
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.fs import env_is_truthy
@@ -6,6 +7,43 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 logger = get_logger(__name__)
+
+
+def _build_selector(*filters: str) -> str:
+    """Build a PromQL label selector, omitting empty filter strings."""
+    parts = [f for f in filters if f]
+    if not parts:
+        return ""
+    return "{" + ",".join(parts) + "}"
+
+
+def suggest_fitness_queries(namespaces: List[str]) -> List[str]:
+    """
+    Return a list of suggested PromQL queries scoped to the given namespaces.
+
+    When *namespaces* is empty the queries cover all namespaces.  The function
+    never produces selectors with a leading comma (e.g. ``{,phase!="Running"}``),
+    which would be invalid PromQL.
+
+    Args:
+        namespaces: Namespace names to scope the queries.  Pass ``[]`` for
+                    cluster-wide queries.
+
+    Returns:
+        List of PromQL query strings suitable for use as fitness functions.
+    """
+    ns_filter = f'namespace=~"{"|".join(namespaces)}"' if namespaces else ""
+
+    restarts_sel = _build_selector(ns_filter)
+    non_running_sel = _build_selector(ns_filter, 'phase!="Running"')
+    waiting_sel = _build_selector(ns_filter)
+
+    queries = [
+        f"sum(kube_pod_container_status_restarts_total{restarts_sel})",
+        f"count(kube_pod_status_phase{non_running_sel} or vector(0)) - 1",
+        f"sum(kube_pod_container_status_waiting{waiting_sel})",
+    ]
+    return queries
 
 
 def is_openshift(kubeconfig: str) -> bool:

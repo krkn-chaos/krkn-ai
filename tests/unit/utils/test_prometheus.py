@@ -5,7 +5,11 @@ Unit tests for Prometheus utility functions and client creation logic using Kube
 import os
 import pytest
 from unittest.mock import Mock, patch
-from krkn_ai.utils.prometheus import is_openshift, create_prometheus_client
+from krkn_ai.utils.prometheus import (
+    is_openshift,
+    create_prometheus_client,
+    suggest_fitness_queries,
+)
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 
@@ -141,3 +145,29 @@ class TestPrometheusUtils:
             create_prometheus_client("/tmp/test-kubeconfig")
             args, _ = mock_prom_class.call_args
             assert args[0] == "https://my-prom"
+
+
+class TestSuggestFitnessQueries:
+    """Tests for suggest_fitness_queries()."""
+
+    def test_empty_namespaces_no_leading_comma(self):
+        """Every query must be valid PromQL when no namespaces are given."""
+        queries = suggest_fitness_queries([])
+        assert queries, "Expected at least one suggested query"
+        for q in queries:
+            assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
+
+    def test_namespaces_scoped_queries(self):
+        """Queries should contain a namespace regex selector when namespaces provided."""
+        queries = suggest_fitness_queries(["default", "kube-system"])
+        for q in queries:
+            assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
+        scoped = [q for q in queries if 'namespace=~"default|kube-system"' in q]
+        assert scoped, "Expected at least one namespace-scoped query"
+
+    def test_single_namespace(self):
+        """Single-namespace list should produce valid PromQL selectors."""
+        queries = suggest_fitness_queries(["my-app"])
+        for q in queries:
+            assert "{," not in q, f"Invalid selector with leading comma in: {q!r}"
+        assert any('namespace=~"my-app"' in q for q in queries)

@@ -200,6 +200,30 @@ class TestSuggestFitnessQueries:
         assert "namespace" not in result[0]
         assert "kube_pod_container_status_restarts_total{}" in result[0]
 
+    def test_kube_pod_status_phase_valid_promql_when_no_namespaces(self):
+        """kube_pod_status_phase query must not produce {,phase!=...} when namespaces is empty."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = ["kube_pod_status_phase"]
+
+        result = suggest_fitness_queries(mock_client, [])
+
+        assert len(result) == 1
+        # Must not start with a comma inside the selector
+        assert "{," not in result[0]
+        assert 'phase!="Running"' in result[0]
+
+    def test_kube_pod_status_phase_valid_promql_with_namespaces(self):
+        """kube_pod_status_phase query must include both namespace and phase matchers."""
+        mock_client = Mock()
+        mock_client.prom_cli.all_metrics.return_value = ["kube_pod_status_phase"]
+
+        result = suggest_fitness_queries(mock_client, ["default", "prod"])
+
+        assert len(result) == 1
+        assert 'namespace=~"default|prod"' in result[0]
+        assert 'phase!="Running"' in result[0]
+        assert "{," not in result[0]
+
     def test_returns_max_five_queries(self):
         """Should return at most 5 queries even if more metrics match."""
         mock_client = Mock()

@@ -144,6 +144,12 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         return ""
 
 
+def _build_selector(*matchers: str) -> str:
+    """Join non-empty PromQL label matchers into a selector string."""
+    joined = ", ".join(m for m in matchers if m)
+    return f"{{{joined}}}" if joined else ""
+
+
 def suggest_fitness_queries(
     prom_client: KrknPrometheus, namespaces: list[str]
 ) -> list[str]:
@@ -160,34 +166,6 @@ def suggest_fitness_queries(
     Returns:
         A list of PromQL query strings (max 5), ordered by relevance.
     """
-    # Priority-ordered chaos-relevant metrics with their query templates
-    metric_templates = [
-        (
-            "kube_pod_container_status_restarts_total",
-            "sum(kube_pod_container_status_restarts_total{{{ns_filter}}})",
-        ),
-        (
-            "container_cpu_usage_seconds_total",
-            "sum(rate(container_cpu_usage_seconds_total{{{ns_filter}}}[5m]))",
-        ),
-        (
-            "container_memory_working_set_bytes",
-            "sum(container_memory_working_set_bytes{{{ns_filter}}})",
-        ),
-        (
-            "kube_pod_status_phase",
-            "count(kube_pod_status_phase{{{ns_filter},phase!=\"Running\"}} == 1)",
-        ),
-        (
-            "http_requests_total",
-            "sum(rate(http_requests_total{{{ns_filter}}}[5m]))",
-        ),
-        (
-            "http_request_duration_seconds_count",
-            "sum(rate(http_request_duration_seconds_count{{{ns_filter}}}[5m]))",
-        ),
-    ]
-
     try:
         available_metrics = prom_client.prom_cli.all_metrics()
     except Exception as e:
@@ -198,15 +176,41 @@ def suggest_fitness_queries(
         return []
 
     available_set = set(available_metrics)
-    ns_filter = ""
-    if namespaces:
-        ns_regex = "|".join(namespaces)
-        ns_filter = f'namespace=~"{ns_regex}"'
+    ns_filter = f'namespace=~"{"|".join(namespaces)}"' if namespaces else ""
+    phase_selector = _build_selector(ns_filter, 'phase!="Running"')
+
+    # Priority-ordered chaos-relevant metrics
+    metric_queries = [
+        (
+            "kube_pod_container_status_restarts_total",
+            f"sum(kube_pod_container_status_restarts_total{_build_selector(ns_filter)})",
+        ),
+        (
+            "container_cpu_usage_seconds_total",
+            f"sum(rate(container_cpu_usage_seconds_total{_build_selector(ns_filter)}[5m]))",
+        ),
+        (
+            "container_memory_working_set_bytes",
+            f"sum(container_memory_working_set_bytes{_build_selector(ns_filter)})",
+        ),
+        (
+            "kube_pod_status_phase",
+            f"count(kube_pod_status_phase{phase_selector} == 1)",
+        ),
+        (
+            "http_requests_total",
+            f"sum(rate(http_requests_total{_build_selector(ns_filter)}[5m]))",
+        ),
+        (
+            "http_request_duration_seconds_count",
+            f"sum(rate(http_request_duration_seconds_count{_build_selector(ns_filter)}[5m]))",
+        ),
+    ]
 
     queries: list[str] = []
-    for metric_name, template in metric_templates:
+    for metric_name, query in metric_queries:
         if metric_name in available_set:
-            queries.append(template.format(ns_filter=ns_filter))
+            queries.append(query)
         if len(queries) >= 5:
             break
 

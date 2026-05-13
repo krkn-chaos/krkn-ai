@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils import run_shell
@@ -318,26 +318,13 @@ class ClusterManager:
 
         nodes = self.core_api.list_node().items
 
-        # Fetch all node metrics in a single API call (O(1) network request)
-        # and build a lookup dictionary for O(1) per-node access.
-        node_metrics_map: Dict[str, tuple] = {}
-        try:
-            metrics = self.custom_obj_api.list_cluster_custom_object(
-                group="metrics.k8s.io", version="v1beta1", plural="nodes"
-            )
-            for item in metrics.get("items", []):
-                name = item["metadata"]["name"]
-                usage_cpu = self.parse_cpu(item["usage"]["cpu"])
-                usage_mem = self.parse_memory(item["usage"]["memory"])
-                node_metrics_map[name] = (usage_cpu, usage_mem)
-        except Exception as e:
-            logger.warning("Failed to fetch cluster node metrics: %s", e)
+        node_list = []
 
-        def process_node(node):
+        for node in nodes:
             # Check whether node is unschedulable
             if node.spec.unschedulable:
                 logger.debug("Node %s is unschedulable, skipping", node.metadata.name)
-                return None
+                continue
             # Check whether node is not Ready
             is_ready = False
             for condition in node.status.conditions:
@@ -346,7 +333,7 @@ class ClusterManager:
                     break
             if not is_ready:
                 logger.debug("Node %s is not Ready, skipping", node.metadata.name)
-                return None
+                continue
 
             labels = {}
             if node.metadata.labels is not None:
@@ -379,11 +366,7 @@ class ClusterManager:
             try:
                 alloc_cpu = self.parse_cpu(node.status.allocatable["cpu"])
                 alloc_mem = self.parse_memory(node.status.allocatable["memory"])
-                if node.metadata.name not in node_metrics_map:
-                    raise ValueError(
-                        f"Metrics not found for node: {node.metadata.name}"
-                    )
-                usage_cpu, usage_mem = node_metrics_map[node.metadata.name]
+                usage_cpu, usage_mem = self.__fetch_node_metrics(node.metadata.name)
                 node_component.free_cpu = alloc_cpu - usage_cpu
                 node_component.free_mem = alloc_mem - usage_mem
             except Exception as e:
@@ -394,17 +377,7 @@ class ClusterManager:
                     node.metadata.name,
                     e,
                 )
-            return node_component
-
-        node_list = []
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(process_node, node) for node in nodes]
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    node_list.append(result)
+            node_list.append(node_component)
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list
@@ -427,17 +400,43 @@ class ClusterManager:
         interfaces = []
         interfaces_list = [x.strip() for x in log.splitlines()]
 
-        # TODO: Check which interfaces to consider for network chaos
-        # For now, consider specific interfaces like ens5, eth0, etc.
+        # Common physical and bridge interface prefixes
+        valid_prefixes = (
+            "ens",
+            "eth",
+            "bond",
+            "br-",
+            "ib",
+            "eno",
+            "em",
+            "bridge",
+            "p",
+            "wlan",
+        )
 
         for intf in interfaces_list:
-            # TODO: Check which interfaces to consider for network chaos
-            # ens5, eth0, br-ex, br-int, etc. as well as other interfaces like lo, ovs-system, etc.
-            # Krkn validation doesn't work with interfaces with name like ABC-XYZ
-            if intf.startswith("ens") or intf.startswith("eth"):
+            # Skip loopback and virtual/internal interfaces
+            if intf == "lo" or intf.startswith("veth") or intf.startswith("ovs-"):
+                continue
+
+            if any(intf.startswith(prefix) for prefix in valid_prefixes):
                 interfaces.append(intf)
 
         return interfaces
+
+    def __fetch_node_metrics(self, node: str):
+        metrics = self.custom_obj_api.list_cluster_custom_object(
+            group="metrics.k8s.io", version="v1beta1", plural="nodes"
+        )
+
+        for item in metrics["items"]:
+            name = item["metadata"]["name"]
+            if name == node:
+                usage_cpu = item["usage"]["cpu"]  # e.g. "250m"
+                usage_mem = item["usage"]["memory"]  # e.g. "1024Mi"
+                return self.parse_cpu(usage_cpu), self.parse_memory(usage_mem)
+
+        raise ValueError(f"Metrics not found for node: {node}")
 
     @staticmethod
     def parse_cpu(cpu_str: str):

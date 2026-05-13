@@ -462,16 +462,18 @@ class TestClusterManager:
         assert nodes[0].interfaces == []  # Empty on failure
 
     def test_list_node_interfaces_filters_network_interfaces(self, cluster_manager):
-        """Test list_node_interfaces filters and returns only ens/eth interfaces"""
+        """Test list_node_interfaces filters and returns valid network interfaces"""
         with patch(
             "krkn_ai.utils.cluster_manager.run_shell",
-            return_value=("eth0\nens5\nlo\novs-system\nbr-ex\n", 0),
+            return_value=("eth0\nens5\nlo\novs-system\nbr-ex\nbond0\n", 0),
         ):
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
-        assert len(interfaces) == 2
+        assert len(interfaces) == 4
         assert "eth0" in interfaces
         assert "ens5" in interfaces
+        assert "br-ex" in interfaces
+        assert "bond0" in interfaces
         assert "lo" not in interfaces
         assert "ovs-system" not in interfaces
 

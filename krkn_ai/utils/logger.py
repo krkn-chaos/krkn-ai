@@ -23,9 +23,6 @@ def init_logger(output_dir: Optional[str] = None, verbose: bool = False):
     parent_name = "krkn-ai"
     parent = logging.getLogger(parent_name)
 
-    # Set root logger to critical level to avoid logging to console
-    logging.getLogger().setLevel(logging.CRITICAL)
-
     # Avoid re-adding handlers if already configured
     if parent.handlers:
         _LOGGER_INITIALIZED = True

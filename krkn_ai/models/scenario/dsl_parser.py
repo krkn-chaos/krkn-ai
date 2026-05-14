@@ -25,21 +25,30 @@ class ScenarioDSLParser:
         self._type_map = {
             spec[0]
             .replace("_scenarios", "")
-            .replace("_scenarios", "")
             .replace("_", "-"): spec[1]
             for spec in scenario_specs
         }
         # Add some aliases for convenience
-        self._type_map.update(
-            {
-                "pod": self._type_map.get("pod"),
-                "network": self._type_map.get("network"),
-                "container": self._type_map.get("container"),
-                "cpu-hog": self._type_map.get("node-cpu-hog"),
-                "memory-hog": self._type_map.get("node-memory-hog"),
-                "io-hog": self._type_map.get("node-io-hog"),
-            }
-        )
+        aliases = {
+            "pod": "pod",
+            "network": "network",
+            "container": "container",
+            "cpu-hog": "node-cpu-hog",
+            "memory-hog": "node-memory-hog",
+            "io-hog": "node-io-hog",
+            "dns": "dns-outage",
+            "pvc": "pvc",
+            "kubevirt": "kubevirt",
+        }
+        for alias, target in aliases.items():
+            if target in self._type_map:
+                self._type_map[alias] = self._type_map[target]
+            elif any(target in k for k in self._type_map):
+                # Fallback for partial matches
+                for k, v in self._type_map.items():
+                    if target in k:
+                        self._type_map[alias] = v
+                        break
 
     def parse_file(self, file_path: str) -> List[BaseScenario]:
         with open(file_path, "r") as f:
@@ -76,10 +85,13 @@ class ScenarioDSLParser:
 
         # 1. Create all base scenarios
         scenario_map: Dict[str, Scenario] = {}
+        step_by_name: Dict[str, Dict[str, Any]] = {}
+        
         for step in steps:
             name = step.get("name")
             type_name = step.get("type")
             params = step.get("parameters", {})
+            step_by_name[name] = step
 
             cls = self._type_map.get(type_name)
             if not cls:
@@ -97,33 +109,44 @@ class ScenarioDSLParser:
 
             scenario_map[name] = instance
 
-        # 2. Build composition tree
-        # For simplicity, we support a linear chain or a single dependency
-        # A more complex graph would require a different approach.
-        # We'll follow the "depends_on" field.
+        # 2. Build composition tree based on depends_on
+        # We find the leaf nodes (scenarios that nothing depends on)
+        # and work backwards. For simplicity, we assume a single linear chain or a tree.
+        
+        # Track what depends on what
+        dependents: Dict[str, List[str]] = {name: [] for name in scenario_map}
+        for name, step in step_by_name.items():
+            parent = step.get("depends_on")
+            if parent:
+                if parent not in scenario_map:
+                    raise ValueError(f"Step '{name}' depends on unknown step '{parent}'")
+                dependents[parent].append(name)
 
-        root_scenarios = []
-        for step in steps:
-            if not step.get("depends_on"):
-                root_scenarios.append(step.get("name"))
+        # Roots are nodes with no dependencies
+        roots = [name for name, step in step_by_name.items() if not step.get("depends_on")]
+        if not roots:
+            raise ValueError("Circular dependency detected (no root steps found)")
 
-        if not root_scenarios:
-            raise ValueError("Circular dependency or missing root step in recipe")
+        # Recursive builder to handle nested composition
+        def build_composed(node_name: str) -> BaseScenario:
+            current = scenario_map[node_name]
+            children = dependents[node_name]
+            
+            if not children:
+                return current
+            
+            # Compose with all children
+            # If multiple children, we nest them: Root -> (Child1, (Child2, Child3...))
+            composed = current
+            for child_name in children:
+                child_scenario = build_composed(child_name)
+                composed = CompositeScenario(
+                    name=f"Composition: {node_name} -> {child_name}",
+                    scenario_a=child_scenario,
+                    scenario_b=composed,
+                    dependency=CompositeDependency.A_ON_B
+                )
+            return composed
 
-        # We'll return the first root, potentially composed with others
-        # In this first version, we'll just handle linear chains
-        # Recipe DSL V1: Linear chain
-        current_scenario = scenario_map[steps[0]["name"]]
-        for i in range(1, len(steps)):
-            next_step = steps[i]
-            next_scenario = scenario_map[next_step["name"]]
-
-            # Create composite: Next depends on Current
-            current_scenario = CompositeScenario(
-                name=f"{recipe.get('name')} - Step {i + 1}",
-                scenario_a=next_scenario,
-                scenario_b=current_scenario,
-                dependency=CompositeDependency.A_ON_B,
-            )
-
-        return current_scenario
+        # We return the first root (supporting multiple roots would require a top-level container)
+        return build_composed(roots[0])

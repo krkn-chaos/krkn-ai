@@ -72,7 +72,7 @@ class TestConfigFile:
             namespaces=[Namespace(name="test-ns")], nodes=[Node(name="test-node")]
         )
         fitness = FitnessFunction(
-            query="up{job='test'}",
+            query="avg_over_time(up{job='test'}[$range$])",
             type=FitnessFunctionType.range,
             include_krkn_failure=False,
         )
@@ -134,19 +134,53 @@ class TestFitnessFunction:
         fitness_items = FitnessFunction(
             items=[
                 FitnessFunctionItem(
-                    query="cpu_usage", type=FitnessFunctionType.range, weight=0.5
+                    query="cpu_usage[$range$]",
+                    type=FitnessFunctionType.range,
+                    weight=0.5,
                 ),
                 FitnessFunctionItem(query="memory_usage", weight=0.3),
             ]
         )
         assert len(fitness_items.items) == 2
-        assert fitness_items.items[0].query == "cpu_usage"
+        assert fitness_items.items[0].query == "cpu_usage[$range$]"
         assert fitness_items.items[0].weight == 0.5
 
     def test_fitness_function_requires_query_or_items(self):
         """Test that FitnessFunction requires at least query or items"""
         with pytest.raises(ValidationError, match="at least one fitness function"):
             FitnessFunction()
+
+    def test_range_fitness_function_requires_range_token(self):
+        """Test range fitness query must declare the dynamic range placeholder"""
+        with pytest.raises(ValidationError, match=r"\$range\$"):
+            FitnessFunction(
+                query="max_over_time(container_cpu_usage_seconds_total[5m])",
+                type=FitnessFunctionType.range,
+            )
+
+    def test_range_fitness_function_item_requires_range_token(self):
+        """Test range fitness items must declare the dynamic range placeholder"""
+        with pytest.raises(ValidationError, match=r"\$range\$"):
+            FitnessFunctionItem(
+                query="max_over_time(container_cpu_usage_seconds_total[5m])",
+                type=FitnessFunctionType.range,
+            )
+
+    def test_point_fitness_function_rejects_range_token(self):
+        """Test point fitness query rejects the dynamic range placeholder"""
+        with pytest.raises(ValidationError, match="type is not 'range'"):
+            FitnessFunction(
+                query="max_over_time(container_cpu_usage_seconds_total[$range$])",
+                type=FitnessFunctionType.point,
+            )
+
+    def test_point_fitness_function_item_rejects_range_token(self):
+        """Test point fitness items reject the dynamic range placeholder"""
+        with pytest.raises(ValidationError, match="type is not 'range'"):
+            FitnessFunctionItem(
+                query="max_over_time(container_cpu_usage_seconds_total[$range$])",
+                type=FitnessFunctionType.point,
+            )
 
     def test_fitness_function_item_weight_validation(self):
         """Test FitnessFunctionItem weight must be between 0 and 1"""

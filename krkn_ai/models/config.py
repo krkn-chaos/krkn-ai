@@ -121,6 +121,18 @@ class SelectionStrategy(str, Enum):
 auto_id = id_generator()
 
 
+def _validate_fitness_query_range_token(
+    query: str, fitness_type: FitnessFunctionType
+) -> None:
+    if fitness_type == FitnessFunctionType.range and "$range$" not in query:
+        raise ValueError("Range fitness functions must include '$range$' in query.")
+    if fitness_type != FitnessFunctionType.range and "$range$" in query:
+        raise ValueError(
+            "Fitness query includes '$range$' but type is not 'range'. "
+            "Set type to 'range' or remove '$range$'."
+        )
+
+
 class FitnessFunctionItem(BaseModel):
     id: int = Field(default_factory=lambda: next(auto_id))  # Auto-increment ID
     query: str  # PromQL
@@ -133,6 +145,11 @@ class FitnessFunctionItem(BaseModel):
         if value < 0 or value > 1:
             raise ValueError(f"{value} is outside the range [0.0, 1.0]")
         return value
+
+    @model_validator(mode="after")
+    def check_range_query_has_range_token(self):
+        _validate_fitness_query_range_token(self.query, self.type)
+        return self
 
 
 class FitnessFunction(BaseModel):
@@ -150,6 +167,8 @@ class FitnessFunction(BaseModel):
             raise ValueError(
                 "Please define at least one fitness function in query or items."
             )
+        if self.query is not None:
+            _validate_fitness_query_range_token(self.query, self.type)
         return self
 
 

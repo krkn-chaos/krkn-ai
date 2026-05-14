@@ -85,6 +85,16 @@ class TestGeneticAlgorithmCoreMethods:
 
     def test_save_method_calls_reporters(self, genetic_algorithm):
         """Test save method calls all reporters"""
+        genetic_algorithm.completed_generations = 0
+        genetic_algorithm.seed = None
+        genetic_algorithm.config.seed = 123
+        genetic_algorithm.best_of_generation = [Mock(), Mock()]
+        genetic_algorithm.seen_population = {Mock(): Mock()}
+
+        from krkn_ai.utils.rng import rng
+
+        rng.set_seed(genetic_algorithm.config.seed)
+
         with patch.object(
             genetic_algorithm.generations_reporter, "save_best_generations"
         ) as mock_save_gen:
@@ -103,8 +113,6 @@ class TestGeneticAlgorithmCoreMethods:
                         ) as mock_summary_reporter:
                             mock_reporter_instance = Mock()
                             mock_summary_reporter.return_value = mock_reporter_instance
-                            genetic_algorithm.best_of_generation = [Mock()]
-                            genetic_algorithm.seen_population = {Mock(): Mock()}
                             genetic_algorithm.save()
 
                             # Verify all reporter methods are called
@@ -112,5 +120,8 @@ class TestGeneticAlgorithmCoreMethods:
                             assert mock_graph.called
                             assert mock_save_report.called
                             assert mock_sort.called
-                            assert mock_summary_reporter.called
+                            assert mock_summary_reporter.call_args.kwargs[
+                                "completed_generations"
+                            ] == 2
+                            assert mock_summary_reporter.call_args.kwargs["seed"] == 123
                             assert mock_reporter_instance.save.called

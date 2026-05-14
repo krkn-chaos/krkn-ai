@@ -759,6 +759,9 @@ class GeneticAlgorithm:
 
     def save(self):
         """Save run results"""
+        self.completed_generations = len(self.best_of_generation)
+        self.seed = rng.get_seed()
+
         self.generations_reporter.save_best_generations(self.best_of_generation)
         self.generations_reporter.save_best_generation_graph(self.best_of_generation)
         self.health_check_reporter.save_report(self.seen_population.values())

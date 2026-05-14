@@ -547,10 +547,7 @@ class GeneticAlgorithm:
             logger.error("Failed to run scenario %s: %s", scenario, e)
             now = datetime.datetime.now()
             # Return a highly penalized result so it gets tracked and eventually discarded by the genetic algorithm properly
-            fitness_result = FitnessResult(
-                fitness_score=-1.0,
-                krkn_failure_score=-1.0
-            )
+            fitness_result = FitnessResult(fitness_score=-1.0, krkn_failure_score=-1.0)
             scenario_result = CommandRunResult(
                 generation_id=generation_id,
                 scenario=scenario,
@@ -560,7 +557,7 @@ class GeneticAlgorithm:
                 start_time=now,
                 end_time=now,
                 duration_seconds=0.0,
-                fitness_result=fitness_result
+                fitness_result=fitness_result,
             )
 
         # Add scenario to seen population

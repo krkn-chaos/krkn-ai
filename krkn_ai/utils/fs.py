@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import yaml
 from typing import Union, List, Dict
 
@@ -9,14 +10,14 @@ from krkn_ai.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_PARAM_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
 def preprocess_param_string(data: str, params: dict) -> str:
     """
     Preprocess the health check url to replace the parameters with the values.
     """
-    data = str(data)
-    for k, v in params.items():
-        data = data.replace(f"${k}", v)
-    return data
+    return _PARAM_RE.sub(lambda m: params.get(m.group(1), m.group(0)), str(data))
 
 
 def read_config_from_file(

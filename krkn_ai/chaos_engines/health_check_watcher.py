@@ -39,14 +39,34 @@ class HealthCheckWatcher:
         self._threads: List[threading.Thread] = []
         # Each thread stores results in its own list - ZERO contention!
         self._thread_results: Dict[int, Tuple[str, List[HealthCheckResult]]] = {}
+        self._started = False
+
+    def __enter__(self):
+        """Context manager entry"""
+        self.run()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensures cleanup"""
+        self.stop()
+        return False
 
     def run(self):
+        if self._started:
+            logger.warning("Health check watcher already started")
+            return
+
+        self._started = True
         # Start a thread for each health check
         logger.debug(
             f"Starting health check watcher for {len(self.config.applications)} applications"
         )
         for health_check in self.config.applications:
-            t = threading.Thread(target=self.run_health_check, args=(health_check,))
+            t = threading.Thread(
+                target=self.run_health_check,
+                args=(health_check,),
+                daemon=False  # Ensure proper cleanup
+            )
             t.start()
             self._threads.append(t)
 
@@ -58,7 +78,8 @@ class HealthCheckWatcher:
         # Each thread gets its own private results list
         thread_id = threading.current_thread().ident
         if thread_id is None:
-            return  # Skip if thread ID is None (should not happen in normal operation)
+            logger.warning("Thread ID is None, cannot track health check thread")
+            return
         thread_results: List[HealthCheckResult] = []
         self._thread_results[thread_id] = (health_check.url, thread_results)
 
@@ -99,10 +120,20 @@ class HealthCheckWatcher:
             time.sleep(health_check.interval)
 
     def stop(self):
+        if not self._started:
+            return
+
         logger.debug("Stopping health check watcher")
         self._stop_event.set()
+
+        # Wait for all threads with timeout
         for t in self._threads:
-            t.join()
+            t.join(timeout=5)
+            if t.is_alive():
+                logger.warning("Health check thread did not terminate gracefully")
+
+        self._started = False
+        self._threads.clear()
 
     def get_results(self) -> Dict[str, List[HealthCheckResult]]:
         """Aggregate results from all threads - called after threads complete"""

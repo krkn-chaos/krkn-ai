@@ -117,50 +117,47 @@ class KrknRunner:
         else:
             raise NotImplementedError("Scenario unable to run")
 
-        health_check_watcher = HealthCheckWatcher(
-            self.config.health_checks, self.config.parameters
-        )
-
         # Run command and fetch result
         if env_is_truthy("MOCK_RUN"):
             # Used for running mock tests
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
+            health_check_results = {}
         else:
-            try:
-                # Start watching application urls for health checks
-                health_check_watcher.run()
-
-                # Run command (show logs when verbose mode is enabled)
-                log, returncode = run_shell(
-                    self.process_es_env_string(command, True),
-                    do_not_log=not is_verbose(),
-                )
-
-                # Extract return code from run log which is part of telemetry data present in the log
-                if isinstance(scenario, CompositeScenario):
-                    # Use the return-code from the shell command for composite scenario
-                    pass
-                else:
-                    returncode, run_uuid = self.__extract_returncode_from_run(
-                        log, returncode
+            # Use context manager for health check watcher to ensure cleanup
+            with HealthCheckWatcher(
+                self.config.health_checks, self.config.parameters
+            ) as health_check_watcher:
+                try:
+                    # Run command (show logs when verbose mode is enabled)
+                    log, returncode = run_shell(
+                        self.process_es_env_string(command, True),
+                        do_not_log=not is_verbose(),
                     )
-                logger.info("Krkn scenario return code: %d", returncode)
 
-            finally:
-                # Stop watching application urls for health checks
-                health_check_watcher.stop()
-                # Cleanup temp files after scenario execution
-                if isinstance(scenario, CompositeScenario):
-                    self._cleanup_temp_files()
+                    # Extract return code from run log which is part of telemetry data present in the log
+                    if isinstance(scenario, CompositeScenario):
+                        # Use the return-code from the shell command for composite scenario
+                        pass
+                    else:
+                        returncode, run_uuid = self.__extract_returncode_from_run(
+                            log, returncode
+                        )
+                    logger.info("Krkn scenario return code: %d", returncode)
+
+                finally:
+                    # Cleanup temp files after scenario execution
+                    if isinstance(scenario, CompositeScenario):
+                        self._cleanup_temp_files()
+
+                # Get health check results after watcher stops
+                health_check_results = health_check_watcher.get_results()
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start
 
         # calculate fitness scores
         fitness_result: FitnessResult = FitnessResult()
-
-        health_check_results = health_check_watcher.get_results()
 
         # Check if krkn scenario failed due to misconfiguration (non-zero and not status code 2)
         # Status code 2 means that SLOs not met per Krkn test (valid failure)

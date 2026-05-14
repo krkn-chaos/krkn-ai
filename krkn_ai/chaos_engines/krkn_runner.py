@@ -3,7 +3,7 @@ import json
 import datetime
 import tempfile
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -118,12 +118,13 @@ class KrknRunner:
         else:
             raise NotImplementedError("Scenario unable to run")
 
+        health_check_results = {}
+
         # Run command and fetch result
         if env_is_truthy("MOCK_RUN"):
             # Used for running mock tests
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
-            health_check_results = {}
         else:
             # Use context manager for health check watcher to ensure cleanup
             with HealthCheckWatcher(
@@ -198,12 +199,12 @@ class KrknRunner:
 
             # Include health check failure and response time to the fitness score
             if self.config.fitness_function.include_health_check_failure:
-                fitness_result.health_check_failure_score = (
-                    health_check_watcher.summarize_success_rate(health_check_results)
+                fitness_result.health_check_failure_score = self._calculate_health_check_failure_score(
+                    health_check_results
                 )
             if self.config.fitness_function.include_health_check_response_time:
-                fitness_result.health_check_response_time_score = (
-                    health_check_watcher.summarize_response_time(health_check_results)
+                fitness_result.health_check_response_time_score = self._calculate_health_check_response_time_score(
+                    health_check_results
                 )
 
             # Calculate overall fitness score
@@ -636,3 +637,31 @@ class KrknRunner:
         except Exception as e:
             logger.error("Failed to extract return code from run log: %s", e)
             return default_returncode, None
+
+    def _calculate_health_check_failure_score(
+        self, health_check_results: Dict[str, List]
+    ) -> float:
+        """Calculate health check failure score from results"""
+        if not health_check_results:
+            return 0.0
+
+        # Import here to avoid circular dependency
+        from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
+
+        # Use static method approach
+        watcher = HealthCheckWatcher(self.config.health_checks, self.config.parameters)
+        return watcher.summarize_success_rate(health_check_results)
+
+    def _calculate_health_check_response_time_score(
+        self, health_check_results: Dict[str, List]
+    ) -> float:
+        """Calculate health check response time score from results"""
+        if not health_check_results:
+            return 0.0
+
+        # Import here to avoid circular dependency
+        from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
+
+        # Use static method approach
+        watcher = HealthCheckWatcher(self.config.health_checks, self.config.parameters)
+        return watcher.summarize_response_time(health_check_results)

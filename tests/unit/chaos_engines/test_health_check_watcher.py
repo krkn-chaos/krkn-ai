@@ -52,10 +52,15 @@ class TestHealthCheckWatcherRunAndStop:
         assert len(watcher._threads) == 1
         assert watcher._threads[0].is_alive()
 
+        # Store thread reference before stop clears the list
+        thread = watcher._threads[0]
+
         # Stop and wait for thread to finish
         watcher.stop()
-        watcher._threads[0].join(timeout=1.0)
-        assert not watcher._threads[0].is_alive()
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+        # Verify threads list was cleared
+        assert len(watcher._threads) == 0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_stop_terminates_all_threads(self, mock_get):

@@ -17,6 +17,9 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
         # Setup mocks
         mock_watcher = MagicMock()
         mock_watcher_cls.return_value = mock_watcher
+        # Make the mock work as a context manager
+        mock_watcher.__enter__ = MagicMock(return_value=mock_watcher)
+        mock_watcher.__exit__ = MagicMock(return_value=False)
 
         # Configure run_shell to return success by default (for init checks)
         mock_run_shell.return_value = ("output", 0)
@@ -56,14 +59,14 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
                 print(f"[INFO] Caught expected exception: {e}")
 
         # Verification
-        print("[VERIFY] Checking if HealthCheckWatcher.stop() was called...")
+        print("[VERIFY] Checking if HealthCheckWatcher.__exit__() was called...")
 
-        # Assert that stop was called
-        mock_watcher.stop.assert_called_once()
-        print("[SUCCESS] stop() WAS called. Thread leak prevented.")
+        # Assert that __exit__ was called (context manager cleanup)
+        mock_watcher.__exit__.assert_called_once()
+        print("[SUCCESS] __exit__() WAS called. Thread leak prevented via context manager.")
 
-        # Verify run() was also called
-        mock_watcher.run.assert_called()
+        # Verify __enter__ was also called
+        mock_watcher.__enter__.assert_called()
 
 
 if __name__ == "__main__":

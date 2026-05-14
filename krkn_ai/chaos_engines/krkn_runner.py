@@ -550,10 +550,9 @@ class KrknRunner:
                 logger.warning("Could not find 'Chaos data:' in log")
                 return default_returncode, None
 
-
             # JSON Decoding
             decoder = json.JSONDecoder()
-            chaos_data_text = log[marker_idx + len(marker):]
+            chaos_data_text = log[marker_idx + len(marker) :]
             search_idx = 0
 
             while True:
@@ -584,13 +583,12 @@ class KrknRunner:
                     logger.debug("Extracted exit_status: %s", exit_status)
                     logger.debug("Extracted run_uuid: %s", run_uuid)
                     return exit_status, run_uuid
-             
+
             logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None 
-            
+            return default_returncode, None
+
             # Extract exit_status from first scenario
             scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-            
 
         except Exception as e:
             logger.error("Failed to extract return code from run log: %s", e)

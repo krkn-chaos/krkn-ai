@@ -150,9 +150,7 @@ class TestKrknRunnerReturnCodeExtraction:
 
     def extract_returncode(self, log, default_returncode=0):
         runner = KrknRunner.__new__(KrknRunner)
-        return runner._KrknRunner__extract_returncode_from_run(
-            log, default_returncode
-        )
+        return runner._KrknRunner__extract_returncode_from_run(log, default_returncode)
 
     def test_extract_returncode_from_multiline_telemetry(self):
         log = """

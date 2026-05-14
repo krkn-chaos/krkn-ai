@@ -4,6 +4,8 @@ Handles sending run results, fitness scores, and genetic algorithm data to Elast
 """
 
 import logging
+import threading
+from typing import Dict, Optional
 from krkn_ai.models.config import ElasticConfig
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import ConfigFile
@@ -16,12 +18,16 @@ logger = get_logger(__name__)
 
 class ElasticSearchClient:
     """
-    Client for sending Krkn-AI data to Elasticsearch.
+    Client for sending Krkn-AI data to Elasticsearch with connection pooling.
     """
+
+    # Class-level connection pool (shared across instances)
+    _connection_pool: Dict[str, KrknElastic] = {}
+    _pool_lock = threading.Lock()
 
     def __init__(self, config: ElasticConfig):
         """
-        Initialize Elasticsearch client.
+        Initialize Elasticsearch client with connection pooling.
 
         Args:
             config: Elasticsearch configuration
@@ -34,27 +40,47 @@ class ElasticSearchClient:
 
         self.client = None
         if self.config.enable:
-            try:
-                self.client = KrknElastic(
-                    safe_logger=null_logger,
-                    elastic_url=self.config.server,
-                    elastic_port=self.config.port,
-                    username=self.config.username,
-                    password=self.config.password,
-                    verify_certs=self.config.verify_certs,
-                )
-                self.__test_connection()
-                logger.info(
-                    "Elasticsearch client initialized: %s:%s",
-                    self.config.server,
-                    self.config.port,
-                )
-            except Exception as e:
-                logger.error("Failed to initialize Elasticsearch client: %s", e)
-                logger.warning("Skipping Elasticsearch indexing")
-                self.client = None
+            # Create pool key from connection parameters
+            pool_key = f"{self.config.server}:{self.config.port}:{self.config.username}"
+
+            with self._pool_lock:
+                # Reuse existing connection if available
+                if pool_key in self._connection_pool:
+                    self.client = self._connection_pool[pool_key]
+                    logger.debug("Reusing existing Elasticsearch connection: %s", pool_key)
+                else:
+                    # Create new connection and add to pool
+                    try:
+                        self.client = KrknElastic(
+                            safe_logger=null_logger,
+                            elastic_url=self.config.server,
+                            elastic_port=self.config.port,
+                            username=self.config.username,
+                            password=self.config.password,
+                            verify_certs=self.config.verify_certs,
+                        )
+                        self.__test_connection()
+
+                        # Add to pool
+                        self._connection_pool[pool_key] = self.client
+                        logger.info(
+                            "Elasticsearch client initialized and pooled: %s:%s",
+                            self.config.server,
+                            self.config.port,
+                        )
+                    except Exception as e:
+                        logger.error("Failed to initialize Elasticsearch client: %s", e)
+                        logger.warning("Skipping Elasticsearch indexing")
+                        self.client = None
         else:
             logger.info("Elasticsearch indexing is disabled")
+
+    @classmethod
+    def clear_connection_pool(cls):
+        """Clear the connection pool (useful for testing or cleanup)"""
+        with cls._pool_lock:
+            cls._connection_pool.clear()
+            logger.debug("Elasticsearch connection pool cleared")
 
     def __test_connection(self) -> bool:
         if self.client is None:

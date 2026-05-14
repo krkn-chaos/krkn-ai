@@ -5,7 +5,7 @@ Handles sending run results, fitness scores, and genetic algorithm data to Elast
 
 import logging
 import threading
-from typing import Dict, Optional
+from typing import Dict
 from krkn_ai.models.config import ElasticConfig
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import ConfigFile
@@ -47,7 +47,9 @@ class ElasticSearchClient:
                 # Reuse existing connection if available
                 if pool_key in self._connection_pool:
                     self.client = self._connection_pool[pool_key]
-                    logger.debug("Reusing existing Elasticsearch connection: %s", pool_key)
+                    logger.debug(
+                        "Reusing existing Elasticsearch connection: %s", pool_key
+                    )
                 else:
                     # Create new connection and add to pool
                     try:

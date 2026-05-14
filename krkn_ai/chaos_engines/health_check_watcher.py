@@ -65,7 +65,7 @@ class HealthCheckWatcher:
             t = threading.Thread(
                 target=self.run_health_check,
                 args=(health_check,),
-                daemon=False  # Ensure proper cleanup
+                daemon=False,  # Ensure proper cleanup
             )
             t.start()
             self._threads.append(t)

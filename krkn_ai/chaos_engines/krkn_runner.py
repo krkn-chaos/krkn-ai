@@ -53,7 +53,7 @@ class KrknRunner:
         self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
         self.prom_rate_limiter = PrometheusRateLimiter(max_queries_per_second=5.0)
         self.output_dir = output_dir
-        self._temp_files = []  # Track temporary files for cleanup
+        self._temp_files: List[str] = []  # Track temporary files for cleanup
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()
         else:
@@ -199,12 +199,14 @@ class KrknRunner:
 
             # Include health check failure and response time to the fitness score
             if self.config.fitness_function.include_health_check_failure:
-                fitness_result.health_check_failure_score = self._calculate_health_check_failure_score(
-                    health_check_results
+                fitness_result.health_check_failure_score = (
+                    self._calculate_health_check_failure_score(health_check_results)
                 )
             if self.config.fitness_function.include_health_check_response_time:
-                fitness_result.health_check_response_time_score = self._calculate_health_check_response_time_score(
-                    health_check_results
+                fitness_result.health_check_response_time_score = (
+                    self._calculate_health_check_response_time_score(
+                        health_check_results
+                    )
                 )
 
             # Calculate overall fitness score
@@ -312,7 +314,7 @@ class KrknRunner:
         ) as f:
             json_file = f.name
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
-        
+
         # Track file for cleanup
         self._temp_files.append(json_file)
         logger.info("Created scenario json in path: %s", json_file)
@@ -472,13 +474,13 @@ class KrknRunner:
         Helpful to measure values for counter based metric like restarts.
         """
         logger.debug("Calculating Point Fitness")
-        
+
         # Rate limit before first query
         self.prom_rate_limiter.wait_if_needed()
         result_at_beginning = self._query_prometheus_single_point(
             query, start, "point fitness (start)"
         )
-        
+
         # Rate limit before second query
         self.prom_rate_limiter.wait_if_needed()
         result_at_end = self._query_prometheus_single_point(

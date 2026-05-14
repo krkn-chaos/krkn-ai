@@ -63,7 +63,9 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
 
         # Assert that __exit__ was called (context manager cleanup)
         mock_watcher.__exit__.assert_called_once()
-        print("[SUCCESS] __exit__() WAS called. Thread leak prevented via context manager.")
+        print(
+            "[SUCCESS] __exit__() WAS called. Thread leak prevented via context manager."
+        )
 
         # Verify __enter__ was also called
         mock_watcher.__enter__.assert_called()

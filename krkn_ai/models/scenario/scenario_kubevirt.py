@@ -12,7 +12,7 @@ from typing import List, Tuple
 
 
 class KubevirtDisruptionScenario(Scenario):
-    name: str = "kubevirt-outage"
+    name: str = "kubevirt-scenarios"
     krknctl_name: str = "kubevirt-outage"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:kubevirt-outage"
 

@@ -16,6 +16,7 @@ from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
+from krkn_ai.models.scenario.scenario_kubevirt import KubevirtDisruptionScenario
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -324,3 +325,28 @@ class TestPVCScenario:
 
         with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
             PVCScenario(cluster_components=cluster)
+
+
+class TestKubevirtDisruptionScenario:
+    """Test KubevirtDisruptionScenario class"""
+
+    def test_kubevirt_scenario_initialization_with_vms(self):
+        """Test that KubevirtDisruptionScenario initializes when VMIs exist"""
+        from krkn_ai.models.cluster_components import VMI
+
+        vmi = VMI(name="test-vm")
+        namespace = Namespace(name="test-ns", vmis=[vmi])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = KubevirtDisruptionScenario(cluster_components=cluster)
+        assert scenario.name == "kubevirt-scenarios"
+        assert scenario.namespace.value == "test-ns"
+        assert scenario.vm_name.value == "test-vm"
+
+    def test_kubevirt_scenario_raises_error_when_no_vms(self):
+        """Test that KubevirtDisruptionScenario raises error when no VMIs found"""
+        namespace = Namespace(name="test-ns", vmis=[])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No VMS found"):
+            KubevirtDisruptionScenario(cluster_components=cluster)

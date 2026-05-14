@@ -243,6 +243,19 @@ class ClusterManager:
                 "Discovered %d PVCs in namespace %s", len(pvc_list), namespace.name
             )
             return pvc_list
+        except ApiException as e:
+            if e.status == 403:
+                logger.warning(
+                    "RBAC denied listing PVCs in namespace %s, skipping",
+                    namespace.name,
+                )
+            else:
+                logger.warning(
+                    "Failed to list PVCs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
         except Exception as e:
             logger.warning(
                 "Failed to list PVCs in namespace %s: %s", namespace.name, str(e)
@@ -288,17 +301,23 @@ class ClusterManager:
                     "KubeVirt CRDs not installed, skipping VMI discovery in namespace %s",
                     namespace.name,
                 )
-                return []
-            if e.status == 403:
-                logger.error(
-                    "RBAC denied listing virtualmachineinstances in namespace %s. "
-                    "Grant kubevirt.io list permission to the ServiceAccount or use --skip-vmi.",
+            elif e.status == 403:
+                logger.warning(
+                    "RBAC denied listing virtualmachineinstances in namespace %s, skipping. "
+                    "Grant kubevirt.io list permission to the ServiceAccount.",
                     namespace.name,
                 )
-                raise
-            raise
-        except Exception:
-            logger.warning("Unable to find VMIs in namespace %s", namespace.name)
+            else:
+                logger.warning(
+                    "Failed to list VMIs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
+        except Exception as e:
+            logger.warning(
+                "Failed to list VMIs in namespace %s: %s", namespace.name, str(e)
+            )
             return []
 
     def list_nodes(

@@ -24,7 +24,7 @@ from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger, is_verbose
-from krkn_ai.utils.prometheus import create_prometheus_client
+from krkn_ai.utils.prometheus import create_prometheus_client, PrometheusRateLimiter
 from krkn_ai.utils.rng import rng
 
 logger = get_logger(__name__)
@@ -51,6 +51,7 @@ class KrknRunner:
     ):
         self.config = config
         self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
+        self.prom_rate_limiter = PrometheusRateLimiter(max_queries_per_second=5.0)
         self.output_dir = output_dir
         self._temp_files = []  # Track temporary files for cleanup
         if runner_type is None:
@@ -470,9 +471,15 @@ class KrknRunner:
         Helpful to measure values for counter based metric like restarts.
         """
         logger.debug("Calculating Point Fitness")
+        
+        # Rate limit before first query
+        self.prom_rate_limiter.wait_if_needed()
         result_at_beginning = self._query_prometheus_single_point(
             query, start, "point fitness (start)"
         )
+        
+        # Rate limit before second query
+        self.prom_rate_limiter.wait_if_needed()
         result_at_end = self._query_prometheus_single_point(
             query, end, "point fitness (end)"
         )
@@ -538,6 +545,8 @@ class KrknRunner:
                 "You are missing $range$ in config.fitness_function.query to specify dynamic range. Fitness function will use specified range"
             )
 
+        # Rate limit before query
+        self.prom_rate_limiter.wait_if_needed()
         result = self.prom_client.process_prom_query_in_range(
             query,
             start_time=start,

@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.fs import env_is_truthy
@@ -6,6 +8,29 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 logger = get_logger(__name__)
+
+
+class PrometheusRateLimiter:
+    """Rate limiter for Prometheus queries to prevent overwhelming the service"""
+
+    def __init__(self, max_queries_per_second: float = 5.0):
+        self.max_qps = max_queries_per_second
+        self.min_interval = 1.0 / max_queries_per_second
+        self.last_query_time = 0.0
+        self.lock = threading.Lock()
+
+    def wait_if_needed(self):
+        """Block if necessary to maintain rate limit"""
+        with self.lock:
+            now = time.time()
+            time_since_last = now - self.last_query_time
+
+            if time_since_last < self.min_interval:
+                sleep_time = self.min_interval - time_since_last
+                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
+                time.sleep(sleep_time)
+
+            self.last_query_time = time.time()
 
 
 def is_openshift(kubeconfig: str) -> bool:

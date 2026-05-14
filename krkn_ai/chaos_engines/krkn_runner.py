@@ -29,8 +29,6 @@ from krkn_ai.utils.rng import rng
 
 logger = get_logger(__name__)
 
-# TODO: Cleanup of temp kubeconfig after running the script
-
 PODMAN_TEMPLATE = 'podman run -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
 
 PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER="{server}" -e ES_PORT="{port}" -e ES_USERNAME="{username}" -e ES_PASSWORD="{password}" -e ES_VERIFY_CERTS="{verify_certs}" '
@@ -54,11 +52,27 @@ class KrknRunner:
         self.config = config
         self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
         self.output_dir = output_dir
+        self._temp_files = []  # Track temporary files for cleanup
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
+
+    def __del__(self):
+        """Cleanup temporary files on destruction"""
+        self._cleanup_temp_files()
+
+    def _cleanup_temp_files(self):
+        """Remove all tracked temporary files"""
+        for temp_file in self._temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.unlink(temp_file)
+                    logger.debug("Cleaned up temporary file: %s", temp_file)
+            except Exception as e:
+                logger.warning("Failed to cleanup temp file %s: %s", temp_file, e)
+        self._temp_files.clear()
 
     def __check_runner_availability(self):
         # Check if krknctl is available
@@ -136,6 +150,9 @@ class KrknRunner:
             finally:
                 # Stop watching application urls for health checks
                 health_check_watcher.stop()
+                # Cleanup temp files after scenario execution
+                if isinstance(scenario, CompositeScenario):
+                    self._cleanup_temp_files()
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start
@@ -296,6 +313,9 @@ class KrknRunner:
         ) as f:
             json_file = f.name
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
+        
+        # Track file for cleanup
+        self._temp_files.append(json_file)
         logger.info("Created scenario json in path: %s", json_file)
 
         # Run Json graph

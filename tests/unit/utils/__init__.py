@@ -1,3 +1,1 @@
-"""
-Unit tests for utils module
-"""
+# package marker

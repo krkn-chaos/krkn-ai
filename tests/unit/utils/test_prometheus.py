@@ -155,8 +155,8 @@ class TestPrometheusRateLimiter:
         with pytest.raises(ValueError, match="strictly positive"):
             PrometheusRateLimiter(-5.0)
 
-    @patch("time.sleep")
-    @patch("time.time")
+    @patch("krkn_ai.utils.prometheus.time.sleep")
+    @patch("krkn_ai.utils.prometheus.time.time")
     def test_wait_if_needed(self, mock_time, mock_sleep):
         """Should wait if time since last query is less than interval."""
         from krkn_ai.utils.prometheus import PrometheusRateLimiter

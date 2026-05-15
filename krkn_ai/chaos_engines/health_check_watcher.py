@@ -126,11 +126,9 @@ class HealthCheckWatcher:
         logger.debug("Stopping health check watcher")
         self._stop_event.set()
 
-        # Wait for all threads with timeout
+        # Wait for all threads to terminate
         for t in self._threads:
-            t.join(timeout=5)
-            if t.is_alive():
-                logger.warning("Health check thread did not terminate gracefully")
+            t.join()
 
         self._started = False
         self._threads.clear()

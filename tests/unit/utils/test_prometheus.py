@@ -141,3 +141,39 @@ class TestPrometheusUtils:
             create_prometheus_client("/tmp/test-kubeconfig")
             args, _ = mock_prom_class.call_args
             assert args[0] == "https://my-prom"
+
+
+class TestPrometheusRateLimiter:
+    """Tests for PrometheusRateLimiter."""
+
+    def test_invalid_max_queries_per_second(self):
+        """Should raise ValueError if max_queries_per_second <= 0."""
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        with pytest.raises(ValueError, match="strictly positive"):
+            PrometheusRateLimiter(0.0)
+        with pytest.raises(ValueError, match="strictly positive"):
+            PrometheusRateLimiter(-5.0)
+
+    @patch("time.sleep")
+    @patch("time.time")
+    def test_wait_if_needed(self, mock_time, mock_sleep):
+        """Should wait if time since last query is less than interval."""
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        # QPS = 2 means 0.5s interval
+        limiter = PrometheusRateLimiter(2.0)
+
+        # First query: time is 10.0, last_query_time is 0 -> waits 0
+        mock_time.return_value = 10.0
+        limiter.wait_if_needed()
+        mock_sleep.assert_not_called()
+        assert limiter.last_query_time == 10.0
+
+        # Second query: time is 10.2 -> time since last query is 0.2
+        # Interval is 0.5 -> needs to wait 0.3s
+        mock_time.return_value = 10.2
+        limiter.wait_if_needed()
+        assert mock_sleep.call_count == 1
+        assert mock_sleep.call_args[0][0] == pytest.approx(0.3)
+        assert limiter.last_query_time == 10.2

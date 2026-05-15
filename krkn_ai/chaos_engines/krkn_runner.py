@@ -125,6 +125,8 @@ class KrknRunner:
             # Used for running mock tests
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
+            if isinstance(scenario, CompositeScenario):
+                self._cleanup_temp_files()
         else:
             # Use context manager for health check watcher to ensure cleanup
             with HealthCheckWatcher(
@@ -152,8 +154,8 @@ class KrknRunner:
                     if isinstance(scenario, CompositeScenario):
                         self._cleanup_temp_files()
 
-                # Get health check results after watcher stops
-                health_check_results = health_check_watcher.get_results()
+            # Get health check results after watcher stops (outside the with block)
+            health_check_results = health_check_watcher.get_results()
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start

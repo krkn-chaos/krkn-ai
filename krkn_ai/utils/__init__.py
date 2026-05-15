@@ -54,6 +54,8 @@ def run_shell(command, do_not_log=False, timeout=None):
             process.kill()
             process.wait()
         reader.join(timeout=5)
+        if process.stdout:
+            process.stdout.close()
         raise ShellCommandTimeoutError(
             f"Command '{command[0]}' timed out after {timeout} seconds"
         )

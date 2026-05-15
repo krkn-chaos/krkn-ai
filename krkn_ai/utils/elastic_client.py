@@ -40,8 +40,8 @@ class ElasticSearchClient:
 
         self.client = None
         if self.config.enable:
-            # Create pool key from connection parameters
-            pool_key = f"{self.config.server}:{self.config.port}:{self.config.username}"
+            # Create pool key from connection parameters including TLS verification
+            pool_key = f"{self.config.server}:{self.config.port}:{self.config.username}:{self.config.verify_certs}"
 
             with self._pool_lock:
                 # Reuse existing connection if available

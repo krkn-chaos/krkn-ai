@@ -58,7 +58,7 @@ def run_shell(command, do_not_log=False, timeout=None):
             f"Command '{command[0]}' timed out after {timeout} seconds"
         )
 
-    reader.join(timeout=5)
+    reader.join()
 
     if process.stdout:
         process.stdout.close()

@@ -14,6 +14,8 @@ class PrometheusRateLimiter:
     """Rate limiter for Prometheus queries to prevent overwhelming the service"""
 
     def __init__(self, max_queries_per_second: float = 5.0):
+        if max_queries_per_second <= 0:
+            raise ValueError("max_queries_per_second must be strictly positive")
         self.max_qps = max_queries_per_second
         self.min_interval = 1.0 / max_queries_per_second
         self.last_query_time = 0.0

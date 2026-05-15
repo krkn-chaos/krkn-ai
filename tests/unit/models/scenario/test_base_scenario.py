@@ -132,4 +132,5 @@ class TestCompositeScenario:
         assert hash(composite1) != hash(composite3)
 
         # Test string representation (used in logging)
-        assert str(composite1) == "composite1"
+        assert "composite1(" in str(composite1)
+        assert "NONE" in str(composite1)

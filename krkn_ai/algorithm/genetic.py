@@ -6,9 +6,8 @@ import time
 import uuid
 import threading
 import concurrent.futures
-from typing_extensions import Dict
 import yaml
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any, Dict
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
@@ -43,7 +42,7 @@ class GeneticAlgorithm:
     """
 
     _lock: threading.Lock
-    _inflight: Dict[str, threading.Event]
+    _inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]]
 
     def __init__(
         self,
@@ -93,6 +92,12 @@ class GeneticAlgorithm:
         ] = {}  # Map between scenario and its result
         self.best_of_generation: List[BaseScenario] = []
 
+        # Track run metadata for results summary
+        self.start_time: Optional[datetime.datetime] = None
+        self.end_time: Optional[datetime.datetime] = None
+        self.seed: Optional[int] = self.config.seed
+        self.seeds: List[BaseScenario] = []
+
         self.health_check_reporter = HealthCheckReporter(
             self.output_dir, self.config.output
         )
@@ -110,11 +115,9 @@ class GeneticAlgorithm:
         if self.config.elastic is not None:
             self.elastic_client = ElasticSearchClient(self.config.elastic)
 
-        # Track run metadata for results summary
-        self.start_time: Optional[datetime.datetime] = None
-        self.end_time: Optional[datetime.datetime] = None
-        self.seed: Optional[int] = self.config.seed
-        self.seeds: List[BaseScenario] = []
+        self._lock = threading.Lock()
+        self._inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]] = {}
+
         self._load_seeds()
         self.completed_generations: int = 0
         self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
@@ -601,65 +604,81 @@ class GeneticAlgorithm:
 
         return population
 
-    def calculate_fitness(self, scenario: BaseScenario, generation_id: int) -> float:
+    def calculate_fitness(
+        self, scenario: BaseScenario, generation_id: int
+    ) -> CommandRunResult:
         """
         Calculates fitness score for a scenario.
         Includes a thread-safe 'inflight' check to prevent duplicate executions in parallel mode.
         """
-        scenario_key = str(scenario)
         event = None
+        outcome: Dict[str, Any] = {"exception": None}
 
         with self._lock:
             # 1. Check if already finished
             if scenario in self.seen_population:
                 logger.debug("Scenario already seen, using cached result.")
-                return self.seen_population[scenario].fitness_result.fitness_score
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
 
             # 2. Check if currently in-flight
-            if scenario_key in self._inflight:
+            if scenario in self._inflight:
                 logger.debug("Scenario is in-flight, waiting for result...")
-                event = self._inflight[scenario_key]
+                event, outcome = self._inflight[scenario]
 
         # If in-flight, wait outside the lock
         if event:
             event.wait()
-            with self._lock:
-                return self.seen_population[scenario].fitness_result.fitness_score
+            if outcome["exception"]:
+                raise outcome["exception"]
+            if scenario in self.seen_population:
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
 
-        # 3. If not seen and not in-flight, we are the ones to run it
-        my_event = threading.Event()
+        # We are the execution thread
+        execution_event = threading.Event()
         with self._lock:
             # Double check inside lock
             if scenario in self.seen_population:
-                return self.seen_population[scenario].fitness_result.fitness_score
-            if scenario_key in self._inflight:
-                # Someone else beat us to the 'inflight' registry
-                event = self._inflight[scenario_key]
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
+            if scenario in self._inflight:
+                event, outcome = self._inflight[scenario]
             else:
-                self._inflight[scenario_key] = my_event
+                self._inflight[scenario] = (execution_event, outcome)
                 self.new_scenarios_in_generation += 1
+                event = None  # We remain the execution thread
 
         if event:
             event.wait()
-            with self._lock:
-                return self.seen_population[scenario].fitness_result.fitness_score
+            if outcome["exception"]:
+                raise outcome["exception"]
+            if scenario in self.seen_population:
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
 
         # We are the execution thread
         try:
             result = self.krkn_client.run(scenario, generation_id)
-            fitness_score = result.fitness_result.fitness_score
-
             with self._lock:
                 self.seen_population[scenario] = result
                 # Log to reporters inside lock
+                self.save_scenario_result(result)
                 self.health_check_reporter.write_fitness_result(result)
-
-            return fitness_score
+            return result
+        except Exception as e:
+            logger.error(f"Error executing scenario: {e}")
+            outcome["exception"] = e
+            raise e
         finally:
             with self._lock:
-                if scenario_key in self._inflight:
-                    del self._inflight[scenario_key]
-            my_event.set()
+                if scenario in self._inflight:
+                    del self._inflight[scenario]
+            execution_event.set()
 
     def mutate(self, scenario: BaseScenario):
         if isinstance(scenario, CompositeScenario):

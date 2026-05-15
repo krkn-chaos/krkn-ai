@@ -3,9 +3,15 @@ Unit tests for Prometheus utility functions and client creation logic using Kube
 """
 
 import os
+import threading
+import time
 import pytest
 from unittest.mock import Mock, patch
-from krkn_ai.utils.prometheus import is_openshift, create_prometheus_client
+from krkn_ai.utils.prometheus import (
+    PrometheusRateLimiter,
+    create_prometheus_client,
+    is_openshift,
+)
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 
@@ -148,8 +154,6 @@ class TestPrometheusRateLimiter:
 
     def test_invalid_qps_raises_value_error(self):
         """Should raise ValueError if max_queries_per_second is zero or negative."""
-        from krkn_ai.utils.prometheus import PrometheusRateLimiter
-
         with pytest.raises(ValueError, match="must be positive"):
             PrometheusRateLimiter(max_queries_per_second=0)
 
@@ -158,11 +162,8 @@ class TestPrometheusRateLimiter:
 
     def test_no_sleep_on_first_call(self):
         """First call should never sleep - there is no prior query."""
-        from unittest.mock import patch as mock_patch
-        from krkn_ai.utils.prometheus import PrometheusRateLimiter
-
         limiter = PrometheusRateLimiter(max_queries_per_second=1.0)
-        with mock_patch("time.sleep") as mock_sleep:
+        with patch("time.sleep") as mock_sleep:
             limiter.wait_if_needed()
             mock_sleep.assert_not_called()
 
@@ -173,10 +174,6 @@ class TestPrometheusRateLimiter:
         then sleep concurrently. Total lock-hold time should be a tiny fraction
         of the total elapsed time.
         """
-        import threading
-        import time
-        from krkn_ai.utils.prometheus import PrometheusRateLimiter
-
         limiter = PrometheusRateLimiter(max_queries_per_second=2.0)  # 0.5s interval
 
         acquire_events = []
@@ -206,13 +203,10 @@ class TestPrometheusRateLimiter:
 
     def test_rate_limiter_spaces_calls(self):
         """Calls should be spaced by at least min_interval."""
-        from unittest.mock import patch as mock_patch
-        from krkn_ai.utils.prometheus import PrometheusRateLimiter
-
         limiter = PrometheusRateLimiter(max_queries_per_second=10.0)
         recorded_sleep = []
 
-        with mock_patch("time.sleep", side_effect=lambda s: recorded_sleep.append(s)):
+        with patch("time.sleep", side_effect=lambda s: recorded_sleep.append(s)):
             limiter.wait_if_needed()  # First call - no sleep
             limiter.wait_if_needed()  # Second call - should sleep ~0.1s
 

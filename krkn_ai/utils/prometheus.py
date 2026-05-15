@@ -14,15 +14,24 @@ class PrometheusRateLimiter:
     """Rate limiter for Prometheus queries to prevent overwhelming the service"""
 
     def __init__(self, max_queries_per_second: float = 5.0):
+        if max_queries_per_second <= 0:
+            raise ValueError(
+                f"max_queries_per_second must be positive, got {max_queries_per_second}"
+            )
         self.max_qps = max_queries_per_second
         self.min_interval = 1.0 / max_queries_per_second
         self.last_query_time = 0.0
         self.lock = threading.Lock()
 
     def wait_if_needed(self):
-        """Block if necessary to maintain rate limit"""
+        """Block if necessary to maintain rate limit.
+
+        Calculates the required sleep time inside the lock to avoid
+        thread starvation, then sleeps outside the lock so threads
+        can wait concurrently.
+        """
         with self.lock:
-            now = time.time()
+            now = time.monotonic()
             target_time = max(now, self.last_query_time + self.min_interval)
             self.last_query_time = target_time
             sleep_time = target_time - now

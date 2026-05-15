@@ -141,3 +141,81 @@ class TestPrometheusUtils:
             create_prometheus_client("/tmp/test-kubeconfig")
             args, _ = mock_prom_class.call_args
             assert args[0] == "https://my-prom"
+
+
+class TestPrometheusRateLimiter:
+    """Tests for PrometheusRateLimiter concurrency and correctness."""
+
+    def test_invalid_qps_raises_value_error(self):
+        """Should raise ValueError if max_queries_per_second is zero or negative."""
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        with pytest.raises(ValueError, match="must be positive"):
+            PrometheusRateLimiter(max_queries_per_second=0)
+
+        with pytest.raises(ValueError, match="must be positive"):
+            PrometheusRateLimiter(max_queries_per_second=-1.5)
+
+    def test_no_sleep_on_first_call(self):
+        """First call should never sleep - there is no prior query."""
+        from unittest.mock import patch as mock_patch
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        limiter = PrometheusRateLimiter(max_queries_per_second=1.0)
+        with mock_patch("time.sleep") as mock_sleep:
+            limiter.wait_if_needed()
+            mock_sleep.assert_not_called()
+
+    def test_concurrent_threads_do_not_hold_lock_while_sleeping(self):
+        """
+        Threads must NOT hold the lock while sleeping.
+        All N threads should acquire and release the lock in quick succession,
+        then sleep concurrently. Total lock-hold time should be a tiny fraction
+        of the total elapsed time.
+        """
+        import threading
+        import time
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        limiter = PrometheusRateLimiter(max_queries_per_second=2.0)  # 0.5s interval
+
+        acquire_events = []
+
+        def run():
+            start = time.monotonic()
+            limiter.wait_if_needed()
+            acquire_events.append(time.monotonic() - start)
+
+        threads = [threading.Thread(target=run) for _ in range(5)]
+        wall_start = time.monotonic()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        wall_elapsed = time.monotonic() - wall_start
+
+        # All threads must have completed
+        assert len(acquire_events) == 5
+
+        # With 5 threads and 0.5s min_interval, the 5th slot is at t=2.0s.
+        # Total elapsed should be close to 2.0s (concurrent sleep), not 5*0.5+lock overhead
+        assert wall_elapsed < 4.0, (
+            f"Threads appear to be sleeping while holding the lock. "
+            f"Elapsed: {wall_elapsed:.2f}s (expected ~2.0s)"
+        )
+
+    def test_rate_limiter_spaces_calls(self):
+        """Calls should be spaced by at least min_interval."""
+        from unittest.mock import patch as mock_patch
+        from krkn_ai.utils.prometheus import PrometheusRateLimiter
+
+        limiter = PrometheusRateLimiter(max_queries_per_second=10.0)
+        recorded_sleep = []
+
+        with mock_patch("time.sleep", side_effect=lambda s: recorded_sleep.append(s)):
+            limiter.wait_if_needed()  # First call - no sleep
+            limiter.wait_if_needed()  # Second call - should sleep ~0.1s
+
+        assert len(recorded_sleep) == 1
+        assert recorded_sleep[0] > 0
+        assert recorded_sleep[0] <= 0.1 + 0.01  # Allow tiny tolerance

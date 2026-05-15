@@ -36,7 +36,12 @@ def test_parse_linear_chain():
         "name": "Test Chain",
         "steps": [
             {"name": "Step 1", "type": "pod", "parameters": {"namespace": "test-ns"}},
-            {"name": "Step 2", "type": "network", "depends_on": "Step 1", "parameters": {"duration": 100}},
+            {
+                "name": "Step 2",
+                "type": "network",
+                "depends_on": "Step 1",
+                "parameters": {"duration": 100},
+            },
         ],
     }
 
@@ -108,5 +113,5 @@ def test_parse_with_depends_on():
 
     scenario = parser._build_recipe(recipe)
     assert isinstance(scenario, CompositeScenario)
-    assert scenario.scenario_a.name == "Dependent Network" # S2
-    assert scenario.scenario_b.name == "Root Pod" # S1
+    assert scenario.scenario_a.name == "Dependent Network"  # S2
+    assert scenario.scenario_b.name == "Root Pod"  # S1

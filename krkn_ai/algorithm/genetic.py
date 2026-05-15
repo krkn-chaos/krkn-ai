@@ -42,6 +42,9 @@ class GeneticAlgorithm:
     A class implementing a Genetic Algorithm for scenario optimization.
     """
 
+    _lock: threading.Lock
+    _inflight: Dict[str, threading.Event]
+
     def __init__(
         self,
         config: ConfigFile,
@@ -94,6 +97,14 @@ class GeneticAlgorithm:
             self.output_dir, self.config.output
         )
         self.generations_reporter = GenerationsReporter(self.output_dir, self.format)
+        self.json_summary_reporter = JSONSummaryReporter(
+            self.run_uuid,
+            self.config,
+            self.seen_population,
+            self.best_of_generation,
+            start_time=self.start_time,
+            seed=self.seed,
+        )
         # Only initialize ElasticSearchClient if elastic config is provided
         self.elastic_client: Optional[ElasticSearchClient] = None
         if self.config.elastic is not None:
@@ -133,7 +144,9 @@ class GeneticAlgorithm:
             return
 
         logger.info("Loading chaos recipes from: %s", self.config.recipes_path)
-        parser = ScenarioDSLParser(self.config.cluster_components.get_active_components())
+        parser = ScenarioDSLParser(
+            self.config.cluster_components.get_active_components()
+        )
 
         for filename in os.listdir(self.config.recipes_path):
             if filename.endswith(".yaml") or filename.endswith(".yml"):
@@ -588,38 +601,65 @@ class GeneticAlgorithm:
 
         return population
 
-    def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
-        # If scenario has already been run, do not run it again.
-        # we will rely on mutation for the same parents to produce newer samples
+    def calculate_fitness(self, scenario: BaseScenario, generation_id: int) -> float:
+        """
+        Calculates fitness score for a scenario.
+        Includes a thread-safe 'inflight' check to prevent duplicate executions in parallel mode.
+        """
+        scenario_key = str(scenario)
+        event = None
+
         with self._lock:
+            # 1. Check if already finished
             if scenario in self.seen_population:
-                logger.info(
-                    "Scenario %s already evaluated, skipping fitness calculation.",
-                    scenario,
-                )
-                result = self.seen_population[scenario]
-                result = copy.deepcopy(result)
-                result.generation_id = generation_id
-                return result
+                logger.debug("Scenario already seen, using cached result.")
+                return self.seen_population[scenario].fitness_result.fitness_score
 
-            # This is a new scenario - track it for exploration limit
-            self.new_scenarios_in_generation += 1
+            # 2. Check if currently in-flight
+            if scenario_key in self._inflight:
+                logger.debug("Scenario is in-flight, waiting for result...")
+                event = self._inflight[scenario_key]
 
-        scenario_result = self.krkn_client.run(scenario, generation_id)
+        # If in-flight, wait outside the lock
+        if event:
+            event.wait()
+            with self._lock:
+                return self.seen_population[scenario].fitness_result.fitness_score
 
-        # Add scenario to seen population and save results
-        # These operations involve file I/O and shared dictionaries, so they need a lock
+        # 3. If not seen and not in-flight, we are the ones to run it
+        my_event = threading.Event()
         with self._lock:
-            self.seen_population[scenario] = scenario_result
+            # Double check inside lock
+            if scenario in self.seen_population:
+                return self.seen_population[scenario].fitness_result.fitness_score
+            if scenario_key in self._inflight:
+                # Someone else beat us to the 'inflight' registry
+                event = self._inflight[scenario_key]
+            else:
+                self._inflight[scenario_key] = my_event
+                self.new_scenarios_in_generation += 1
 
-            # Save scenario result
-            self.save_scenario_result(scenario_result)
-            self.health_check_reporter.plot_report(scenario_result)
-            self.health_check_reporter.write_fitness_result(scenario_result)
-            if self.elastic_client is not None:
-                self.elastic_client.index_run_result(scenario_result, self.run_uuid)
+        if event:
+            event.wait()
+            with self._lock:
+                return self.seen_population[scenario].fitness_result.fitness_score
 
-        return scenario_result
+        # We are the execution thread
+        try:
+            result = self.krkn_client.run(scenario, generation_id)
+            fitness_score = result.fitness_result.fitness_score
+
+            with self._lock:
+                self.seen_population[scenario] = result
+                # Log to reporters inside lock
+                self.health_check_reporter.write_fitness_result(result)
+
+            return fitness_score
+        finally:
+            with self._lock:
+                if scenario_key in self._inflight:
+                    del self._inflight[scenario_key]
+            my_event.set()
 
     def mutate(self, scenario: BaseScenario):
         if isinstance(scenario, CompositeScenario):
@@ -849,8 +889,8 @@ class GeneticAlgorithm:
         """Save current GA state to a checkpoint file for resumption."""
         state_path = os.path.join(self.output_dir, "checkpoint.json")
         logger.info("Saving GA checkpoint to %s", state_path)
-        
-        # We need to serialize scenarios. Since they might be complex, 
+
+        # We need to serialize scenarios. Since they might be complex,
         # we'll store their names and parameters.
         try:
             state = {
@@ -862,7 +902,7 @@ class GeneticAlgorithm:
                 "exploration_stagnant_generations": self.exploration_stagnant_generations,
                 "current_mutation_rate": self.current_scenario_mutation_rate,
                 "population": [s.model_dump() for s in self.population],
-                "best_of_generation": [s.model_dump() for s in self.best_of_generation]
+                "best_of_generation": [s.model_dump() for s in self.best_of_generation],
             }
             with open(state_path, "w") as f:
                 json.dump(state, f, indent=4, default=str)

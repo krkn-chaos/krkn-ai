@@ -546,67 +546,18 @@ class KrknRunner:
         self, log: str, default_returncode: int
     ) -> Tuple[int, Optional[str]]:
         """
-        Try to extracts Krkn return code and uuid from the run log. If extraction fails, return default_returncode.
+        Extracts Krkn return code and uuid from the run log using the TelemetryExtractor.
+        Falls back to default_returncode on failure.
         """
-        try:
-            # TODO: Look into if we can save telemetry data to file from Krkn itself.
-            # Hacky way to extract return code from log
-            # Find the line with "Chaos data:" and extract JSON from next lines
-            lines = log.split("\n")
-            chaos_data_idx = -1
+        from krkn_ai.utils.telemetry import TelemetryExtractor
 
-            for i, line in enumerate(lines):
-                if "Chaos data:" in line:
-                    chaos_data_idx = i + 1
-                    break
+        exit_status, run_uuid, _ = TelemetryExtractor.extract_telemetry(
+            log, default_return_code=default_returncode
+        )
 
-            if chaos_data_idx == -1:
-                logger.warning("Could not find 'Chaos data:' in log")
-                return default_returncode, None
+        if run_uuid:
+            logger.debug("Extracted exit_status: %s", exit_status)
+            logger.debug("Extracted run_uuid: %s", run_uuid)
+            return exit_status, run_uuid
 
-            # Extract JSON by counting braces
-            json_lines = []
-            brace_count = 0
-            started = False
-
-            for i in range(chaos_data_idx, len(lines)):
-                line = lines[i]
-
-                # Count opening and closing braces
-                for char in line:
-                    if char == "{":
-                        brace_count += 1
-                        started = True
-                    elif char == "}":
-                        brace_count -= 1
-
-                if started:
-                    json_lines.append(line)
-
-                # When braces are balanced, we've found the complete JSON
-                if started and brace_count == 0:
-                    break
-
-            if not json_lines:
-                logger.warning("Could not extract JSON content from log")
-                return default_returncode, None
-
-            # Join all JSON lines into a single string
-            json_str = "\n".join(json_lines)
-            chaos_data = json.loads(json_str)
-
-            # Extract exit_status from first scenario
-            scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-            if scenarios and len(scenarios) > 0:
-                exit_status = scenarios[0].get("exit_status", default_returncode)
-                run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-                logger.debug("Extracted exit_status: %s", exit_status)
-                logger.debug("Extracted run_uuid: %s", run_uuid)
-                return exit_status, run_uuid
-
-            logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None
-
-        except Exception as e:
-            logger.error("Failed to extract return code from run log: %s", e)
-            return default_returncode, None
+        return default_returncode, None

@@ -164,15 +164,21 @@ class KrknRunner:
             # If user provided fitness_function.query, then we use the default function to calculate
             if self.config.fitness_function.query is not None:
                 fitness_value = self.calculate_fitness_value(
-                    start=start_time,
-                    end=end_time,
+                    result=CommandRunResult(
+                        start_time=start_time,
+                        end_time=end_time,
+                        scenario=scenario,
+                        generation_id=generation_id,
+                        cmd="", log="", returncode=0, duration_seconds=0, 
+                        fitness_result=fitness_result, health_check_results={}
+                    ),
                     query=self.config.fitness_function.query,
                     fitness_type=self.config.fitness_function.type,
                 )
                 fitness_result.fitness_score = fitness_value
             elif len(self.config.fitness_function.items) > 0:
                 fitness_result = self.calculate_fitness_score_for_items(
-                    start=start_time, end=end_time
+                    start=start_time, end=end_time, scenario=scenario, generation_id=generation_id
                 )
 
             # Include krkn hub run failure info to the fitness score
@@ -396,41 +402,49 @@ class KrknRunner:
             result["depends_on"] = depends_on
         return result
 
-    def calculate_fitness_value(self, start, end, query, fitness_type):
-        """Calculate fitness score for scenario run"""
+    def calculate_fitness_value(self, result: CommandRunResult, query, fitness_type):
+        """Calculate fitness score for scenario run using PrometheusEvaluator"""
+        from krkn_ai.fitness.prometheus import PrometheusEvaluator
+
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
-        # Retry to calculate fitness function if it fails
-        # Case when data isn't available in prometheus for latest time range
-        retries = 3  # Number of retries to calculate fitness function
-        retry_delay = 10  # in seconds
+        # Retry logic for Prometheus (case when data isn't available immediately)
+        retries = 3
+        retry_delay = 10
+        evaluator = PrometheusEvaluator(self.prom_client, query, fitness_type)
+        
         for retry in range(retries):
             try:
-                if fitness_type == FitnessFunctionType.point:
-                    return self.calculate_point_fitness(start, end, query)
-                elif fitness_type == FitnessFunctionType.range:
-                    return self.calculate_range_fitness(start, end, query)
+                return evaluator.calculate(result)
             except Exception as error:
-                logger.error(f"Fitness function calculation failed: {error}")
-                logger.info(
-                    f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
-                )
-                time.sleep(retry_delay)
-        raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
-        )
+                logger.error(f"Fitness calculation failed: {error}")
+                if retry < retries - 1:
+                    logger.info(f"Retrying... (retry {retry + 1})")
+                    time.sleep(retry_delay)
+        
+        raise FitnessFunctionCalculationError(f"Fitness failed after {retries} retries")
 
-    def calculate_fitness_score_for_items(self, start, end):
+    def calculate_fitness_score_for_items(self, start, end, scenario, generation_id):
         """
         This is used to compute fitness scores when multiple SLOs are defined.
         """
         results = []
         overall_score = 0
+        
+        # Create a temporary result object for the evaluator
+        temp_result = CommandRunResult(
+            start_time=start,
+            end_time=end,
+            scenario=scenario,
+            generation_id=generation_id,
+            cmd="", log="", returncode=0, duration_seconds=0,
+            fitness_result=FitnessResult(), health_check_results={}
+        )
+
         for fitness_item in self.config.fitness_function.items:
             raw_score = self.calculate_fitness_value(
-                start=start,
-                end=end,
+                result=temp_result,
                 query=fitness_item.query,
                 fitness_type=fitness_item.type,
             )
@@ -448,165 +462,20 @@ class KrknRunner:
 
         return FitnessResult(fitness_score=overall_score, scores=results)
 
-    def calculate_point_fitness(self, start, end, query):
-        """Takes difference between fitness function at start/end intervals of test.
-        Helpful to measure values for counter based metric like restarts.
-        """
-        logger.debug("Calculating Point Fitness")
-        result_at_beginning = self._query_prometheus_single_point(
-            query, start, "point fitness (start)"
-        )
-        result_at_end = self._query_prometheus_single_point(
-            query, end, "point fitness (end)"
-        )
-
-        return float(result_at_end) - float(result_at_beginning)
-
-    def _query_prometheus_single_point(
-        self, query: str, timestamp: datetime.datetime, context: str
-    ) -> str:
-        """
-        Query Prometheus for a single point at a specific timestamp.
-
-        Args:
-            query: The PromQL query to execute
-            timestamp: The timestamp to query at
-            context: Description of where this is called from (for error messages)
-
-        Returns:
-            The metric value as a string
-
-        Raises:
-            FitnessFunctionCalculationError: If Prometheus returns no data
-        """
-        result = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=timestamp,
-            end_time=timestamp,
-            granularity=100,
-        )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' at {timestamp} "
-                f"during {context}. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return series["values"][-1][1]
-        raise FitnessFunctionCalculationError(
-            f"Prometheus returned no data for query '{query}' at {timestamp} "
-            f"during {context}. This may indicate the metric does not exist "
-            f"in the requested time range or Prometheus has not yet scraped data."
-        )
-
-    def calculate_range_fitness(self, start, end, query):
-        """
-        Measure fitness function for the range of test.
-        Helpful to measure value over period of time like max cpu usage, max memory usage over time, etc.
-
-        config.fitness_function.query can specify a dynamic "$range$" parameter that will be replaced
-        when calling below function.
-        """
-        logger.debug("Calculating Range Fitness")
-
-        # Calculate number of minutes between test run
-        if "$range$" in query:
-            time_dt_mins = int((end - start).total_seconds() / 60)
-            if time_dt_mins == 0:
-                time_dt_mins = 1
-            query = query.replace("$range$", f"{time_dt_mins}m")
-        else:
-            logger.warning(
-                "You are missing $range$ in config.fitness_function.query to specify dynamic range. Fitness function will use specified range"
-            )
-
-        result = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=start,
-            end_time=end,
-            granularity=100,
-        )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' in range "
-                f"[{start}, {end}]. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return float(series["values"][-1][1])
-        raise FitnessFunctionCalculationError(
-            f"Prometheus returned no data for query '{query}' in range "
-            f"[{start}, {end}]. This may indicate the metric does not exist "
-            f"in the requested time range or Prometheus has not yet scraped data."
-        )
 
     def __extract_returncode_from_run(
         self, log: str, default_returncode: int
     ) -> Tuple[int, Optional[str]]:
         """
-        Try to extracts Krkn return code and uuid from the run log. If extraction fails, return default_returncode.
+        Try to extracts Krkn return code and uuid from the run log using the TelemetryExtractor.
         """
-        try:
-            # TODO: Look into if we can save telemetry data to file from Krkn itself.
-            # Hacky way to extract return code from log
-            # Find the line with "Chaos data:" and extract JSON from next lines
-            lines = log.split("\n")
-            chaos_data_idx = -1
-
-            for i, line in enumerate(lines):
-                if "Chaos data:" in line:
-                    chaos_data_idx = i + 1
-                    break
-
-            if chaos_data_idx == -1:
-                logger.warning("Could not find 'Chaos data:' in log")
-                return default_returncode, None
-
-            # Extract JSON by counting braces
-            json_lines = []
-            brace_count = 0
-            started = False
-
-            for i in range(chaos_data_idx, len(lines)):
-                line = lines[i]
-
-                # Count opening and closing braces
-                for char in line:
-                    if char == "{":
-                        brace_count += 1
-                        started = True
-                    elif char == "}":
-                        brace_count -= 1
-
-                if started:
-                    json_lines.append(line)
-
-                # When braces are balanced, we've found the complete JSON
-                if started and brace_count == 0:
-                    break
-
-            if not json_lines:
-                logger.warning("Could not extract JSON content from log")
-                return default_returncode, None
-
-            # Join all JSON lines into a single string
-            json_str = "\n".join(json_lines)
-            chaos_data = json.loads(json_str)
-
-            # Extract exit_status from first scenario
-            scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-            if scenarios and len(scenarios) > 0:
-                exit_status = scenarios[0].get("exit_status", default_returncode)
-                run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-                logger.debug("Extracted exit_status: %s", exit_status)
-                logger.debug("Extracted run_uuid: %s", run_uuid)
-                return exit_status, run_uuid
-
-            logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None
-
-        except Exception as e:
-            logger.error("Failed to extract return code from run log: %s", e)
-            return default_returncode, None
+        from krkn_ai.utils.telemetry import TelemetryExtractor
+        
+        exit_status, run_uuid, _ = TelemetryExtractor.extract_telemetry(log)
+        
+        if run_uuid:
+            logger.debug("Extracted exit_status: %s", exit_status)
+            logger.debug("Extracted run_uuid: %s", run_uuid)
+            return exit_status, run_uuid
+        
+        return default_returncode, None

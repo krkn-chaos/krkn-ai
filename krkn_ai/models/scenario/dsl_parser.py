@@ -23,9 +23,7 @@ class ScenarioDSLParser:
         self.cluster_components = cluster_components
         # Map of type names (as used in YAML) to Scenario classes
         self._type_map = {
-            spec[0]
-            .replace("_scenarios", "")
-            .replace("_", "-"): spec[1]
+            spec[0].replace("_scenarios", "").replace("_", "-"): spec[1]
             for spec in scenario_specs
         }
         # Add some aliases for convenience
@@ -86,7 +84,7 @@ class ScenarioDSLParser:
         # 1. Create all base scenarios
         scenario_map: Dict[str, Scenario] = {}
         step_by_name: Dict[str, Dict[str, Any]] = {}
-        
+
         for step in steps:
             name = step.get("name")
             type_name = step.get("type")
@@ -112,18 +110,22 @@ class ScenarioDSLParser:
         # 2. Build composition tree based on depends_on
         # We find the leaf nodes (scenarios that nothing depends on)
         # and work backwards. For simplicity, we assume a single linear chain or a tree.
-        
+
         # Track what depends on what
         dependents: Dict[str, List[str]] = {name: [] for name in scenario_map}
         for name, step in step_by_name.items():
             parent = step.get("depends_on")
             if parent:
                 if parent not in scenario_map:
-                    raise ValueError(f"Step '{name}' depends on unknown step '{parent}'")
+                    raise ValueError(
+                        f"Step '{name}' depends on unknown step '{parent}'"
+                    )
                 dependents[parent].append(name)
 
         # Roots are nodes with no dependencies
-        roots = [name for name, step in step_by_name.items() if not step.get("depends_on")]
+        roots = [
+            name for name, step in step_by_name.items() if not step.get("depends_on")
+        ]
         if not roots:
             raise ValueError("Circular dependency detected (no root steps found)")
 
@@ -131,10 +133,10 @@ class ScenarioDSLParser:
         def build_composed(node_name: str) -> BaseScenario:
             current = scenario_map[node_name]
             children = dependents[node_name]
-            
+
             if not children:
                 return current
-            
+
             # Compose with all children
             # If multiple children, we nest them: Root -> (Child1, (Child2, Child3...))
             composed = current
@@ -144,7 +146,7 @@ class ScenarioDSLParser:
                     name=f"Composition: {node_name} -> {child_name}",
                     scenario_a=child_scenario,
                     scenario_b=composed,
-                    dependency=CompositeDependency.A_ON_B
+                    dependency=CompositeDependency.A_ON_B,
                 )
             return composed
 

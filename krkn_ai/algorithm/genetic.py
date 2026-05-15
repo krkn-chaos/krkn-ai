@@ -93,6 +93,12 @@ class GeneticAlgorithm:
         ] = {}  # Map between scenario and its result
         self.best_of_generation: List[BaseScenario] = []
 
+        # Track run metadata for results summary
+        self.start_time: Optional[datetime.datetime] = None
+        self.end_time: Optional[datetime.datetime] = None
+        self.seed: Optional[int] = self.config.seed
+        self.seeds: List[BaseScenario] = []
+
         self.health_check_reporter = HealthCheckReporter(
             self.output_dir, self.config.output
         )
@@ -110,11 +116,9 @@ class GeneticAlgorithm:
         if self.config.elastic is not None:
             self.elastic_client = ElasticSearchClient(self.config.elastic)
 
-        # Track run metadata for results summary
-        self.start_time: Optional[datetime.datetime] = None
-        self.end_time: Optional[datetime.datetime] = None
-        self.seed: Optional[int] = self.config.seed
-        self.seeds: List[BaseScenario] = []
+        self._lock = threading.Lock()
+        self._inflight: Dict[str, threading.Event] = {}
+
         self._load_seeds()
         self.completed_generations: int = 0
         self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
@@ -601,7 +605,9 @@ class GeneticAlgorithm:
 
         return population
 
-    def calculate_fitness(self, scenario: BaseScenario, generation_id: int) -> float:
+    def calculate_fitness(
+        self, scenario: BaseScenario, generation_id: int
+    ) -> CommandRunResult:
         """
         Calculates fitness score for a scenario.
         Includes a thread-safe 'inflight' check to prevent duplicate executions in parallel mode.
@@ -613,7 +619,7 @@ class GeneticAlgorithm:
             # 1. Check if already finished
             if scenario in self.seen_population:
                 logger.debug("Scenario already seen, using cached result.")
-                return self.seen_population[scenario].fitness_result.fitness_score
+                return self.seen_population[scenario]
 
             # 2. Check if currently in-flight
             if scenario_key in self._inflight:
@@ -624,14 +630,14 @@ class GeneticAlgorithm:
         if event:
             event.wait()
             with self._lock:
-                return self.seen_population[scenario].fitness_result.fitness_score
+                return self.seen_population[scenario]
 
         # 3. If not seen and not in-flight, we are the ones to run it
         my_event = threading.Event()
         with self._lock:
             # Double check inside lock
             if scenario in self.seen_population:
-                return self.seen_population[scenario].fitness_result.fitness_score
+                return self.seen_population[scenario]
             if scenario_key in self._inflight:
                 # Someone else beat us to the 'inflight' registry
                 event = self._inflight[scenario_key]
@@ -642,19 +648,18 @@ class GeneticAlgorithm:
         if event:
             event.wait()
             with self._lock:
-                return self.seen_population[scenario].fitness_result.fitness_score
+                return self.seen_population[scenario]
 
         # We are the execution thread
         try:
             result = self.krkn_client.run(scenario, generation_id)
-            fitness_score = result.fitness_result.fitness_score
 
             with self._lock:
                 self.seen_population[scenario] = result
                 # Log to reporters inside lock
                 self.health_check_reporter.write_fitness_result(result)
 
-            return fitness_score
+            return result
         finally:
             with self._lock:
                 if scenario_key in self._inflight:

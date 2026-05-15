@@ -133,7 +133,7 @@ class GeneticAlgorithm:
             return
 
         logger.info("Loading chaos recipes from: %s", self.config.recipes_path)
-        parser = ScenarioDSLParser(self.config.cluster_components)
+        parser = ScenarioDSLParser(self.config.cluster_components.get_active_components())
 
         for filename in os.listdir(self.config.recipes_path):
             if filename.endswith(".yaml") or filename.endswith(".yml"):

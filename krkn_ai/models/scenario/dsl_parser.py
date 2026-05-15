@@ -20,7 +20,7 @@ class ScenarioDSLParser:
     """
 
     def __init__(self, cluster_components: ClusterComponents):
-        self.cluster_components = cluster_components
+        self.cluster_components = cluster_components.get_active_components()
         # Map of type names (as used in YAML) to Scenario classes
         self._type_map = {
             spec[0]
@@ -130,23 +130,31 @@ class ScenarioDSLParser:
         # Recursive builder to handle nested composition
         def build_composed(node_name: str) -> BaseScenario:
             current = scenario_map[node_name]
-            children = dependents[node_name]
+            children_names = dependents[node_name]
             
-            if not children:
+            if not children_names:
                 return current
             
-            # Compose with all children
-            # If multiple children, we nest them: Root -> (Child1, (Child2, Child3...))
-            composed = current
-            for child_name in children:
-                child_scenario = build_composed(child_name)
-                composed = CompositeScenario(
-                    name=f"Composition: {node_name} -> {child_name}",
-                    scenario_a=child_scenario,
-                    scenario_b=composed,
-                    dependency=CompositeDependency.A_ON_B
+            # Recursively build all child subtrees
+            child_scenarios = [build_composed(name) for name in children_names]
+            
+            # 1. Combine all children into a parallel "sibling block" (NONE dependency)
+            sibling_block = child_scenarios[0]
+            for i in range(1, len(child_scenarios)):
+                sibling_block = CompositeScenario(
+                    name=f"Siblings: {children_names[i-1]} || {children_names[i]}",
+                    scenario_a=child_scenarios[i],
+                    scenario_b=sibling_block,
+                    dependency=CompositeDependency.NONE
                 )
-            return composed
+            
+            # 2. Make the entire sibling block depend on the current node (A_ON_B)
+            return CompositeScenario(
+                name=f"Composition: {node_name} -> [{', '.join(children_names)}]",
+                scenario_a=sibling_block,
+                scenario_b=current,
+                dependency=CompositeDependency.A_ON_B
+            )
 
         # We return the first root (supporting multiple roots would require a top-level container)
         return build_composed(roots[0])

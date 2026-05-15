@@ -29,7 +29,7 @@ class PrometheusRateLimiter:
 
             if time_since_last < self.min_interval:
                 sleep_time = self.min_interval - time_since_last
-                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
+                logger.debug("Rate limiting: sleeping %.3fs", sleep_time)
                 time.sleep(sleep_time)
 
             self.last_query_time = time.time()
@@ -145,7 +145,7 @@ def _discover_openshift_prometheus_url(kubeconfig: str) -> str:
         host = items[0].get("spec", {}).get("host", "").strip()
         return host
     except Exception as e:
-        logger.debug(f"Unexpected error during URL discovery: {e}")
+        logger.debug("Unexpected error during URL discovery: %s", e)
         return ""
 
 
@@ -167,7 +167,7 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
             return token.replace("Bearer ", "")
         return ""
     except Exception as e:
-        logger.debug(f"Unexpected error during token discovery: {e}")
+        logger.debug("Unexpected error during token discovery: %s", e)
         return ""
 
 

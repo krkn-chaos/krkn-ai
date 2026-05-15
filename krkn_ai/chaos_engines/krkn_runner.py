@@ -454,13 +454,13 @@ class KrknRunner:
         Helpful to measure values for counter based metric like restarts.
         """
         logger.debug("Calculating Point Fitness")
-        
+
         # Rate limit before first query
         self.prom_rate_limiter.wait_if_needed()
         result_at_beginning = self._query_prometheus_single_point(
             query, start, "point fitness (start)"
         )
-        
+
         # Rate limit before second query
         self.prom_rate_limiter.wait_if_needed()
         result_at_end = self._query_prometheus_single_point(

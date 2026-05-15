@@ -4,6 +4,8 @@ import datetime
 import json
 import time
 import uuid
+import threading
+import concurrent.futures
 from typing_extensions import Dict
 import yaml
 from typing import List, Optional, Tuple
@@ -66,6 +68,7 @@ class GeneticAlgorithm:
             config, output_dir=self.output_dir, runner_type=runner_type
         )
         self.population: List[BaseScenario] = []
+        self._lock = threading.Lock()
 
         self.stagnant_generations = 0
         self.saturation_stagnant_generations = (
@@ -191,10 +194,26 @@ class GeneticAlgorithm:
             logger.info("--------------------------------------------------------")
 
             # Evaluate fitness of the current population
-            fitness_scores = [
-                self.calculate_fitness(member, cur_generation)
-                for member in self.population
-            ]
+            if self.config.parallel:
+                logger.info(
+                    "Running generation %d in parallel (limit: %d)",
+                    cur_generation + 1,
+                    self.config.parallel_limit,
+                )
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.config.parallel_limit
+                ) as executor:
+                    futures = [
+                        executor.submit(self.calculate_fitness, member, cur_generation)
+                        for member in self.population
+                    ]
+                    fitness_scores = [f.result() for f in futures]
+            else:
+                fitness_scores = [
+                    self.calculate_fitness(member, cur_generation)
+                    for member in self.population
+                ]
+
             # Find the best individual in the current generation
             # Note: If there is no best solution, it will still consider based on sorting order
             fitness_scores = sorted(
@@ -215,6 +234,10 @@ class GeneticAlgorithm:
 
             # Increment generation counter after evaluation
             cur_generation += 1
+            self.completed_generations = cur_generation
+
+            # Save state for resumption
+            self.save_state(cur_generation)
 
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
             elapsed_after_eval = time.time() - start_time
@@ -568,29 +591,33 @@ class GeneticAlgorithm:
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         # If scenario has already been run, do not run it again.
         # we will rely on mutation for the same parents to produce newer samples
-        if scenario in self.seen_population:
-            logger.info(
-                "Scenario %s already evaluated, skipping fitness calculation.", scenario
-            )
-            result = self.seen_population[scenario]
-            result = copy.deepcopy(result)
-            result.generation_id = generation_id
-            return result
+        with self._lock:
+            if scenario in self.seen_population:
+                logger.info(
+                    "Scenario %s already evaluated, skipping fitness calculation.",
+                    scenario,
+                )
+                result = self.seen_population[scenario]
+                result = copy.deepcopy(result)
+                result.generation_id = generation_id
+                return result
 
-        # This is a new scenario - track it for exploration limit
-        self.new_scenarios_in_generation += 1
+            # This is a new scenario - track it for exploration limit
+            self.new_scenarios_in_generation += 1
 
         scenario_result = self.krkn_client.run(scenario, generation_id)
 
-        # Add scenario to seen population
-        self.seen_population[scenario] = scenario_result
+        # Add scenario to seen population and save results
+        # These operations involve file I/O and shared dictionaries, so they need a lock
+        with self._lock:
+            self.seen_population[scenario] = scenario_result
 
-        # Save scenario result
-        self.save_scenario_result(scenario_result)
-        self.health_check_reporter.plot_report(scenario_result)
-        self.health_check_reporter.write_fitness_result(scenario_result)
-        if self.elastic_client is not None:
-            self.elastic_client.index_run_result(scenario_result, self.run_uuid)
+            # Save scenario result
+            self.save_scenario_result(scenario_result)
+            self.health_check_reporter.plot_report(scenario_result)
+            self.health_check_reporter.write_fitness_result(scenario_result)
+            if self.elastic_client is not None:
+                self.elastic_client.index_run_result(scenario_result, self.run_uuid)
 
         return scenario_result
 
@@ -817,6 +844,30 @@ class GeneticAlgorithm:
         summary_reporter.save(self.output_dir)
 
         # TODO: Send run summary to Elasticsearch
+
+    def save_state(self, cur_generation: int):
+        """Save current GA state to a checkpoint file for resumption."""
+        state_path = os.path.join(self.output_dir, "checkpoint.json")
+        logger.info("Saving GA checkpoint to %s", state_path)
+        
+        # We need to serialize scenarios. Since they might be complex, 
+        # we'll store their names and parameters.
+        try:
+            state = {
+                "cur_generation": cur_generation,
+                "run_uuid": self.run_uuid,
+                "completed_generations": self.completed_generations,
+                "stagnant_generations": self.stagnant_generations,
+                "saturation_stagnant_generations": self.saturation_stagnant_generations,
+                "exploration_stagnant_generations": self.exploration_stagnant_generations,
+                "current_mutation_rate": self.current_scenario_mutation_rate,
+                "population": [s.model_dump() for s in self.population],
+                "best_of_generation": [s.model_dump() for s in self.best_of_generation]
+            }
+            with open(state_path, "w") as f:
+                json.dump(state, f, indent=4, default=str)
+        except Exception as e:
+            logger.error("Failed to save checkpoint: %s", e)
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")

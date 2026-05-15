@@ -91,3 +91,42 @@ class TestFitnessCalculation:
         assert result.generation_id == new_generation_id
         # Should not call krkn_client.run (using cache)
         genetic_algorithm_with_mock_runner.krkn_client.run.assert_not_called()
+
+    def test_calculate_fitness_handles_timeout_prevents_population_collapse(
+        self, genetic_algorithm_with_mock_runner
+    ):
+        """Test that execution timeouts are handled and do not cause population collapse"""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        generation_id = 0
+
+        # Mock krkn_client.run to raise ShellCommandTimeoutError
+        genetic_algorithm_with_mock_runner.krkn_client.run = Mock(
+            side_effect=ShellCommandTimeoutError("Command timed out")
+        )
+
+        with patch.object(genetic_algorithm_with_mock_runner, "save_scenario_result"):
+            with patch.object(
+                genetic_algorithm_with_mock_runner.health_check_reporter, "plot_report"
+            ):
+                with patch.object(
+                    genetic_algorithm_with_mock_runner.health_check_reporter,
+                    "write_fitness_result",
+                ):
+                    # This should not raise an exception, preventing algorithm crash
+                    result = genetic_algorithm_with_mock_runner.calculate_fitness(
+                        scenario, generation_id
+                    )
+
+                    # Assert the returned result has highly penalized fitness scores
+                    assert result.fitness_result.fitness_score == -1.0
+                    assert result.fitness_result.krkn_failure_score == -1.0
+                    assert result.returncode == -1
+                    assert "timeout" in result.cmd
+
+                    # Crucially, assert the scenario is added to the seen_population
+                    # so that population size doesn't decrease and collapse
+                    assert (
+                        scenario in genetic_algorithm_with_mock_runner.seen_population
+                    )

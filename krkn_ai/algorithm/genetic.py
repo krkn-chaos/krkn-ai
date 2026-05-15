@@ -25,7 +25,11 @@ from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.utils.rng import rng
-from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
+from krkn_ai.models.custom_errors import (
+    PopulationSizeError,
+    UniqueScenariosError,
+    ShellCommandTimeoutError,
+)
 from krkn_ai.utils.output import format_result_filename, format_duration
 from krkn_ai.utils.elastic_client import ElasticSearchClient
 from krkn_ai.constants import STATUS_IN_PROGRESS
@@ -543,15 +547,15 @@ class GeneticAlgorithm:
 
         try:
             scenario_result = self.krkn_client.run(scenario, generation_id)
-        except Exception as e:
-            logger.error("Failed to run scenario %s: %s", scenario, e)
+        except ShellCommandTimeoutError as e:
+            logger.error("Failed to run scenario %s due to timeout: %s", scenario, e)
             now = datetime.datetime.now()
             # Return a highly penalized result so it gets tracked and eventually discarded by the genetic algorithm properly
             fitness_result = FitnessResult(fitness_score=-1.0, krkn_failure_score=-1.0)
             scenario_result = CommandRunResult(
                 generation_id=generation_id,
                 scenario=scenario,
-                cmd="unknown due to exception",
+                cmd="unknown due to timeout",
                 log=str(e),
                 returncode=-1,
                 start_time=now,

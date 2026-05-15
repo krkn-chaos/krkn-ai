@@ -23,14 +23,13 @@ class PrometheusRateLimiter:
         """Block if necessary to maintain rate limit"""
         with self.lock:
             now = time.time()
-            time_since_last = now - self.last_query_time
+            target_time = max(now, self.last_query_time + self.min_interval)
+            self.last_query_time = target_time
+            sleep_time = target_time - now
 
-            if time_since_last < self.min_interval:
-                sleep_time = self.min_interval - time_since_last
-                logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
-                time.sleep(sleep_time)
-
-            self.last_query_time = time.time()
+        if sleep_time > 0:
+            logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
+            time.sleep(sleep_time)
 
 
 def is_openshift(kubeconfig: str) -> bool:

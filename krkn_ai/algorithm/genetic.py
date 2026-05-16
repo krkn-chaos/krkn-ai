@@ -709,7 +709,7 @@ class GeneticAlgorithm:
         for _, scenario_cls in self.valid_scenarios:
             # instantiate new scenario for a scenario type
             new_scenario = scenario_cls(
-                cluster_components=self.config.cluster_components
+                cluster_components=self.config.cluster_components.get_active_components()
             )
 
             common_params = set([type(x) for x in new_scenario.parameters]) & set(

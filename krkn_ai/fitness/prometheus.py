@@ -8,18 +8,19 @@ from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class PrometheusEvaluator(BaseFitnessEvaluator):
     """
     Evaluates fitness using PromQL queries against a Prometheus instance.
     """
 
     def __init__(
-        self, 
-        prom_client: Any, 
-        query: str, 
+        self,
+        prom_client: Any,
+        query: str,
         fitness_type: FitnessFunctionType = FitnessFunctionType.point,
         retries: int = 3,
-        retry_delay: int = 10
+        retry_delay: int = 10,
     ):
         self.prom_client = prom_client
         self.query = query
@@ -32,10 +33,10 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
         return "prometheus"
 
     def evaluate(
-        self, 
-        start_time: datetime, 
-        end_time: datetime, 
-        context: Optional[Dict[str, Any]] = None
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        context: Optional[Dict[str, Any]] = None,
     ) -> float:
         for retry in range(self.retries):
             try:
@@ -75,12 +76,14 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
         )
         if not result:
             raise FitnessFunctionCalculationError(f"No data for range query: {query}")
-        
+
         for series in result:
             if series.get("values"):
                 return float(series["values"][-1][1])
-        
-        raise FitnessFunctionCalculationError(f"No values found for range query: {query}")
+
+        raise FitnessFunctionCalculationError(
+            f"No values found for range query: {query}"
+        )
 
     def _query_single_point(self, query: str, timestamp: datetime, label: str) -> str:
         result = self.prom_client.process_prom_query_in_range(
@@ -91,9 +94,11 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
         )
         if not result:
             raise FitnessFunctionCalculationError(f"No data for {label} query: {query}")
-        
+
         for series in result:
             if series.get("values"):
                 return series["values"][-1][1]
-        
-        raise FitnessFunctionCalculationError(f"No values found for {label} query: {query}")
+
+        raise FitnessFunctionCalculationError(
+            f"No values found for {label} query: {query}"
+        )

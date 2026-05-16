@@ -1,5 +1,5 @@
 import os
-import json
+import json  # Standard JSON library
 import datetime
 import tempfile
 import time
@@ -64,7 +64,7 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
-        
+
         self.evaluator = self._initialize_evaluators()
 
     def __check_runner_availability(self):
@@ -102,28 +102,23 @@ class KrknRunner:
         # 1. Migrate legacy 'items' to PrometheusEvaluator (takes precedence)
         if cfg.items:
             for item in cfg.items:
-                evaluators.append((
-                    PrometheusEvaluator(self.prom_client, item.query, item.type),
-                    item.weight
-                ))
+                evaluators.append(
+                    (
+                        PrometheusEvaluator(self.prom_client, item.query, item.type),
+                        item.weight,
+                    )
+                )
         # 2. Migrate legacy 'query' only if items are not defined
         elif cfg.query:
-            evaluators.append((
-                PrometheusEvaluator(self.prom_client, cfg.query, cfg.type),
-                1.0
-            ))
+            evaluators.append(
+                (PrometheusEvaluator(self.prom_client, cfg.query, cfg.type), 1.0)
+            )
 
         # 3. Migrate legacy health check flags
         if cfg.include_health_check_failure:
-            evaluators.append((
-                HealthCheckEvaluator(mode="success_rate"),
-                1.0
-            ))
+            evaluators.append((HealthCheckEvaluator(mode="success_rate"), 1.0))
         if cfg.include_health_check_response_time:
-            evaluators.append((
-                HealthCheckEvaluator(mode="response_time"),
-                1.0
-            ))
+            evaluators.append((HealthCheckEvaluator(mode="response_time"), 1.0))
 
         # 4. Add new pluggable evaluators
         for eval_cfg in cfg.evaluators:
@@ -131,24 +126,29 @@ class KrknRunner:
                 # Mypy: PrometheusEvaluator requires non-optional query and type
                 assert eval_cfg.query is not None
                 assert eval_cfg.fitness_type is not None
-                evaluators.append((
-                    PrometheusEvaluator(self.prom_client, eval_cfg.query, eval_cfg.fitness_type),
-                    eval_cfg.weight
-                ))
+                evaluators.append(
+                    (
+                        PrometheusEvaluator(
+                            self.prom_client, eval_cfg.query, eval_cfg.fitness_type
+                        ),
+                        eval_cfg.weight,
+                    )
+                )
             elif eval_cfg.type == "health_check":
                 # Mypy: mode is optional in model but required by evaluator
                 assert eval_cfg.mode is not None
-                evaluators.append((
-                    HealthCheckEvaluator(mode=eval_cfg.mode),
-                    eval_cfg.weight
-                ))
+                evaluators.append(
+                    (HealthCheckEvaluator(mode=eval_cfg.mode), eval_cfg.weight)
+                )
             elif eval_cfg.type == "python_script":
                 # Mypy: script_path is optional in model but required here
                 assert eval_cfg.script_path is not None
-                evaluators.append((
-                    PythonScriptEvaluator(script_path=eval_cfg.script_path),
-                    eval_cfg.weight
-                ))
+                evaluators.append(
+                    (
+                        PythonScriptEvaluator(script_path=eval_cfg.script_path),
+                        eval_cfg.weight,
+                    )
+                )
 
         return WeightedAggregator(evaluators)
 
@@ -231,30 +231,41 @@ class KrknRunner:
                 "log": log,
                 "returncode": returncode,
                 "run_uuid": run_uuid,
-                "scenario": scenario
+                "scenario": scenario,
             }
 
             # If mock mode and no results, provide dummy data to avoid 'ignored' scores
-            if env_is_truthy("MOCK_RUN") and not health_check_results and self.config.health_checks.applications:
+            if (
+                env_is_truthy("MOCK_RUN")
+                and not health_check_results
+                and self.config.health_checks.applications
+            ):
                 context["health_check_results"] = {
-                    app.url: [HealthCheckResult(name=app.name, status_code=app.status_code, success=True, response_time=0.1)]
+                    app.url: [
+                        HealthCheckResult(
+                            name=app.name,
+                            status_code=app.status_code,
+                            success=True,
+                            response_time=0.1,
+                        )
+                    ]
                     for app in self.config.health_checks.applications
                 }
-            
+
             fitness_result.fitness_score = self.evaluator.evaluate(
-                start_time=start_time,
-                end_time=end_time,
-                context=context
+                start_time=start_time, end_time=end_time, context=context
             )
 
             # Populate detailed scores breakdown
-            if hasattr(self.evaluator, "last_scores") and isinstance(self.evaluator.last_scores, list):
+            if hasattr(self.evaluator, "last_scores") and isinstance(
+                self.evaluator.last_scores, list
+            ):
                 for idx, entry in enumerate(self.evaluator.last_scores):
                     fitness_result.scores.append(
                         FitnessScoreResult(
                             id=idx,
                             fitness_score=entry["score"],
-                            weighted_score=entry["weighted_score"]
+                            weighted_score=entry["weighted_score"],
                         )
                     )
                     # Legacy support for specific health check fields

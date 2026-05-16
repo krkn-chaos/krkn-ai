@@ -7,6 +7,7 @@ import numpy as np
 
 logger = get_logger(__name__)
 
+
 class HealthCheckEvaluator(BaseFitnessEvaluator):
     """
     Evaluates fitness based on application health check results collected during the run.
@@ -26,17 +27,17 @@ class HealthCheckEvaluator(BaseFitnessEvaluator):
         return f"health_check_{mode_name}"
 
     def evaluate(
-        self, 
-        start_time: datetime, 
-        end_time: datetime, 
-        context: Optional[Dict[str, Any]] = None
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        context: Optional[Dict[str, Any]] = None,
     ) -> float:
         if not context or "health_check_results" not in context:
             logger.warning("No health check results found in context")
             return 0.0
 
         results: Dict[str, List[HealthCheckResult]] = context["health_check_results"]
-        
+
         if self.mode == "success_rate":
             return self._summarize_success_rate(results)
         elif self.mode == "response_time":
@@ -45,7 +46,9 @@ class HealthCheckEvaluator(BaseFitnessEvaluator):
             logger.error(f"Unknown health check mode: {self.mode}")
             return 0.0
 
-    def _summarize_success_rate(self, results: Dict[str, List[HealthCheckResult]]) -> float:
+    def _summarize_success_rate(
+        self, results: Dict[str, List[HealthCheckResult]]
+    ) -> float:
         all_results = []
         for result_list in results.values():
             all_results.extend(result_list)
@@ -57,13 +60,15 @@ class HealthCheckEvaluator(BaseFitnessEvaluator):
         score = (failed / total) * 10.0
         return float(score)
 
-    def _summarize_response_time(self, results: Dict[str, List[HealthCheckResult]]) -> float:
+    def _summarize_response_time(
+        self, results: Dict[str, List[HealthCheckResult]]
+    ) -> float:
         score: float = 0.0
         total_checks = 0
-        
+
         for _, res_list in results.items():
             response_times = [r.response_time for r in res_list if r.success]
-            
+
             if len(response_times) < 4:
                 continue
 
@@ -75,8 +80,8 @@ class HealthCheckEvaluator(BaseFitnessEvaluator):
             outliers = [t for t in response_times if t > upper_bound]
             score += len(outliers)
             total_checks += len(res_list)
-            
+
         if total_checks == 0:
             return 0.0
-            
+
         return (score / total_checks) * 10.0

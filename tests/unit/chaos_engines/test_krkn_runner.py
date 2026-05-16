@@ -14,7 +14,6 @@ from krkn_ai.models.config import (
     FitnessFunctionType,
     HealthCheckConfig,
 )
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.base import CompositeScenario, CompositeDependency
 from krkn_ai.models.cluster_components import ClusterComponents
@@ -83,7 +82,7 @@ class TestKrknRunnerRun:
                 runner_type=KrknRunnerType.CLI_RUNNER,
             )
             scenario = DummyScenario(cluster_components=ClusterComponents())
-            
+
             # Mock the evaluator
             runner.evaluator = Mock()
             runner.evaluator.evaluate.return_value = 10.0
@@ -221,7 +220,6 @@ class TestKrknRunnerCommandGeneration:
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
 
-
     @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_run_with_evaluators(
@@ -231,13 +229,13 @@ class TestKrknRunnerCommandGeneration:
         minimal_config.fitness_function = FitnessFunction(
             query="test_query",
             type=FitnessFunctionType.point,
-            include_krkn_failure=False
+            include_krkn_failure=False,
         )
         mock_run_shell.return_value = ("run log", 0)
 
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
             runner = KrknRunner(config=minimal_config, output_dir=temp_output_dir)
-            
+
             # Mock the internal evaluator to return a fixed score
             runner.evaluator = Mock()
             runner.evaluator.evaluate.return_value = 42.0

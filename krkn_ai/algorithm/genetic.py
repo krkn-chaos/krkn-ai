@@ -634,12 +634,14 @@ class GeneticAlgorithm:
                 raise outcome["exception"]
             if scenario in self.seen_population:
                 return self.seen_population[scenario]
-            
+
             # Guard: If still not in seen_population after event is set, it means execution failed silently
             if outcome["result"]:
                 return outcome["result"]
-            
-            raise RuntimeError(f"Scenario execution failed or result missing for: {scenario}")
+
+            raise RuntimeError(
+                f"Scenario execution failed or result missing for: {scenario}"
+            )
 
         # 3. If not seen and not in-flight, we are the ones to run it
         my_event = threading.Event()
@@ -672,7 +674,7 @@ class GeneticAlgorithm:
                 self.seen_population[scenario] = result
                 # Log to reporters inside lock
                 self.health_check_reporter.write_fitness_result(result)
-            
+
             # Persist results outside the lock to minimize contention
             try:
                 self.save_scenario_result(result)
@@ -724,7 +726,7 @@ class GeneticAlgorithm:
         for _, scenario_cls in self.valid_scenarios:
             # instantiate new scenario for a scenario type
             new_scenario = scenario_cls(
-                cluster_components=self.config.cluster_components
+                cluster_components=self.config.cluster_components.get_active_components()
             )
 
             common_params = set([type(x) for x in new_scenario.parameters]) & set(

@@ -13,4 +13,4 @@ class TestRunShell:
 
     def test_timeout_raises_shell_command_timeout_error(self):
         with pytest.raises(ShellCommandTimeoutError):
-            run_shell("sleep 10", timeout=5)
+            run_shell('python -c "import time; time.sleep(10)"', timeout=2)

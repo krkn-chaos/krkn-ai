@@ -21,7 +21,9 @@ class HealthCheckEvaluator(BaseFitnessEvaluator):
 
     @property
     def name(self) -> str:
-        return f"health_check_{self.mode}"
+        # Map success_rate to failure to match legacy flag naming
+        mode_name = "failure" if self.mode == "success_rate" else self.mode
+        return f"health_check_{mode_name}"
 
     def evaluate(
         self, 

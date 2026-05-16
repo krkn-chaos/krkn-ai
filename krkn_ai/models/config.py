@@ -153,22 +153,36 @@ class EvaluatorConfig(BaseModel):
     # Python script specific
     script_path: Optional[str] = None
 
+    @model_validator(mode="after")
+    def validate_evaluator_params(self):
+        if self.type == EvaluatorType.python_script and not self.script_path:
+            raise ValueError("script_path is required for python_script evaluator type")
+        if self.type == EvaluatorType.prometheus and not self.query:
+            raise ValueError("query is required for prometheus evaluator type")
+        return self
+
 
 class FitnessFunction(BaseModel):
     query: Union[str, None] = None  # PromQL
     type: FitnessFunctionType = FitnessFunctionType.point
     include_krkn_failure: bool = True
-    include_health_check_failure: bool = True
-    include_health_check_response_time: bool = True
+    include_health_check_failure: bool = False
+    include_health_check_response_time: bool = False
     items: List[FitnessFunctionItem] = []
     evaluators: List[EvaluatorConfig] = []
 
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
         """Validates whether there is at least one fitness function is defined."""
-        if self.query is None and len(self.items) == 0:
+        if (
+            self.query is None
+            and len(self.items) == 0
+            and len(self.evaluators) == 0
+            and not self.include_health_check_failure
+            and not self.include_health_check_response_time
+        ):
             raise ValueError(
-                "Please define at least one fitness function in query or items."
+                "Please define at least one fitness function in query, items, evaluators, or health-check flags."
             )
         return self
 

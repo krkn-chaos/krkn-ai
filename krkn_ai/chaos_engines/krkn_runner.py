@@ -3,7 +3,7 @@ import json
 import datetime
 import tempfile
 import time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -12,8 +12,7 @@ from krkn_ai.models.app import (
     FitnessScoreResult,
     KrknRunnerType,
 )
-from krkn_ai.models.config import ConfigFile, FitnessFunctionType
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.config import ConfigFile, HealthCheckResult
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -27,6 +26,7 @@ from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
 
+from krkn_ai.fitness.base import BaseFitnessEvaluator
 from krkn_ai.fitness.prometheus import PrometheusEvaluator
 from krkn_ai.fitness.health_check import HealthCheckEvaluator
 from krkn_ai.fitness.python_script import PythonScriptEvaluator
@@ -96,36 +96,55 @@ class KrknRunner:
 
     def _initialize_evaluators(self) -> WeightedAggregator:
         """Initialize all configured fitness evaluators."""
-        evaluators = []
+        evaluators: List[Tuple[BaseFitnessEvaluator, float]] = []
         cfg = self.config.fitness_function
 
-        # 1. Migrate legacy 'query' to PrometheusEvaluator
-        if cfg.query:
+        # 1. Migrate legacy 'items' to PrometheusEvaluator (takes precedence)
+        if cfg.items:
+            for item in cfg.items:
+                evaluators.append((
+                    PrometheusEvaluator(self.prom_client, item.query, item.type),
+                    item.weight
+                ))
+        # 2. Migrate legacy 'query' only if items are not defined
+        elif cfg.query:
             evaluators.append((
                 PrometheusEvaluator(self.prom_client, cfg.query, cfg.type),
                 1.0
             ))
 
-        # 2. Migrate legacy 'items' to PrometheusEvaluator
-        for item in cfg.items:
+        # 3. Migrate legacy health check flags
+        if cfg.include_health_check_failure:
             evaluators.append((
-                PrometheusEvaluator(self.prom_client, item.query, item.type),
-                item.weight
+                HealthCheckEvaluator(mode="success_rate"),
+                1.0
+            ))
+        if cfg.include_health_check_response_time:
+            evaluators.append((
+                HealthCheckEvaluator(mode="response_time"),
+                1.0
             ))
 
-        # 3. Add new pluggable evaluators
+        # 4. Add new pluggable evaluators
         for eval_cfg in cfg.evaluators:
             if eval_cfg.type == "prometheus":
+                # Mypy: PrometheusEvaluator requires non-optional query and type
+                assert eval_cfg.query is not None
+                assert eval_cfg.fitness_type is not None
                 evaluators.append((
                     PrometheusEvaluator(self.prom_client, eval_cfg.query, eval_cfg.fitness_type),
                     eval_cfg.weight
                 ))
             elif eval_cfg.type == "health_check":
+                # Mypy: mode is optional in model but required by evaluator
+                assert eval_cfg.mode is not None
                 evaluators.append((
                     HealthCheckEvaluator(mode=eval_cfg.mode),
                     eval_cfg.weight
                 ))
             elif eval_cfg.type == "python_script":
+                # Mypy: script_path is optional in model but required here
+                assert eval_cfg.script_path is not None
                 evaluators.append((
                     PythonScriptEvaluator(script_path=eval_cfg.script_path),
                     eval_cfg.weight
@@ -214,12 +233,35 @@ class KrknRunner:
                 "run_uuid": run_uuid,
                 "scenario": scenario
             }
+
+            # If mock mode and no results, provide dummy data to avoid 'ignored' scores
+            if env_is_truthy("MOCK_RUN") and not health_check_results and self.config.health_checks.applications:
+                context["health_check_results"] = {
+                    app.url: [HealthCheckResult(name=app.name, status_code=app.status_code, success=True, response_time=0.1)]
+                    for app in self.config.health_checks.applications
+                }
             
             fitness_result.fitness_score = self.evaluator.evaluate(
                 start_time=start_time,
                 end_time=end_time,
                 context=context
             )
+
+            # Populate detailed scores breakdown
+            if hasattr(self.evaluator, "last_scores") and isinstance(self.evaluator.last_scores, list):
+                for idx, entry in enumerate(self.evaluator.last_scores):
+                    fitness_result.scores.append(
+                        FitnessScoreResult(
+                            id=idx,
+                            fitness_score=entry["score"],
+                            weighted_score=entry["weighted_score"]
+                        )
+                    )
+                    # Legacy support for specific health check fields
+                    if entry["name"] == "health_check_failure":
+                        fitness_result.health_check_failure_score = entry["score"]
+                    elif entry["name"] == "health_check_response_time":
+                        fitness_result.health_check_response_time_score = entry["score"]
 
             # Include krkn hub run failure info (legacy support)
             if self.config.fitness_function.include_krkn_failure and returncode == 2:

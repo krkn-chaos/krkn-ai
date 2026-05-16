@@ -6,9 +6,8 @@ import time
 import uuid
 import threading
 import concurrent.futures
-from typing_extensions import Dict
 import yaml
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any, Dict
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
@@ -43,7 +42,7 @@ class GeneticAlgorithm:
     """
 
     _lock: threading.Lock
-    _inflight: Dict[str, threading.Event]
+    _inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]]
 
     def __init__(
         self,
@@ -117,7 +116,7 @@ class GeneticAlgorithm:
             self.elastic_client = ElasticSearchClient(self.config.elastic)
 
         self._lock = threading.Lock()
-        self._inflight: Dict[str, threading.Event] = {}
+        self._inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]] = {}
 
         self._load_seeds()
         self.completed_generations: int = 0
@@ -612,25 +611,35 @@ class GeneticAlgorithm:
         Calculates fitness score for a scenario.
         Includes a thread-safe 'inflight' check to prevent duplicate executions in parallel mode.
         """
-        scenario_key = str(scenario)
+        outcome: Dict[str, Any] = {"result": None, "exception": None}
         event = None
 
         with self._lock:
             # 1. Check if already finished
             if scenario in self.seen_population:
                 logger.debug("Scenario already seen, using cached result.")
-                return self.seen_population[scenario]
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
 
             # 2. Check if currently in-flight
-            if scenario_key in self._inflight:
+            if scenario in self._inflight:
                 logger.debug("Scenario is in-flight, waiting for result...")
-                event = self._inflight[scenario_key]
+                event, outcome = self._inflight[scenario]
 
         # If in-flight, wait outside the lock
         if event:
             event.wait()
-            with self._lock:
+            if outcome["exception"]:
+                raise outcome["exception"]
+            if scenario in self.seen_population:
                 return self.seen_population[scenario]
+            
+            # Guard: If still not in seen_population after event is set, it means execution failed silently
+            if outcome["result"]:
+                return outcome["result"]
+            
+            raise RuntimeError(f"Scenario execution failed or result missing for: {scenario}")
 
         # 3. If not seen and not in-flight, we are the ones to run it
         my_event = threading.Event()
@@ -638,32 +647,52 @@ class GeneticAlgorithm:
             # Double check inside lock
             if scenario in self.seen_population:
                 return self.seen_population[scenario]
-            if scenario_key in self._inflight:
+            if scenario in self._inflight:
                 # Someone else beat us to the 'inflight' registry
-                event = self._inflight[scenario_key]
+                event, outcome = self._inflight[scenario]
             else:
-                self._inflight[scenario_key] = my_event
+                self._inflight[scenario] = (my_event, outcome)
                 self.new_scenarios_in_generation += 1
 
         if event:
             event.wait()
-            with self._lock:
-                return self.seen_population[scenario]
+            if outcome["exception"]:
+                raise outcome["exception"]
+            if scenario in self.seen_population:
+                result = self.seen_population[scenario]
+                result.generation_id = generation_id
+                return result
 
         # We are the execution thread
         try:
             result = self.krkn_client.run(scenario, generation_id)
+            outcome["result"] = result
 
             with self._lock:
                 self.seen_population[scenario] = result
                 # Log to reporters inside lock
                 self.health_check_reporter.write_fitness_result(result)
+            
+            # Persist results outside the lock to minimize contention
+            try:
+                self.save_scenario_result(result)
+                # Plot health check report if needed
+                self.health_check_reporter.plot_report(result)
+                # Index to Elasticsearch if enabled
+                if self.elastic_client is not None:
+                    self.elastic_client.index_run_result(result, self.run_uuid)
+            except Exception as e:
+                logger.error(f"Error persisting scenario result: {e}")
 
             return result
+        except Exception as e:
+            outcome["exception"] = e
+            logger.error(f"Scenario execution failed: {e}")
+            raise e
         finally:
             with self._lock:
-                if scenario_key in self._inflight:
-                    del self._inflight[scenario_key]
+                if scenario in self._inflight:
+                    del self._inflight[scenario]
             my_event.set()
 
     def mutate(self, scenario: BaseScenario):

@@ -83,6 +83,11 @@ class TestKrknRunnerRun:
                 runner_type=KrknRunnerType.CLI_RUNNER,
             )
             scenario = DummyScenario(cluster_components=ClusterComponents())
+            
+            # Mock the evaluator
+            runner.evaluator = Mock()
+            runner.evaluator.evaluate.return_value = 10.0
+            runner.evaluator.last_scores = []
 
             result = runner.run(scenario, generation_id=0)
 
@@ -236,6 +241,7 @@ class TestKrknRunnerCommandGeneration:
             # Mock the internal evaluator to return a fixed score
             runner.evaluator = Mock()
             runner.evaluator.evaluate.return_value = 42.0
+            runner.evaluator.last_scores = []
 
             scenario = DummyScenario(cluster_components=ClusterComponents())
             result = runner.run(scenario, generation_id=1)

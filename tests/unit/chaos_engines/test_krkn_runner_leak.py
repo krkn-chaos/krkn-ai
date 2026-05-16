@@ -24,11 +24,11 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
         # Setup Config
         config = MagicMock(spec=ConfigFile)
         config.kubeconfig_file_path = "fake_path"
-        config.fitness_function = MagicMock(spec=FitnessFunction)
-        config.health_checks = MagicMock(spec=HealthCheckConfig)
+        config.fitness_function = FitnessFunction(query="test")
+        config.health_checks = HealthCheckConfig()
         config.elastic = None
         config.wait_duration = 10
-        config.parameters = {}  # Pydantic v2 fields aren't in MagicMock spec; set explicitly
+        config.parameters = {}
 
         from krkn_ai.models.scenario.base import Scenario
 

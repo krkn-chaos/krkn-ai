@@ -79,7 +79,7 @@ def read_config_from_file(
     return ConfigFile(**config)
 
 
-def env_is_truthy(var: str):
+def env_is_truthy(var: str) -> bool:
     """
     Checks whether a environment variable is set to truthy value.
     """
@@ -87,11 +87,11 @@ def env_is_truthy(var: str):
     return is_truthy(value)
 
 
-def is_truthy(value: str):
+def is_truthy(value: Union[str, bool, int]) -> bool:
     """
     Checks whether a value is set to truthy value.
     """
-    value = value.lower().strip()
+    value = str(value).lower().strip()
     return value in ["yes", "y", "true", "1"]
 
 

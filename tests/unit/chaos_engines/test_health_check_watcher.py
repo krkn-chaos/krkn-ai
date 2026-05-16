@@ -209,6 +209,105 @@ class TestHealthCheckWatcherResults:
         # Should return 0 when less than 4 successful checks
         assert score == 0
 
+    def test_summarize_response_time_skips_insufficient_first_url_continues_processing(
+        self,
+    ):
+        """Test summarize_response_time skips URLs with <4 samples but processes remaining URLs.
+
+        This tests the bug fix where previously return 0 would exit the entire function
+        when the first URL had insufficient data, causing total data loss.
+        """
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        # First URL has only 2 successful results (insufficient)
+        first_url_results = [
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+        ]
+
+        # Second URL has 5 successful results (sufficient - can detect outliers)
+        second_url_results = [
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.12),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.14),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.16),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=2.5),  # outlier
+        ]
+
+        health_check_results = {
+            "http://first-url": first_url_results,
+            "http://second-url": second_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        # Should NOT return 0 - second URL has sufficient data and should contribute
+        # The outlier (2.5) should be detected, so score should be > 0
+        assert score > 0
+
+    def test_summarize_response_time_returns_zero_only_when_all_urls_have_insufficient_data(
+        self,
+    ):
+        """Test summarize_response_time returns 0 only when ALL URLs have <4 samples."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        # All URLs have insufficient data
+        first_url_results = [
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+        ]
+        second_url_results = [
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.2),
+        ]
+
+        health_check_results = {
+            "http://first-url": first_url_results,
+            "http://second-url": second_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        # Should return 0 since ALL URLs have insufficient data
+        assert score == 0
+
+    def test_summarize_response_time_middle_url_insufficient_does_not_stop_processing(
+        self,
+    ):
+        """Test that an insufficient URL in the middle doesn't stop processing subsequent URLs."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        # Three URLs where the middle one has insufficient data
+        first_url_results = [
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.12),
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.14),
+            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.16),
+        ]
+        middle_url_results = [
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
+        ]  # Only 2 - insufficient
+        last_url_results = [
+            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.1),
+            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.12),
+            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.14),
+            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.16),
+            HealthCheckResult(name="app3", status_code=200, success=True, response_time=3.0),  # outlier
+        ]
+
+        health_check_results = {
+            "http://first": first_url_results,
+            "http://middle": middle_url_results,
+            "http://last": last_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        # Should NOT return 0 - first and last URLs have sufficient data
+        assert score > 0
+
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
         """Test health check handles request exceptions gracefully"""

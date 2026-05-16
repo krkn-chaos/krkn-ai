@@ -150,7 +150,7 @@ def run(
 
         genetic.save()
         run_success = True
-    except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
+    except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError, ValueError) as e:
         logger.error("%s", e)
         exit(1)
     except FitnessFunctionCalculationError as e:

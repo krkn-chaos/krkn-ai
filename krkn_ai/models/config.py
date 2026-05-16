@@ -279,6 +279,13 @@ class ConfigFile(BaseModel):
     parallel: bool = False  # Enable concurrent execution of generations
     parallel_limit: int = 5  # Maximum number of scenarios to run in parallel
 
+    @field_validator("parallel_limit")
+    @classmethod
+    def validate_parallel_limit(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("parallel_limit must be greater than 0")
+        return v
+
     wait_duration: int = (
         const.WAIT_DURATION
     )  # Time to wait after each scenario run (Default: 120 seconds)

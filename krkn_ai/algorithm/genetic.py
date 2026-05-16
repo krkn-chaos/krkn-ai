@@ -923,8 +923,11 @@ class GeneticAlgorithm:
                 "population": [s.model_dump() for s in self.population],
                 "best_of_generation": [s.model_dump() for s in self.best_of_generation],
             }
-            with open(state_path, "w") as f:
+            # Atomic write to avoid corrupted checkpoints
+            temp_path = f"{state_path}.tmp"
+            with open(temp_path, "w") as f:
                 json.dump(state, f, indent=4, default=str)
+            os.replace(temp_path, state_path)
         except Exception as e:
             logger.error("Failed to save checkpoint: %s", e)
 

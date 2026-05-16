@@ -66,7 +66,11 @@ class CompositeScenario(BaseScenario):
     dependency: CompositeDependency
 
     def __str__(self):
-        dep_str = self.dependency.name if hasattr(self.dependency, "name") else str(self.dependency)
+        dep_str = (
+            self.dependency.name
+            if hasattr(self.dependency, "name")
+            else str(self.dependency)
+        )
         return f"{self.name}({str(self.scenario_a)}, {str(self.scenario_b)}, {dep_str})"
 
     def __eq__(self, other):

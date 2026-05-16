@@ -113,6 +113,12 @@ class FitnessFunctionType(str, Enum):
     range = "range"
 
 
+class EvaluatorType(str, Enum):
+    prometheus = "prometheus"
+    health_check = "health_check"
+    python_script = "python_script"
+
+
 class SelectionStrategy(str, Enum):
     roulette = "roulette"
     tournament = "tournament"
@@ -135,6 +141,19 @@ class FitnessFunctionItem(BaseModel):
         return value
 
 
+class EvaluatorConfig(BaseModel):
+    name: str
+    type: EvaluatorType
+    weight: float = 1.0
+    # Prometheus specific
+    query: Optional[str] = None
+    fitness_type: Optional[FitnessFunctionType] = FitnessFunctionType.point
+    # Health check specific
+    mode: Optional[str] = "success_rate"  # success_rate or response_time
+    # Python script specific
+    script_path: Optional[str] = None
+
+
 class FitnessFunction(BaseModel):
     query: Union[str, None] = None  # PromQL
     type: FitnessFunctionType = FitnessFunctionType.point
@@ -142,6 +161,7 @@ class FitnessFunction(BaseModel):
     include_health_check_failure: bool = True
     include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
+    evaluators: List[EvaluatorConfig] = []
 
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):

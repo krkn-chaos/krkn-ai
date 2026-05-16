@@ -27,6 +27,11 @@ from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
 
+from krkn_ai.fitness.prometheus import PrometheusEvaluator
+from krkn_ai.fitness.health_check import HealthCheckEvaluator
+from krkn_ai.fitness.python_script import PythonScriptEvaluator
+from krkn_ai.fitness.aggregator import WeightedAggregator
+
 logger = get_logger(__name__)
 
 # TODO: Cleanup of temp kubeconfig after running the script
@@ -59,6 +64,8 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
+        
+        self.evaluator = self._initialize_evaluators()
 
     def __check_runner_availability(self):
         # Check if krknctl is available
@@ -86,6 +93,45 @@ class KrknRunner:
         if podman_available:
             logger.debug("Using krknhub as runner.")
             return KrknRunnerType.HUB_RUNNER
+
+    def _initialize_evaluators(self) -> WeightedAggregator:
+        """Initialize all configured fitness evaluators."""
+        evaluators = []
+        cfg = self.config.fitness_function
+
+        # 1. Migrate legacy 'query' to PrometheusEvaluator
+        if cfg.query:
+            evaluators.append((
+                PrometheusEvaluator(self.prom_client, cfg.query, cfg.type),
+                1.0
+            ))
+
+        # 2. Migrate legacy 'items' to PrometheusEvaluator
+        for item in cfg.items:
+            evaluators.append((
+                PrometheusEvaluator(self.prom_client, item.query, item.type),
+                item.weight
+            ))
+
+        # 3. Add new pluggable evaluators
+        for eval_cfg in cfg.evaluators:
+            if eval_cfg.type == "prometheus":
+                evaluators.append((
+                    PrometheusEvaluator(self.prom_client, eval_cfg.query, eval_cfg.fitness_type),
+                    eval_cfg.weight
+                ))
+            elif eval_cfg.type == "health_check":
+                evaluators.append((
+                    HealthCheckEvaluator(mode=eval_cfg.mode),
+                    eval_cfg.weight
+                ))
+            elif eval_cfg.type == "python_script":
+                evaluators.append((
+                    PythonScriptEvaluator(script_path=eval_cfg.script_path),
+                    eval_cfg.weight
+                ))
+
+        return WeightedAggregator(evaluators)
 
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)
@@ -160,48 +206,27 @@ class KrknRunner:
             fitness_result.fitness_score = -1.0
             logger.info("Fitness score set to -1 due to misconfiguration failure")
         else:
-            # Normal execution path - calculate fitness scores
-            # If user provided fitness_function.query, then we use the default function to calculate
-            if self.config.fitness_function.query is not None:
-                fitness_value = self.calculate_fitness_value(
-                    start=start_time,
-                    end=end_time,
-                    query=self.config.fitness_function.query,
-                    fitness_type=self.config.fitness_function.type,
-                )
-                fitness_result.fitness_score = fitness_value
-            elif len(self.config.fitness_function.items) > 0:
-                fitness_result = self.calculate_fitness_score_for_items(
-                    start=start_time, end=end_time
-                )
-
-            # Include krkn hub run failure info to the fitness score
-            if self.config.fitness_function.include_krkn_failure:
-                # Status code 2 means that SLOs not met per Krkn test
-                if returncode == 2:
-                    fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
-
-            # Include health check failure and response time to the fitness score
-            if self.config.fitness_function.include_health_check_failure:
-                fitness_result.health_check_failure_score = (
-                    health_check_watcher.summarize_success_rate(health_check_results)
-                )
-            if self.config.fitness_function.include_health_check_response_time:
-                fitness_result.health_check_response_time_score = (
-                    health_check_watcher.summarize_response_time(health_check_results)
-                )
-
-            # Calculate overall fitness score
-            logger.debug("Fitness result: %s", fitness_result)
-            fitness_result.fitness_score = sum(
-                [
-                    fitness_result.fitness_score,
-                    fitness_result.krkn_failure_score,
-                    fitness_result.health_check_failure_score,
-                    fitness_result.health_check_response_time_score,
-                ]
+            # Normal execution path - calculate fitness scores using pluggable engine
+            context = {
+                "health_check_results": health_check_results,
+                "log": log,
+                "returncode": returncode,
+                "run_uuid": run_uuid,
+                "scenario": scenario
+            }
+            
+            fitness_result.fitness_score = self.evaluator.evaluate(
+                start_time=start_time,
+                end_time=end_time,
+                context=context
             )
-            logger.info("Fitness score: %s", fitness_result.fitness_score)
+
+            # Include krkn hub run failure info (legacy support)
+            if self.config.fitness_function.include_krkn_failure and returncode == 2:
+                fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
+                fitness_result.fitness_score += KRKN_HUB_FAILURE_SCORE
+
+            logger.info("Total Fitness score: %s", fitness_result.fitness_score)
 
         return CommandRunResult(
             generation_id=generation_id,
@@ -395,152 +420,6 @@ class KrknRunner:
         if depends_on is not None:
             result["depends_on"] = depends_on
         return result
-
-    def calculate_fitness_value(self, start, end, query, fitness_type):
-        """Calculate fitness score for scenario run"""
-        if env_is_truthy("MOCK_FITNESS"):
-            return rng.random()
-
-        # Retry to calculate fitness function if it fails
-        # Case when data isn't available in prometheus for latest time range
-        retries = 3  # Number of retries to calculate fitness function
-        retry_delay = 10  # in seconds
-        for retry in range(retries):
-            try:
-                if fitness_type == FitnessFunctionType.point:
-                    return self.calculate_point_fitness(start, end, query)
-                elif fitness_type == FitnessFunctionType.range:
-                    return self.calculate_range_fitness(start, end, query)
-            except Exception as error:
-                logger.error(f"Fitness function calculation failed: {error}")
-                logger.info(
-                    f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
-                )
-                time.sleep(retry_delay)
-        raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
-        )
-
-    def calculate_fitness_score_for_items(self, start, end):
-        """
-        This is used to compute fitness scores when multiple SLOs are defined.
-        """
-        results = []
-        overall_score = 0
-        for fitness_item in self.config.fitness_function.items:
-            raw_score = self.calculate_fitness_value(
-                start=start,
-                end=end,
-                query=fitness_item.query,
-                fitness_type=fitness_item.type,
-            )
-            fitness_value = fitness_item.weight * raw_score
-            overall_score += fitness_value
-
-            # Store Result
-            results.append(
-                FitnessScoreResult(
-                    id=fitness_item.id,
-                    fitness_score=raw_score,
-                    weighted_score=fitness_value,
-                )
-            )
-
-        return FitnessResult(fitness_score=overall_score, scores=results)
-
-    def calculate_point_fitness(self, start, end, query):
-        """Takes difference between fitness function at start/end intervals of test.
-        Helpful to measure values for counter based metric like restarts.
-        """
-        logger.debug("Calculating Point Fitness")
-        result_at_beginning = self._query_prometheus_single_point(
-            query, start, "point fitness (start)"
-        )
-        result_at_end = self._query_prometheus_single_point(
-            query, end, "point fitness (end)"
-        )
-
-        return float(result_at_end) - float(result_at_beginning)
-
-    def _query_prometheus_single_point(
-        self, query: str, timestamp: datetime.datetime, context: str
-    ) -> str:
-        """
-        Query Prometheus for a single point at a specific timestamp.
-
-        Args:
-            query: The PromQL query to execute
-            timestamp: The timestamp to query at
-            context: Description of where this is called from (for error messages)
-
-        Returns:
-            The metric value as a string
-
-        Raises:
-            FitnessFunctionCalculationError: If Prometheus returns no data
-        """
-        result = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=timestamp,
-            end_time=timestamp,
-            granularity=100,
-        )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' at {timestamp} "
-                f"during {context}. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return series["values"][-1][1]
-        raise FitnessFunctionCalculationError(
-            f"Prometheus returned no data for query '{query}' at {timestamp} "
-            f"during {context}. This may indicate the metric does not exist "
-            f"in the requested time range or Prometheus has not yet scraped data."
-        )
-
-    def calculate_range_fitness(self, start, end, query):
-        """
-        Measure fitness function for the range of test.
-        Helpful to measure value over period of time like max cpu usage, max memory usage over time, etc.
-
-        config.fitness_function.query can specify a dynamic "$range$" parameter that will be replaced
-        when calling below function.
-        """
-        logger.debug("Calculating Range Fitness")
-
-        # Calculate number of minutes between test run
-        if "$range$" in query:
-            time_dt_mins = int((end - start).total_seconds() / 60)
-            if time_dt_mins == 0:
-                time_dt_mins = 1
-            query = query.replace("$range$", f"{time_dt_mins}m")
-        else:
-            logger.warning(
-                "You are missing $range$ in config.fitness_function.query to specify dynamic range. Fitness function will use specified range"
-            )
-
-        result = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=start,
-            end_time=end,
-            granularity=100,
-        )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' in range "
-                f"[{start}, {end}]. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return float(series["values"][-1][1])
-        raise FitnessFunctionCalculationError(
-            f"Prometheus returned no data for query '{query}' in range "
-            f"[{start}, {end}]. This may indicate the metric does not exist "
-            f"in the requested time range or Prometheus has not yet scraped data."
-        )
 
     def __extract_returncode_from_run(
         self, log: str, default_returncode: int

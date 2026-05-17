@@ -74,4 +74,4 @@ class CompositeScenario(BaseScenario):
         return self.name == other.name and hash(other) == hash(self)
 
     def __hash__(self):
-        return hash(tuple([self.scenario_a, self.scenario_b]))
+        return hash((self.scenario_a, self.scenario_b, self.dependency))

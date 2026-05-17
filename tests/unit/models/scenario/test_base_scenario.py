@@ -126,10 +126,13 @@ class TestCompositeScenario:
         assert composite1 == composite1
         assert composite1 != "not-a-composite"
 
-        # Test hash: different dependencies but same scenarios should have same hash
-        assert hash(composite1) == hash(composite2)
+        # Test hash: different dependencies with same scenarios should have different hash
+        assert hash(composite1) != hash(composite2)
         # Different scenario order should have different hash
         assert hash(composite1) != hash(composite3)
 
         # Test string representation (used in logging)
-        assert str(composite1) == "composite1"
+        assert (
+            str(composite1)
+            == "composite(dummy-scenario(10, 0)|NONE|dummy-scenario(20, 0))"
+        )

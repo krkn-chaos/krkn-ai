@@ -8,7 +8,7 @@ from typing_extensions import Dict
 import yaml
 from typing import List, Optional, Tuple
 
-from krkn_ai.models.app import CommandRunResult, KrknRunnerType
+from krkn_ai.models.app import CommandRunResult, FitnessResult, KrknRunnerType
 
 from krkn_ai.models.scenario.base import (
     Scenario,
@@ -549,7 +549,28 @@ class GeneticAlgorithm:
         # This is a new scenario - track it for exploration limit
         self.new_scenarios_in_generation += 1
 
-        scenario_result = self.krkn_client.run(scenario, generation_id)
+        start_time = datetime.datetime.now()
+        try:
+            scenario_result = self.krkn_client.run(scenario, generation_id)
+        except Exception as e:
+            logger.error(
+                "Scenario %s failed during execution, assigning penalty fitness: %s",
+                scenario,
+                e,
+            )
+            end_time = datetime.datetime.now()
+            scenario_result = CommandRunResult(
+                generation_id=generation_id,
+                scenario=scenario,
+                cmd="",
+                log=f"Scenario execution failed: {e}",
+                returncode=1,
+                start_time=start_time,
+                end_time=end_time,
+                duration_seconds=(end_time - start_time).total_seconds(),
+                fitness_result=FitnessResult(fitness_score=-1.0),
+                health_check_results={},
+            )
 
         # Add scenario to seen population
         self.seen_population[scenario] = scenario_result

@@ -91,3 +91,69 @@ class TestFitnessCalculation:
         assert result.generation_id == new_generation_id
         # Should not call krkn_client.run (using cache)
         genetic_algorithm_with_mock_runner.krkn_client.run.assert_not_called()
+
+    def test_calculate_fitness_handles_run_exception(
+        self, genetic_algorithm_with_mock_runner
+    ):
+        """A scenario that raises during execution gets a penalty result
+        instead of crashing the genetic run."""
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        generation_id = 0
+
+        genetic_algorithm_with_mock_runner.krkn_client.run = Mock(
+            side_effect=Exception("simulated timeout")
+        )
+
+        with patch.object(genetic_algorithm_with_mock_runner, "save_scenario_result"):
+            with patch.object(
+                genetic_algorithm_with_mock_runner.health_check_reporter, "plot_report"
+            ):
+                with patch.object(
+                    genetic_algorithm_with_mock_runner.health_check_reporter,
+                    "write_fitness_result",
+                ):
+                    result = genetic_algorithm_with_mock_runner.calculate_fitness(
+                        scenario, generation_id
+                    )
+
+                    assert isinstance(result, CommandRunResult)
+                    assert result.fitness_result.fitness_score == -1.0
+                    assert result.returncode != 0
+                    assert result.generation_id == generation_id
+                    assert (
+                        scenario in genetic_algorithm_with_mock_runner.seen_population
+                    )
+                    genetic_algorithm_with_mock_runner.krkn_client.run.assert_called_once_with(
+                        scenario, generation_id
+                    )
+
+    def test_calculate_fitness_caches_failed_scenario(
+        self, genetic_algorithm_with_mock_runner
+    ):
+        """A failed scenario is cached so an identical scenario is not re-run."""
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+
+        genetic_algorithm_with_mock_runner.krkn_client.run = Mock(
+            side_effect=Exception("simulated timeout")
+        )
+
+        with patch.object(genetic_algorithm_with_mock_runner, "save_scenario_result"):
+            with patch.object(
+                genetic_algorithm_with_mock_runner.health_check_reporter, "plot_report"
+            ):
+                with patch.object(
+                    genetic_algorithm_with_mock_runner.health_check_reporter,
+                    "write_fitness_result",
+                ):
+                    genetic_algorithm_with_mock_runner.calculate_fitness(scenario, 0)
+                    result = genetic_algorithm_with_mock_runner.calculate_fitness(
+                        scenario, 1
+                    )
+
+        # Second call returns the cached fallback with the updated generation_id
+        assert result.fitness_result.fitness_score == -1.0
+        assert result.generation_id == 1
+        # krkn_client.run was only attempted once (failure cached, not retried)
+        genetic_algorithm_with_mock_runner.krkn_client.run.assert_called_once_with(
+            scenario, 0
+        )

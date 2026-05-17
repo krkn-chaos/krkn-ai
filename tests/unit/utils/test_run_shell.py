@@ -2,10 +2,18 @@
 run_shell unit tests
 """
 
+import sys
+
 import pytest
 
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
 from krkn_ai.utils import run_shell
+
+_LONG_SLEEP_CMD = (
+    "python -c \"import time; time.sleep(10)\""
+    if sys.platform == "win32"
+    else "sleep 10"
+)
 
 
 class TestRunShell:
@@ -13,4 +21,4 @@ class TestRunShell:
 
     def test_timeout_raises_shell_command_timeout_error(self):
         with pytest.raises(ShellCommandTimeoutError):
-            run_shell("sleep 10", timeout=5)
+            run_shell(_LONG_SLEEP_CMD, timeout=5)

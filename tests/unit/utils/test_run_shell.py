@@ -10,9 +10,7 @@ from krkn_ai.models.custom_errors import ShellCommandTimeoutError
 from krkn_ai.utils import run_shell
 
 _LONG_SLEEP_CMD = (
-    "python -c \"import time; time.sleep(10)\""
-    if sys.platform == "win32"
-    else "sleep 10"
+    'python -c "import time; time.sleep(10)"' if sys.platform == "win32" else "sleep 10"
 )
 
 

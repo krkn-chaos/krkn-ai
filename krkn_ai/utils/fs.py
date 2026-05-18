@@ -21,7 +21,9 @@ def preprocess_param_string(data: str, params: dict) -> str:
 
 
 def read_config_from_file(
-    file_path: str, param: Sequence[str] | None = None, kubeconfig: str | None = None
+    file_path: str,
+    param: Union[Sequence[str], None] = None,
+    kubeconfig: Union[str, None] = None,
 ) -> ConfigFile:
     """Read config file from local
     Args:

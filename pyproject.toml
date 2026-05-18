@@ -39,8 +39,8 @@ dev = [
   "jupyterlab",
 ]
 
-[tool.setuptools]
-packages = ["krkn_ai"]
+[tool.setuptools.packages.find]
+include = ["krkn_ai*"]
 
 [tool.setuptools.package-data]
 "krkn_ai" = ["templates/*", "templates/**/*"]

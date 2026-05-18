@@ -18,7 +18,7 @@ from krkn_ai.models.custom_errors import ScenarioParameterInitError
 class SynFloodScenario(Scenario):
     name: str = "syn-flood"
     krknctl_name: str = "syn-flood"
-    krknhub_image: str = "quay.io/krkn-chaos/krkn-syn-flood:latest"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:syn-flood"
 
     packet_size: SynFloodPacketSizeParameter = SynFloodPacketSizeParameter()
     window_size: SynFloodWindowSizeParameter = SynFloodWindowSizeParameter()

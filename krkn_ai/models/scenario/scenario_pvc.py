@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 class PVCScenario(Scenario):
     name: str = "pvc-scenarios"
     krknctl_name: str = "pvc-scenarios"
-    krknhub_image: str = "quay.io/krkn-chaos/krkn-hub:pvc-scenarios"
+    krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:pvc-scenarios"
 
     namespace: NamespaceParameter = NamespaceParameter()
     pvc_name: PVCNameParameter = PVCNameParameter()

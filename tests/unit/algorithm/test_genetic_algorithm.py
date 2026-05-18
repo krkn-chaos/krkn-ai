@@ -33,6 +33,22 @@ class TestGeneticAlgorithmInitialization:
                 assert ga.population == []
                 assert len(ga.best_of_generation) == 0
 
+    def test_init_generates_unique_run_uuid(self, minimal_config, temp_output_dir):
+        """Test initialization generates a unique run UUID per instance"""
+        with patch("krkn_ai.algorithm.genetic.KrknRunner"):
+            with patch(
+                "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+            ) as mock_gen:
+                mock_gen.return_value = [("pod_scenarios", Mock)]
+                first = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+                second = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+
+                assert first.run_uuid != second.run_uuid
+
     def test_init_with_population_size_less_than_2(
         self, minimal_config, temp_output_dir
     ):
@@ -89,6 +105,10 @@ class TestGeneticAlgorithmCoreMethods:
                             mock_summary_reporter.return_value = mock_reporter_instance
                             genetic_algorithm.best_of_generation = [Mock()]
                             genetic_algorithm.seen_population = {Mock(): Mock()}
+                            final_rate = 0.42
+                            genetic_algorithm.current_scenario_mutation_rate = (
+                                final_rate
+                            )
                             genetic_algorithm.save()
 
                             # Verify all reporter methods are called
@@ -97,4 +117,10 @@ class TestGeneticAlgorithmCoreMethods:
                             assert mock_save_report.called
                             assert mock_sort.called
                             assert mock_summary_reporter.called
+                            assert (
+                                mock_summary_reporter.call_args.kwargs[
+                                    "scenario_mutation_rate"
+                                ]
+                                == final_rate
+                            )
                             assert mock_reporter_instance.save.called

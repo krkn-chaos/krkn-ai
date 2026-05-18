@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 
 # TODO: Cleanup of temp kubeconfig after running the script
 
-PODMAN_TEMPLATE = 'podman run --env-host=true -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
+PODMAN_TEMPLATE = 'podman run -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
 
 PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER="{server}" -e ES_PORT="{port}" -e ES_USERNAME="{username}" -e ES_PASSWORD="{password}" -e ES_VERIFY_CERTS="{verify_certs}" '
 
@@ -103,7 +103,9 @@ class KrknRunner:
         else:
             raise NotImplementedError("Scenario unable to run")
 
-        health_check_watcher = HealthCheckWatcher(self.config.health_checks)
+        health_check_watcher = HealthCheckWatcher(
+            self.config.health_checks, self.config.parameters
+        )
 
         # Run command and fetch result
         if env_is_truthy("MOCK_RUN"):
@@ -111,12 +113,10 @@ class KrknRunner:
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
-            # TODO: How to capture logs from composite run scenario
-
-            # Start watching application urls for health checks
-            health_check_watcher.run()
-
             try:
+                # Start watching application urls for health checks
+                health_check_watcher.run()
+
                 # Run command (show logs when verbose mode is enabled)
                 log, returncode = run_shell(
                     self.process_es_env_string(command, True),
@@ -124,9 +124,13 @@ class KrknRunner:
                 )
 
                 # Extract return code from run log which is part of telemetry data present in the log
-                returncode, run_uuid = self.__extract_returncode_from_run(
-                    log, returncode
-                )
+                if isinstance(scenario, CompositeScenario):
+                    # Use the return-code from the shell command for composite scenario
+                    pass
+                else:
+                    returncode, run_uuid = self.__extract_returncode_from_run(
+                        log, returncode
+                    )
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
@@ -283,14 +287,21 @@ class KrknRunner:
 
         # Create JSON for krknctl graph runner
         scenario_json = self.__expand_composite_json(scenario)
-        json_file = tempfile.mktemp(suffix=".json", dir=graph_json_directory)
-        with open(json_file, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".json",
+            dir=graph_json_directory,
+            delete=False,
+            mode="w",
+            encoding="utf-8",
+        ) as f:
+            json_file = f.name
             json.dump(scenario_json, f, ensure_ascii=False, indent=4)
         logger.info("Created scenario json in path: %s", json_file)
 
         # Run Json graph
         command = KRKNCTL_GRAPH_RUN_TEMPLATE.format(
-            path=json_file, kubeconfig=self.config.kubeconfig_file_path
+            path=json_file,
+            kubeconfig=self.config.kubeconfig_file_path,
         )
         return command
 
@@ -378,7 +389,7 @@ class KrknRunner:
         }
         result = {
             "image": scenario.krknhub_image,
-            "name": scenario.name,
+            "name": scenario.krknctl_name,
             "env": env,
         }
         if depends_on is not None:
@@ -442,21 +453,52 @@ class KrknRunner:
         Helpful to measure values for counter based metric like restarts.
         """
         logger.debug("Calculating Point Fitness")
-        result_at_beginning = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=start,
-            end_time=start,
-            granularity=100,
-        )[0]["values"][-1][1]
-
-        result_at_end = self.prom_client.process_prom_query_in_range(
-            query,
-            start_time=end,
-            end_time=end,
-            granularity=100,
-        )[0]["values"][-1][1]
+        result_at_beginning = self._query_prometheus_single_point(
+            query, start, "point fitness (start)"
+        )
+        result_at_end = self._query_prometheus_single_point(
+            query, end, "point fitness (end)"
+        )
 
         return float(result_at_end) - float(result_at_beginning)
+
+    def _query_prometheus_single_point(
+        self, query: str, timestamp: datetime.datetime, context: str
+    ) -> str:
+        """
+        Query Prometheus for a single point at a specific timestamp.
+
+        Args:
+            query: The PromQL query to execute
+            timestamp: The timestamp to query at
+            context: Description of where this is called from (for error messages)
+
+        Returns:
+            The metric value as a string
+
+        Raises:
+            FitnessFunctionCalculationError: If Prometheus returns no data
+        """
+        result = self.prom_client.process_prom_query_in_range(
+            query,
+            start_time=timestamp,
+            end_time=timestamp,
+            granularity=100,
+        )
+        if not result:
+            raise FitnessFunctionCalculationError(
+                f"Prometheus returned no data for query '{query}' at {timestamp} "
+                f"during {context}. This may indicate the metric does not exist "
+                f"in the requested time range or Prometheus has not yet scraped data."
+            )
+        for series in result:
+            if series.get("values"):
+                return series["values"][-1][1]
+        raise FitnessFunctionCalculationError(
+            f"Prometheus returned no data for query '{query}' at {timestamp} "
+            f"during {context}. This may indicate the metric does not exist "
+            f"in the requested time range or Prometheus has not yet scraped data."
+        )
 
     def calculate_range_fitness(self, start, end, query):
         """
@@ -484,9 +526,21 @@ class KrknRunner:
             start_time=start,
             end_time=end,
             granularity=100,
-        )[0]["values"][-1][1]
-
-        return float(result)
+        )
+        if not result:
+            raise FitnessFunctionCalculationError(
+                f"Prometheus returned no data for query '{query}' in range "
+                f"[{start}, {end}]. This may indicate the metric does not exist "
+                f"in the requested time range or Prometheus has not yet scraped data."
+            )
+        for series in result:
+            if series.get("values"):
+                return float(series["values"][-1][1])
+        raise FitnessFunctionCalculationError(
+            f"Prometheus returned no data for query '{query}' in range "
+            f"[{start}, {end}]. This may indicate the metric does not exist "
+            f"in the requested time range or Prometheus has not yet scraped data."
+        )
 
     def __extract_returncode_from_run(
         self, log: str, default_returncode: int

@@ -43,13 +43,14 @@ RUN wget -q https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSI
     && chmod +x /usr/local/bin/oc \
     && rm -f openshift-client-linux.tar.gz
 
+# Skipping krknctl setup as we make use of krknhub as runner
 # Install krknctl
-ARG KRKNCTL_VERSION=v0.10.15-beta
-RUN wget -q https://github.com/krkn-chaos/krknctl/releases/download/${KRKNCTL_VERSION}/krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz \
-    && tar -xzf krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz \
-    && mv krknctl /usr/local/bin/krknctl \
-    && chmod +x /usr/local/bin/krknctl \
-    && rm -f krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz LICENSE README.md
+# ARG KRKNCTL_VERSION=v0.10.21-beta
+# RUN wget -q https://github.com/krkn-chaos/krknctl/releases/download/${KRKNCTL_VERSION}/krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz \
+#     && tar -xzf krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz \
+#     && mv krknctl /usr/local/bin/krknctl \
+#     && chmod +x /usr/local/bin/krknctl \
+#     && rm -f krknctl-${KRKNCTL_VERSION}-linux-amd64.tar.gz LICENSE README.md
 
 # Create virtual environment with uv
 RUN uv venv /app/.venv --python python3.12

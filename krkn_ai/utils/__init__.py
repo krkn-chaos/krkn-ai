@@ -60,7 +60,7 @@ def run_shell(command, do_not_log=False, timeout=None):
 
     reader.join(timeout=5)
 
-    if not reader.is_alive() and process.stdout:
+    if process.stdout:
         process.stdout.close()
 
     logs = "".join(output_lines)

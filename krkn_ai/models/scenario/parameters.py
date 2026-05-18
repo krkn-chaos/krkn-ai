@@ -313,8 +313,8 @@ class DNSOutageDurationParameter(BaseParameter):
 
 
 class DNSOutageProtocolParameter(BaseParameter):
-    krknhub_name: str = "PROTOCOL"
-    krknctl_name: str = "protocol"
+    krknhub_name: str = "PROTOCOLS"
+    krknctl_name: str = "protocols"
     value: str = "tcp,udp"
 
 

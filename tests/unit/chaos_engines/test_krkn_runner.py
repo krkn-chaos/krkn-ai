@@ -14,6 +14,7 @@ from krkn_ai.models.config import (
     FitnessFunctionType,
     HealthCheckConfig,
 )
+from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.base import CompositeScenario, CompositeDependency
 from krkn_ai.models.cluster_components import ClusterComponents
@@ -214,3 +215,373 @@ class TestKrknRunnerCommandGeneration:
             assert os.path.exists(graph_dir)
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
+
+
+class TestCalculatePointFitness:
+    """Test calculate_point_fitness and _query_prometheus_single_point"""
+
+    def test_calculate_point_fitness_success(self, minimal_config, temp_output_dir):
+        """Test point fitness calculation with valid Prometheus response"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.side_effect = [
+            [{"values": [[1000, "5"]]}],  # start query
+            [{"values": [[2000, "10"]]}],  # end query
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            score = runner.calculate_point_fitness(
+                start, end, "sum(kube_pod_container_status_restarts_total)"
+            )
+
+            assert score == 5.0  # 10 - 5
+            assert mock_prom_client.process_prom_query_in_range.call_count == 2
+
+    def test_calculate_point_fitness_empty_values_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test point fitness raises FitnessFunctionCalculationError when Prometheus returns empty values"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": []}
+        ]  # Empty values
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_point_fitness(
+                    start, end, "sum(kube_pod_container_status_restarts_total)"
+                )
+
+            assert "Prometheus returned no data" in str(exc_info.value)
+            assert "point fitness (start)" in str(exc_info.value)
+
+    def test_calculate_point_fitness_none_result_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test point fitness raises error when Prometheus returns None result"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = None
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_point_fitness(
+                    start, end, "sum(kube_pod_container_status_restarts_total)"
+                )
+
+            assert "Prometheus returned no data" in str(exc_info.value)
+
+    def test_calculate_point_fitness_empty_list_result_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test point fitness raises error when Prometheus returns empty list"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = []
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_point_fitness(
+                    start, end, "sum(kube_pod_container_status_restarts_total)"
+                )
+
+            assert "Prometheus returned no data" in str(exc_info.value)
+
+    def test_query_prometheus_single_point_context_in_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test that context string appears in error message"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="up", type=FitnessFunctionType.point
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [{"values": []}]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner._query_prometheus_single_point("up", ts, "my custom context")
+
+            assert "my custom context" in str(exc_info.value)
+            assert "up" in str(exc_info.value)
+            assert "2024-01-01 12:00:00" in str(exc_info.value)
+
+
+class TestCalculateRangeFitness:
+    """Test calculate_range_fitness"""
+
+    def test_calculate_range_fitness_success(self, minimal_config, temp_output_dir):
+        """Test range fitness calculation with valid Prometheus response"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="max(kube_pod_container_status_restarts_total{$range$})",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "15.5"]]}
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 10, 0)
+
+            score = runner.calculate_range_fitness(
+                start, end, "max(kube_pod_container_status_restarts_total{$range$})"
+            )
+
+            # Query should have $range$ replaced with "10m"
+            call_str = str(mock_prom_client.process_prom_query_in_range.call_args)
+            assert "10m" in call_str
+            assert score == 15.5
+
+    def test_calculate_range_fitness_empty_values_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test range fitness raises FitnessFunctionCalculationError when Prometheus returns empty values"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="max(kube_pod_container_status_restarts_total{$range$})",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [{"values": []}]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_range_fitness(
+                    start, end, "max(kube_pod_container_status_restarts_total{$range$})"
+                )
+
+            assert "Prometheus returned no data" in str(exc_info.value)
+            assert "range" in str(exc_info.value)
+            assert "2024-01-01 12:00:00" in str(exc_info.value)
+            assert "2024-01-01 12:05:00" in str(exc_info.value)
+
+    def test_calculate_range_fitness_none_result_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test range fitness raises error when Prometheus returns None result"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="max(kube_pod_container_status_restarts_total{$range$})",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = None
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_range_fitness(
+                    start, end, "max(kube_pod_container_status_restarts_total{$range$})"
+                )
+
+            assert "Prometheus returned no data" in str(exc_info.value)
+
+
+class TestCalculateFitnessValueRetries:
+    """Test calculate_fitness_value retry behavior with empty Prometheus data"""
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.time.sleep")
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_fitness_value_retries_on_empty_data(
+        self, mock_env, mock_sleep, minimal_config, temp_output_dir
+    ):
+        """Test that calculate_fitness_value retries when Prometheus returns empty data"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        # First two calls return empty, third call succeeds
+        mock_prom_client.process_prom_query_in_range.side_effect = [
+            [{"values": []}],
+            [{"values": []}],
+            [{"values": [[1000, "5"]]}],
+            [{"values": [[2000, "10"]]}],
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            # Should not raise since eventually succeeds
+            score = runner.calculate_fitness_value(
+                start,
+                end,
+                "sum(kube_pod_container_status_restarts_total)",
+                FitnessFunctionType.point,
+            )
+            assert score == 5.0
+            assert mock_prom_client.process_prom_query_in_range.call_count == 4
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.time.sleep")
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_fitness_value_raises_after_retries_exhausted(
+        self, mock_env, mock_sleep, minimal_config, temp_output_dir
+    ):
+        """Test that calculate_fitness_value raises after 3 retries when Prometheus keeps returning empty data"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        # All calls return empty
+        mock_prom_client.process_prom_query_in_range.return_value = [{"values": []}]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+            with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+                runner.calculate_fitness_value(
+                    start,
+                    end,
+                    "sum(kube_pod_container_status_restarts_total)",
+                    FitnessFunctionType.point,
+                )
+
+            # After retries exhausted, calculate_fitness_value raises its own error
+            assert "failed after 3 retries" in str(exc_info.value)
+            # Each retry calls calculate_point_fitness which calls _query_prometheus_single_point
+            # for the start point. The guard fails immediately, so 1 Prometheus call per retry = 3 total.
+            assert mock_prom_client.process_prom_query_in_range.call_count == 3

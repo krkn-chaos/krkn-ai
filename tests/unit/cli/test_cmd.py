@@ -312,5 +312,5 @@ class TestDiscoverCommand:
                     ],
                 )
                 assert result.exit_code == 1
-                mock_logger.warning.assert_called_once()
-                assert "Kubeconfig file not found" in str(mock_logger.warning.call_args)
+                mock_logger.error.assert_called_once()
+                assert "Kubeconfig file not found" in str(mock_logger.error.call_args)

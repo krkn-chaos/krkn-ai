@@ -1,0 +1,41 @@
+# Krkn-AI Dashboard Anomaly Detection Configuration
+# Global IQR multiplier for bounds (Default: 1.5)
+iqr_k: 1.5
+
+severity:
+  # Z-score thresholds
+  high_z: 2.5
+  medium_z: 1.5
+  # % deviation thresholds (for pct_deviation mode)
+  high_pct: 60.0
+  medium_pct: 30.0
+
+duration:
+  # Z-Score multiplier that triggers duration anomalies (Default: 1.5)
+  z_threshold: 1.5
+  # Percentage difference relative to baseline triggering duration anomaly (Default: 50.0%)
+  baseline_pct: 50.0
+
+hc_failure:
+  # Failure Score baseline multiplier. Only flag if health_check_failure_score > baseline * multiplier (Default: 1.1)
+  baseline_multiplier: 1.1
+  # % deviation from baseline that triggers a Health Check Failure Surge in pct_deviation mode (Default: 30.0)
+  baseline_pct: 30.0
+
+fitness_regression:
+  high_drop_pct: 20.0
+  medium_drop_pct: 10.0
+  z_div: 10.0
+
+hc_response_time:
+  z_threshold: 1.5
+  # Multiplier relative to baseline health-check response time triggering anomaly (Default: 1.2)
+  baseline_multiplier: 1.2
+  # % deviation from baseline that triggers a Health Check Response Time anomaly in pct_deviation mode (Default: 30.0)
+  baseline_pct: 30.0
+
+service_response_time:
+  z_threshold: 1.5
+  # Multiplier relative to baseline evaluating total service scale (Default: 1.5)
+  baseline_multiplier: 1.5
+  baseline_pct: 30.0

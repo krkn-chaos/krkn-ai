@@ -12,22 +12,29 @@ from collections import defaultdict
 import threading
 import time
 import requests
-from typing import List, Dict, Tuple
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.fs import preprocess_param_string
 from krkn_ai.models.config import (
     HealthCheckApplicationConfig,
     HealthCheckConfig,
     HealthCheckResult,
+    ParameterValue,
 )
 
 logger = get_logger(__name__)
 
 
 class HealthCheckWatcher:
-    def __init__(self, config: HealthCheckConfig):
+    def __init__(
+        self,
+        config: HealthCheckConfig,
+        params: Optional[Dict[str, ParameterValue]] = None,
+    ):
         self.config = config
+        self._params = {k: v.value for k, v in (params or {}).items()}
         self._stop_event = threading.Event()
         self._threads: List[threading.Thread] = []
         # Each thread stores results in its own list - ZERO contention!
@@ -43,6 +50,10 @@ class HealthCheckWatcher:
             t.start()
             self._threads.append(t)
 
+    def _resolve_headers(self, app: HealthCheckApplicationConfig) -> dict:
+        merged = {**(self.config.headers or {}), **(app.headers or {})}
+        return {k: preprocess_param_string(v, self._params) for k, v in merged.items()}
+
     def run_health_check(self, health_check: HealthCheckApplicationConfig):
         # Each thread gets its own private results list
         thread_id = threading.current_thread().ident
@@ -51,10 +62,16 @@ class HealthCheckWatcher:
         thread_results: List[HealthCheckResult] = []
         self._thread_results[thread_id] = (health_check.url, thread_results)
 
+        resolved_headers = self._resolve_headers(health_check)
+
         # Simple polling loop, stops when stop() is called
         while not self._stop_event.is_set():
             try:
-                resp = requests.get(health_check.url, timeout=health_check.timeout)
+                resp = requests.get(
+                    health_check.url,
+                    headers=resolved_headers,
+                    timeout=health_check.timeout,
+                )
                 status = resp.status_code
                 success = status == health_check.status_code
                 error = None
@@ -128,7 +145,7 @@ class HealthCheckWatcher:
                     response_times.append(result.response_time)
 
             if len(response_times) < 4:  # Not enough data to calculate outliers
-                return 0
+                continue  # Skip this URL, but continue processing remaining URLs
 
             q1 = np.percentile(response_times, 25)
             q3 = np.percentile(response_times, 75)
@@ -137,7 +154,7 @@ class HealthCheckWatcher:
 
             outliers = [t for t in response_times if t > upper_bound]
             score += len(outliers)
-            total += len(results)
+            total += len(response_times)
         if total == 0:
             return 0.0
         score = (score / total) * 10.0

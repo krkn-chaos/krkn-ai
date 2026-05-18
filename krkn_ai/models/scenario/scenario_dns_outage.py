@@ -32,7 +32,7 @@ class DnsOutageScenario(Scenario):
     @property
     def parameters(self):
         return [
-            self.duration,
+            # self.duration,
             self.pod_name,
             self.namespace,
             self.ingress,

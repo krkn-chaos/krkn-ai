@@ -25,6 +25,8 @@ namespace="${DEMO_NAMESPACE:-robot-shop}" # Replace with the desired namespace i
 repo_dir="temp-helm-repo"
 helm_chart="K8s/helm"
 is_openshift="${IS_OPENSHIFT:-true}" # TODO: Automatically detect if the cluster is openshift or not
+image_repo="mirror.gcr.io/robotshop"
+infra_registry="mirror.gcr.io/library" # mirror for Docker Hub official images (redis, rabbitmq)
 
 # Create a temporary directory
 temp_dir="./tmp"
@@ -62,7 +64,22 @@ if [ "$is_openshift" = "true" ]; then
     oc adm policy add-scc-to-user privileged -z default -n $namespace
 fi
 
+# Post-renderer to redirect hardcoded redis/rabbitmq images to the mirror registry
+post_renderer=$(mktemp)
+cat > "$post_renderer" << POSTRENDER
+#!/bin/bash
+sed "s|image: redis:|image: ${infra_registry}/redis:|g
+     s|image: rabbitmq:|image: ${infra_registry}/rabbitmq:|g"
+POSTRENDER
+chmod +x "$post_renderer"
+
 # Install Helm Chart
 cd $helm_chart
-helm upgrade -i $chart_name --set openshift="$is_openshift" --namespace "$namespace" .
+helm upgrade -i $chart_name \
+  --set openshift="$is_openshift" \
+  --set image.repo="$image_repo" \
+  --post-renderer "$post_renderer" \
+  --namespace "$namespace" .
 echo "Installed helm chart '$chart_name' in namespace '$namespace'"
+
+rm -f "$post_renderer"

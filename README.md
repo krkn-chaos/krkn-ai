@@ -119,6 +119,11 @@ uv run krkn_ai discover -k ./tmp/kubeconfig.yaml \
 # Path to your kubeconfig file
 kubeconfig_file_path: "./tmp/kubeconfig.yaml"
 
+# Baseline evaluation configuration
+baseline:
+  enable: true
+  duration: 120
+
 # Optional: Random seed for reproducible runs
 # seed: 42
 
@@ -204,7 +209,7 @@ cluster_components:
     name: node-2
 ```
 
-You can modify `krkn-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Krkn-AI testing.
+You can modify `krkn-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Krkn-AI testing. For advanced customization, please refer to the krkn-ai docs.
 
 
 ## 🎯 Usage
@@ -322,31 +327,35 @@ The dashboard provides tabs for fitness evolution, health checks, detailed scena
 
 ### Understanding Results
 
-Krkn-AI saves results in the specified output directory:
+Each run of `krkn_ai run` creates a unique subdirectory (named by a generated UUID) inside the `--output` directory. All artifacts for that run are written there:
 
 ```
 .
 └── results/
-    ├── reports/
-    │   ├── health_check_report.csv
-    │   └── graphs/
-    │       ├── best_generation.png
-    │       ├── scenario_1.png
-    │       ├── scenario_2.png
-    │       └── ...
-    ├── yaml/
-    │   ├── generation_0/
-    │   │   ├── scenario_1.yaml
-    │   │   ├── scenario_2.yaml
-    │   │   └── ...
-    │   └── generation_1/
-    │       └── ...
-    ├── log/
-    │   ├── scenario_1.log
-    │   ├── scenario_2.log
-    │   └── ...
-    ├── best_scenarios.json
-    └── config.yaml
+    └── <run_uuid>/
+        ├── run.log
+        ├── reports/
+        │   ├── health_check_report.csv
+        │   ├── all.csv
+        │   ├── best_scenarios.yaml
+        │   └── graphs/
+        │       ├── best_generation.png
+        │       ├── scenario_1.png
+        │       ├── scenario_2.png
+        │       └── ...
+        ├── yaml/
+        │   ├── generation_0/
+        │   │   ├── scenario_1.yaml
+        │   │   ├── scenario_2.yaml
+        │   │   └── ...
+        │   └── generation_1/
+        │       └── ...
+        ├── logs/
+        │   ├── scenario_1.log
+        │   ├── scenario_2.log
+        │   └── ...
+        ├── results.json
+        └── krkn-ai.yaml
 ```
 
 ## 🧬 How It Works

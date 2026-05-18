@@ -1,4 +1,5 @@
 import re
+import concurrent.futures
 from typing import Dict, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
@@ -366,17 +367,6 @@ class ClusterManager:
             node_component = Node(name=node.metadata.name, labels=labels, taints=taints)
 
             try:
-                node_component.interfaces = self.list_node_interfaces(
-                    node.metadata.name
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to list node interfaces for node %s: %s",
-                    node.metadata.name,
-                    e,
-                )
-
-            try:
                 alloc_cpu = self.parse_cpu(node.status.allocatable["cpu"])
                 alloc_mem = self.parse_memory(node.status.allocatable["memory"])
                 if node.metadata.name not in node_metrics_map:
@@ -397,7 +387,6 @@ class ClusterManager:
             return node_component
 
         node_list = []
-        import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             futures = [executor.submit(process_node, node) for node in nodes]
@@ -405,6 +394,23 @@ class ClusterManager:
                 result = future.result()
                 if result is not None:
                     node_list.append(result)
+
+        if node_list:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_node = {
+                    executor.submit(self.list_node_interfaces, node.name): node
+                    for node in node_list
+                }
+                for future in concurrent.futures.as_completed(future_to_node):
+                    node = future_to_node[future]
+                    try:
+                        node.interfaces = future.result()
+                    except Exception as e:
+                        logger.error(
+                            "Failed to list node interfaces for node %s: %s",
+                            node.name,
+                            e,
+                        )
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list

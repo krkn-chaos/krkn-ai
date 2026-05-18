@@ -1,6 +1,8 @@
 """Tests for utils/fs.py"""
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from krkn_ai.utils.fs import read_config_from_file
 
@@ -108,3 +110,29 @@ class TestReadConfigFromFileHeaders:
         result = read_config_from_file(config_file, param=["KEY=value"])
         assert result.health_checks.headers is None
         assert result.health_checks.applications[0].headers is None
+
+
+class TestReadConfigValidation:
+    def test_read_config_empty_file(self, tmp_path):
+        """Empty YAML file should raise ValidationError from Pydantic (missing required fields)"""
+        config_file = str(tmp_path / "empty.yaml")
+        with open(config_file, "w") as f:
+            f.write("")
+        with pytest.raises(ValidationError):
+            read_config_from_file(config_file)
+
+    def test_read_config_non_dict_root(self, tmp_path):
+        """YAML with non-dict root (e.g. list) should raise ValueError"""
+        config_file = str(tmp_path / "list.yaml")
+        with open(config_file, "w") as f:
+            f.write("- item1\n- item2")
+        with pytest.raises(ValueError, match="must be a mapping"):
+            read_config_from_file(config_file)
+
+    def test_read_config_string_root(self, tmp_path):
+        """YAML with string root should raise ValueError"""
+        config_file = str(tmp_path / "string.yaml")
+        with open(config_file, "w") as f:
+            f.write("just a string")
+        with pytest.raises(ValueError, match="must be a mapping"):
+            read_config_from_file(config_file)

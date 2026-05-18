@@ -11,6 +11,7 @@ from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
     FitnessFunction,
+    FitnessFunctionItem,
     FitnessFunctionType,
     HealthCheckConfig,
 )
@@ -749,3 +750,249 @@ class TestCalculateFitnessValueRetries:
             # Each retry calls calculate_point_fitness which calls _query_prometheus_single_point
             # for the start point. The guard fails immediately, so 1 Prometheus call per retry = 3 total.
             assert mock_prom_client.process_prom_query_in_range.call_count == 3
+
+
+class TestValidateFitnessQueries:
+    """Test validate_fitness_queries pre-flight check"""
+
+    def _make_runner(self, minimal_config, temp_output_dir, mock_prom_client):
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            return KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+    def test_valid_single_query_passes(self, minimal_config, temp_output_dir):
+        """Valid single fitness query passes validation without error"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "5"]]}
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        # Should not raise
+        runner.validate_fitness_queries()
+
+        assert mock_prom_client.process_prom_query_in_range.call_count == 1
+
+    def test_invalid_single_query_raises_error(self, minimal_config, temp_output_dir):
+        """Invalid fitness query raises FitnessFunctionCalculationError"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(made_up_metric_that_does_not_exist)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = []
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        assert "Pre-flight validation failed" in str(exc_info.value)
+        assert "made_up_metric_that_does_not_exist" in str(exc_info.value)
+
+    def test_query_with_empty_values_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Prometheus series without samples fails validation"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(metric_without_samples)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [{"values": []}]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        assert "returned no samples" in str(exc_info.value)
+        assert "metric_without_samples" in str(exc_info.value)
+
+    def test_query_with_any_non_empty_series_passes(
+        self, minimal_config, temp_output_dir
+    ):
+        """Validation passes when at least one returned series has samples"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(metric_with_partial_samples)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": []},
+            {"values": [[1000, "1"]]},
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        assert mock_prom_client.process_prom_query_in_range.call_count == 1
+
+    def test_mock_fitness_skips_validation(self, minimal_config, temp_output_dir):
+        """MOCK_FITNESS env var causes validation to be skipped"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="bad_query",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=True
+        ):
+            runner.validate_fitness_queries()
+
+        # Prometheus should never have been called
+        mock_prom_client.process_prom_query_in_range.assert_not_called()
+
+    def test_multi_slo_validates_all_items(self, minimal_config, temp_output_dir):
+        """Multi-SLO config validates each item's query"""
+        minimal_config.fitness_function = FitnessFunction(
+            items=[
+                FitnessFunctionItem(
+                    id=1,
+                    query="sum(metric_a)",
+                    type=FitnessFunctionType.point,
+                    weight=0.6,
+                ),
+                FitnessFunctionItem(
+                    id=2,
+                    query="sum(metric_b)",
+                    type=FitnessFunctionType.point,
+                    weight=0.4,
+                ),
+            ]
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "1"]]}
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        assert mock_prom_client.process_prom_query_in_range.call_count == 2
+
+    def test_multi_slo_second_item_fails(self, minimal_config, temp_output_dir):
+        """Multi-SLO validation reports which item failed"""
+        minimal_config.fitness_function = FitnessFunction(
+            items=[
+                FitnessFunctionItem(
+                    id=1,
+                    query="sum(metric_a)",
+                    type=FitnessFunctionType.point,
+                    weight=0.6,
+                ),
+                FitnessFunctionItem(
+                    id=2,
+                    query="sum(missing_metric)",
+                    type=FitnessFunctionType.point,
+                    weight=0.4,
+                ),
+            ]
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.side_effect = [
+            [{"values": [[1000, "1"]]}],  # first item succeeds
+            [],  # second item fails
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        assert "items[2]" in str(exc_info.value)
+        assert "missing_metric" in str(exc_info.value)
+
+    def test_range_query_substitutes_range(self, minimal_config, temp_output_dir):
+        """Range queries have $range$ replaced with window_minutes"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="max(some_gauge{$range$})",
+            type=FitnessFunctionType.range,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "42"]]}
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries(window_minutes=7)
+
+        call_args = mock_prom_client.process_prom_query_in_range.call_args
+        assert "7m" in call_args[0][0] or "7m" in str(call_args)
+
+    def test_top_level_query_takes_precedence_over_items(
+        self, minimal_config, temp_output_dir
+    ):
+        """Validation follows runtime query/items precedence"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(top_level_metric)",
+            type=FitnessFunctionType.point,
+            items=[
+                FitnessFunctionItem(
+                    id=1,
+                    query="sum(item_metric)",
+                    type=FitnessFunctionType.point,
+                    weight=1.0,
+                ),
+            ],
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "1"]]}
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        assert mock_prom_client.process_prom_query_in_range.call_count == 1
+        call_args = mock_prom_client.process_prom_query_in_range.call_args
+        assert "top_level_metric" in call_args[0][0]
+
+    def test_prometheus_exception_wrapped(self, minimal_config, temp_output_dir):
+        """Non-fitness Prometheus exceptions are wrapped in FitnessFunctionCalculationError"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(some_metric)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        original_error = ConnectionError("network timeout")
+        mock_prom_client.process_prom_query_in_range.side_effect = original_error
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        assert "Pre-flight validation failed" in str(exc_info.value)
+        assert "network timeout" in str(exc_info.value)
+        assert exc_info.value.__cause__ is original_error
+
+    def test_items_only_config(self, minimal_config, temp_output_dir):
+        """Config with only items (no top-level query) validates correctly"""
+        minimal_config.fitness_function = FitnessFunction(
+            items=[
+                FitnessFunctionItem(
+                    id=1,
+                    query="sum(only_item_metric)",
+                    type=FitnessFunctionType.point,
+                    weight=1.0,
+                ),
+            ]
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "1"]]}
+        ]
+        runner = self._make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        assert mock_prom_client.process_prom_query_in_range.call_count == 1

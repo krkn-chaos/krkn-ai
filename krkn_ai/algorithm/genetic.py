@@ -120,6 +120,9 @@ class GeneticAlgorithm:
         # logger.debug("--------------------------------------------------------")
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
+    def validate_fitness_queries(self):
+        self.krkn_client.validate_fitness_queries()
+
     def simulate(self):
         try:
             results_path = os.path.join(self.output_dir, "results.json")

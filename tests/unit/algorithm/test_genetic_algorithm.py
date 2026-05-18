@@ -79,6 +79,25 @@ class TestGeneticAlgorithmInitialization:
                 )
                 assert ga.config.population_size == 6
 
+    def test_validate_fitness_queries_delegates_to_runner(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test query validation is explicit and delegated to KrknRunner"""
+        with patch("krkn_ai.algorithm.genetic.KrknRunner") as mock_runner_class:
+            with patch(
+                "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+            ) as mock_gen:
+                mock_gen.return_value = [("pod_scenarios", Mock)]
+                mock_runner = Mock()
+                mock_runner_class.return_value = mock_runner
+
+                ga = GeneticAlgorithm(
+                    config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                )
+                ga.validate_fitness_queries()
+
+                mock_runner.validate_fitness_queries.assert_called_once_with()
+
 
 class TestGeneticAlgorithmCoreMethods:
     """Test GeneticAlgorithm core methods"""

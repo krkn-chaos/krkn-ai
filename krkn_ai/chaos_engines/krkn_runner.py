@@ -3,6 +3,7 @@ import json
 import datetime
 import tempfile
 import time
+from typing import Any, Optional
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -89,6 +90,75 @@ class KrknRunner:
         if podman_available:
             logger.debug("Using krknhub as runner.")
             return KrknRunnerType.HUB_RUNNER
+
+    def validate_fitness_queries(self, window_minutes: int = 5) -> None:
+        """Pre-flight check that active PromQL fitness queries return samples.
+
+        This verifies recent metric availability before the genetic algorithm
+        starts. It follows the same query/items precedence used during runtime
+        fitness calculation.
+
+        Args:
+            window_minutes: Size of the lookback window in minutes.
+
+        Raises:
+            FitnessFunctionCalculationError: If any active query returns no samples.
+        """
+        if env_is_truthy("MOCK_FITNESS"):
+            logger.info("MOCK_FITNESS is set, skipping fitness query validation.")
+            return
+
+        end = datetime.datetime.now()
+        start = end - datetime.timedelta(minutes=window_minutes)
+        fitness = self.config.fitness_function
+
+        if fitness.query is not None:
+            queries_to_check = [("query", fitness.query, fitness.type)]
+        else:
+            queries_to_check = [
+                (f"items[{item.id}]", item.query, item.type) for item in fitness.items
+            ]
+
+        for label, query, fitness_type in queries_to_check:
+            resolved = query
+            if fitness_type == FitnessFunctionType.range and "$range$" in resolved:
+                resolved = resolved.replace("$range$", f"{window_minutes}m")
+            query_description = f"query '{query}'"
+            if resolved != query:
+                query_description = f"query '{query}' (resolved to '{resolved}')"
+            try:
+                result = self.prom_client.process_prom_query_in_range(
+                    resolved,
+                    start_time=start,
+                    end_time=end,
+                    # krkn-lib maps granularity to the Prometheus query_range step in seconds.
+                    granularity=100,
+                )
+                if not self._has_prometheus_samples(result):
+                    raise FitnessFunctionCalculationError(
+                        f"Pre-flight validation failed for {label}: "
+                        f"{query_description} returned no samples. "
+                        f"Verify the metric exists in Prometheus."
+                    )
+            except FitnessFunctionCalculationError:
+                raise
+            except Exception as e:
+                raise FitnessFunctionCalculationError(
+                    f"Pre-flight validation failed for {label}: "
+                    f"{query_description} caused an error: {e}"
+                ) from e
+
+        logger.info(
+            "Fitness query validation passed (%d quer%s checked).",
+            len(queries_to_check),
+            "y" if len(queries_to_check) == 1 else "ies",
+        )
+
+    @staticmethod
+    def _has_prometheus_samples(result: Optional[list[dict[str, Any]]]) -> bool:
+        if not result:
+            return False
+        return any(series.get("values") for series in result)
 
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)

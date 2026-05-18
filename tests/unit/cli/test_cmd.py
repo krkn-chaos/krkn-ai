@@ -4,7 +4,7 @@ CLI command tests
 
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from click.testing import CliRunner
 from pydantic import ValidationError
 
@@ -66,6 +66,57 @@ class TestRunCommand:
                     )
                     mock_ga.simulate.assert_called_once()
                     mock_ga.save.assert_called_once()
+                    mock_ga.validate_fitness_queries.assert_not_called()
+        finally:
+            os.unlink(config_path)
+
+    def test_run_validates_queries_when_flag_is_set(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test --validate-queries runs pre-flight validation before simulation"""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            import yaml
+
+            config_dict = {
+                "kubeconfig_file_path": minimal_config.kubeconfig_file_path,
+                "generations": minimal_config.generations,
+                "population_size": minimal_config.population_size,
+                "fitness_function": {
+                    "query": minimal_config.fitness_function.query,
+                    "type": minimal_config.fitness_function.type.value,
+                },
+                "scenario": {"pod_scenarios": {"enable": True}},
+            }
+            yaml.dump(config_dict, f)
+            config_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_read.return_value = minimal_config
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+
+                    result = runner.invoke(
+                        main,
+                        [
+                            "run",
+                            "--config",
+                            config_path,
+                            "--output",
+                            temp_output_dir,
+                            "--validate-queries",
+                        ],
+                    )
+
+                    assert result.exit_code == 0
+                    assert mock_ga.method_calls[:3] == [
+                        call.validate_fitness_queries(),
+                        call.simulate(),
+                        call.save(),
+                    ]
         finally:
             os.unlink(config_path)
 

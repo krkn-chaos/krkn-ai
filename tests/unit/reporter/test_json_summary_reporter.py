@@ -180,3 +180,60 @@ class TestJSONSummaryReporter:
         with open(path, "r") as f:
             saved_content = json.load(f)
             assert saved_content == expected_summary
+
+    def test_fitness_progression_with_all_evaluations(self, minimal_config):
+        """Test fitness progression calculates averages using all_evaluations, not just unique seen_population"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cc = minimal_config.cluster_components
+        scenario1 = DummyScenario(cluster_components=cc)
+        scenario2 = DummyScenario(cluster_components=cc)
+        scenario3 = DummyScenario(cluster_components=cc)
+        scenario1.__str__ = lambda: "scenario1"
+        scenario2.__str__ = lambda: "scenario2"
+        scenario3.__str__ = lambda: "scenario3"
+        
+        # Gen 0 has 2 scenarios
+        gen0 = self._create_results(0, 10, 2, scenario1, now)  # scores 10, 20
+        # Wait, _create_results uses the same scenario for all count. Let's make it 1 by 1.
+        res0 = CommandRunResult(generation_id=0, scenario_id=0, scenario=scenario1, cmd="test", log="test", returncode=0, start_time=now, end_time=now, fitness_result=FitnessResult(fitness_score=10.0))
+        res1 = CommandRunResult(generation_id=0, scenario_id=1, scenario=scenario2, cmd="test", log="test", returncode=0, start_time=now, end_time=now, fitness_result=FitnessResult(fitness_score=20.0))
+        
+        # Gen 1 has 1 new scenario and 1 cache hit from Gen 0 (score 20 copied to gen 1)
+        res2_new = CommandRunResult(generation_id=1, scenario_id=100, scenario=scenario3, cmd="test", log="test", returncode=0, start_time=now, end_time=now, fitness_result=FitnessResult(fitness_score=40.0))
+        
+        cache_hit = CommandRunResult(
+            generation_id=1,
+            scenario_id=1, # cached from gen0
+            scenario=scenario2,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=20.0), # cached score
+        )
+
+        all_evals = [res0, res1, res2_new, cache_hit]
+        
+        # seen_population only has the first unique occurrences (gen0 and gen1_new)
+        seen_pop = {0: res0, 1: res1, 100: res2_new}
+
+        reporter = JSONSummaryReporter(
+            run_uuid="cache-test",
+            config=minimal_config,
+            seen_population=seen_pop,
+            best_of_generation=[res1, res2_new], # best of gen0: 20, best of gen1: 40
+            all_evaluations=all_evals
+        )
+
+        summary = reporter.generate_summary()
+        
+        assert summary["summary"]["total_scenarios_executed"] == 4 # 2 in gen0 + 2 in gen1
+        assert summary["summary"]["unique_scenarios"] == 1 # Since DummyScenario __str__ is same for all
+        
+        progression = summary["fitness_progression"]
+        assert len(progression) == 2
+        # Gen 0 average: (10 + 20) / 2 = 15.0
+        assert progression[0]["average"] == 15.0
+        # Gen 1 average: (40 + 20) / 2 = 30.0 (would be 40.0 if cache miss happened!)
+        assert progression[1]["average"] == 30.0

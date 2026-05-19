@@ -35,6 +35,7 @@ class JSONSummaryReporter:
         completed_generations: int = 0,
         seed: Optional[int] = None,
         scenario_mutation_rate: Optional[float] = None,
+        all_evaluations: Optional[List[CommandRunResult]] = None,
     ):
         """
         Initialize the JSON summary reporter.
@@ -54,6 +55,7 @@ class JSONSummaryReporter:
         self.run_uuid = run_uuid
         self.config = config
         self.seen_population = seen_population
+        self.all_evaluations = all_evaluations if all_evaluations is not None else list(seen_population.values())
         self.best_of_generation = best_of_generation
         self.baseline_result = baseline_result
         self.start_time = start_time
@@ -83,7 +85,7 @@ class JSONSummaryReporter:
         # Get all fitness scores for statistics
         all_fitness_scores = [
             result.fitness_result.fitness_score
-            for result in self.seen_population.values()
+            for result in self.all_evaluations
         ]
 
         # Calculate average fitness score
@@ -124,7 +126,7 @@ class JSONSummaryReporter:
                 "composition_rate": self.config.composition_rate,
             },
             "summary": {
-                "total_scenarios_executed": len(self.seen_population),
+                "total_scenarios_executed": len(self.all_evaluations),
                 "unique_scenarios": len(unique_scenarios),
                 "generations_completed": self.completed_generations,
                 "best_fitness_score": round(best_fitness_score, 4),
@@ -146,10 +148,10 @@ class JSONSummaryReporter:
         """Build fitness progression data from best_of_generation."""
         fitness_progression = []
         for i, result in enumerate(self.best_of_generation):
-            # Calculate average fitness for this generation from seen_population
+            # Calculate average fitness for this generation from all_evaluations
             gen_fitness_scores = [
                 r.fitness_result.fitness_score
-                for r in self.seen_population.values()
+                for r in self.all_evaluations
                 if r.generation_id == i
             ]
             gen_average = 0.0

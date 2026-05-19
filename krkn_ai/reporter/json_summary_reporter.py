@@ -55,7 +55,11 @@ class JSONSummaryReporter:
         self.run_uuid = run_uuid
         self.config = config
         self.seen_population = seen_population
-        self.all_evaluations = all_evaluations if all_evaluations is not None else list(seen_population.values())
+        self.all_evaluations = (
+            all_evaluations
+            if all_evaluations is not None
+            else list(seen_population.values())
+        )
         self.best_of_generation = best_of_generation
         self.baseline_result = baseline_result
         self.start_time = start_time
@@ -84,8 +88,7 @@ class JSONSummaryReporter:
 
         # Get all fitness scores for statistics
         all_fitness_scores = [
-            result.fitness_result.fitness_score
-            for result in self.all_evaluations
+            result.fitness_result.fitness_score for result in self.all_evaluations
         ]
 
         # Calculate average fitness score

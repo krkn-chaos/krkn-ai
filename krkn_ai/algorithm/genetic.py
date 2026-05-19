@@ -83,6 +83,9 @@ class GeneticAlgorithm:
         self.seen_population: Dict[
             BaseScenario, CommandRunResult
         ] = {}  # Map between scenario and its result
+        self.all_evaluations: List[
+            CommandRunResult
+        ] = []  # Track all evaluations including cache hits
         self.best_of_generation: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
@@ -544,6 +547,7 @@ class GeneticAlgorithm:
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
+            self.all_evaluations.append(result)
             return result
 
         # This is a new scenario - track it for exploration limit
@@ -561,6 +565,7 @@ class GeneticAlgorithm:
         if self.elastic_client is not None:
             self.elastic_client.index_run_result(scenario_result, self.run_uuid)
 
+        self.all_evaluations.append(scenario_result)
         return scenario_result
 
     def mutate(self, scenario: BaseScenario):
@@ -782,6 +787,7 @@ class GeneticAlgorithm:
             completed_generations=self.completed_generations,
             seed=self.seed,
             scenario_mutation_rate=self.current_scenario_mutation_rate,
+            all_evaluations=self.all_evaluations,
         )
         summary_reporter.save(self.output_dir)
 

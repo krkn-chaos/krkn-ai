@@ -54,6 +54,8 @@ class TestFitnessCalculation:
                     assert (
                         scenario in genetic_algorithm_with_mock_runner.seen_population
                     )
+                    assert result in genetic_algorithm_with_mock_runner.all_evaluations
+                    assert len(genetic_algorithm_with_mock_runner.all_evaluations) == 1
                     genetic_algorithm_with_mock_runner.krkn_client.run.assert_called_once_with(
                         scenario, generation_id
                     )
@@ -89,5 +91,7 @@ class TestFitnessCalculation:
         # Should return cached result but with updated generation_id
         assert result.fitness_result.fitness_score == 20.0
         assert result.generation_id == new_generation_id
+        assert result in genetic_algorithm_with_mock_runner.all_evaluations
+        assert len(genetic_algorithm_with_mock_runner.all_evaluations) == 1
         # Should not call krkn_client.run (using cache)
         genetic_algorithm_with_mock_runner.krkn_client.run.assert_not_called()

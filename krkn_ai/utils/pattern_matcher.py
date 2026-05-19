@@ -68,15 +68,30 @@ class PatternMatcher:
         """
         # Handle list input (pass through)
         if isinstance(pattern_string, list):
+            has_any = any(pat and pat.strip() for pat in pattern_string)
+            if not has_any:
+                return cls([], [], match_all=default_match_all)
+
             list_include: List[re.Pattern] = []
             list_exclude: List[re.Pattern] = []
+            has_wildcard = any(pat.strip() == "*" for pat in pattern_string if pat)
+
             for pat in pattern_string:
+                if not pat:
+                    continue
+                pat = pat.strip()
+                if pat == "*":
+                    continue
                 if pat.startswith("!"):
                     actual = pat[1:]
                     if actual:
                         list_exclude.append(cls._compile_pattern(actual))
-                else:
+                elif not has_wildcard:
                     list_include.append(cls._compile_pattern(pat))
+
+            if has_wildcard:
+                return cls([], list_exclude, match_all=True)
+
             list_match_all = len(list_include) == 0 and len(list_exclude) > 0
             return cls(list_include, list_exclude, match_all=list_match_all)
 

@@ -73,6 +73,31 @@ class TestPatternMatcherCreation:
         assert matcher.matches("kube-system")
         assert not matcher.matches("test-ns")
 
+    def test_list_input_empty_respects_default_match_all_true(self):
+        """Test empty list honors default_match_all=True"""
+        matcher = PatternMatcher.from_string([], default_match_all=True)
+        assert matcher.match_all
+        assert matcher.matches("anything")
+
+    def test_list_input_empty_respects_default_match_all_false(self):
+        """Test empty list honors default_match_all=False"""
+        matcher = PatternMatcher.from_string([], default_match_all=False)
+        assert matcher.is_empty()
+        assert not matcher.matches("anything")
+
+    def test_list_input_wildcard_matches_all(self):
+        """Test list input wildcard matches everything"""
+        matcher = PatternMatcher.from_string(["*"])
+        assert matcher.match_all
+        assert matcher.matches("default")
+        assert matcher.matches("kube-system")
+
+    def test_list_input_wildcard_with_exclusion(self):
+        """Test list input wildcard supports exclusions"""
+        matcher = PatternMatcher.from_string(["*", "!kube-system"])
+        assert matcher.matches("default")
+        assert not matcher.matches("kube-system")
+
 
 class TestPatternMatcherExclusion:
     """Test PatternMatcher exclusion patterns"""

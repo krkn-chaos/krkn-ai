@@ -308,9 +308,7 @@ class ConfigFile(BaseModel):
 
     output: OutputConfig = OutputConfig()
 
-    elastic: Optional[ElasticConfig] = Field(
-        default_factory=ElasticConfig
-    )  # Elasticsearch configuration
+    elastic: Optional[ElasticConfig] = None  # Elasticsearch configuration
 
     cluster_components: ClusterComponents
 

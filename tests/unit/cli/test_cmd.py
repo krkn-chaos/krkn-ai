@@ -2,6 +2,7 @@
 CLI command tests
 """
 
+import builtins
 import os
 import tempfile
 from unittest.mock import Mock, patch
@@ -288,6 +289,71 @@ class TestDiscoverCommand:
                     assert os.path.exists(output_file)
                     with open(output_file, "r") as f:
                         assert f.read() == "generated_template_content"
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_uses_atomic_write_for_output(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Test discover avoids in-place writes that can leave partial output"""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write("previous_config")
+
+        real_open = builtins.open
+
+        class FailingOutputWriter:
+            def __init__(self, file):
+                self.file = file
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self.file.close()
+                return False
+
+            def write(self, data):
+                self.file.write(data[:7])
+                self.file.flush()
+                raise OSError("simulated partial in-place write")
+
+        def failing_output_open(file, mode="r", *args, **kwargs):
+            if file == output_file and "w" in mode:
+                return FailingOutputWriter(real_open(file, mode, *args, **kwargs))
+            return real_open(file, mode, *args, **kwargs)
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_cluster_manager_class:
+                with patch("krkn_ai.cli.cmd.create_krkn_ai_template") as mock_template:
+                    with patch("builtins.open", side_effect=failing_output_open):
+                        mock_manager = Mock()
+                        mock_manager.discover_components.return_value = (
+                            mock_cluster_components
+                        )
+                        mock_cluster_manager_class.return_value = mock_manager
+                        mock_template.return_value = "generated_template_content"
+
+                        result = runner.invoke(
+                            main,
+                            [
+                                "discover",
+                                "--kubeconfig",
+                                kubeconfig_path,
+                                "--output",
+                                output_file,
+                            ],
+                        )
+
+            assert result.exit_code == 0
+            with open(output_file, "r", encoding="utf-8") as f:
+                assert f.read() == "generated_template_content"
         finally:
             os.unlink(kubeconfig_path)
 

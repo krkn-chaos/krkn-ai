@@ -1,12 +1,119 @@
 import json
 import os
+import stat
+import uuid
 import yaml
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Callable, Optional, cast
 
 from krkn_ai.models.config import ConfigFile, ParameterValue
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _fsync_directory(dir_path: str):
+    try:
+        dir_fd = os.open(dir_path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    except OSError:
+        pass
+    finally:
+        os.close(dir_fd)
+
+
+def _existing_file_mode(file_path: str) -> int:
+    try:
+        return stat.S_IMODE(os.stat(file_path).st_mode)
+    except FileNotFoundError:
+        return 0o666
+
+
+def _preserve_existing_metadata(source_path: str, target_path: str):
+    try:
+        source_stat = os.stat(source_path)
+    except FileNotFoundError:
+        return
+
+    if hasattr(os, "chown"):
+        try:
+            os.chown(target_path, source_stat.st_uid, source_stat.st_gid)
+        except OSError:
+            logger.debug("Unable to preserve ownership for %s", target_path)
+
+    try:
+        os.chmod(target_path, stat.S_IMODE(source_stat.st_mode))
+    except OSError:
+        logger.debug("Unable to preserve mode for %s", target_path)
+
+    _preserve_existing_xattrs(source_path, target_path)
+
+
+def _preserve_existing_xattrs(source_path: str, target_path: str):
+    listxattr = cast(
+        Optional[Callable[[str], List[str]]], getattr(os, "listxattr", None)
+    )
+    getxattr = cast(
+        Optional[Callable[[str, str], bytes]], getattr(os, "getxattr", None)
+    )
+    setxattr = cast(
+        Optional[Callable[[str, str, bytes], None]], getattr(os, "setxattr", None)
+    )
+    if listxattr is None or getxattr is None or setxattr is None:
+        return
+
+    try:
+        xattr_names = listxattr(source_path)
+    except OSError:
+        return
+
+    for name in xattr_names:
+        try:
+            setxattr(target_path, name, getxattr(source_path, name))
+        except OSError:
+            logger.debug(
+                "Unable to preserve extended attribute %s for %s", name, target_path
+            )
+
+
+def atomic_write_text(file_path: str, data: str):
+    """
+    Write text to a file using a same-directory temporary file and atomic replace.
+    """
+    target_path = os.path.realpath(file_path)
+    output_dir = os.path.dirname(target_path)
+    base_name = os.path.basename(target_path)
+    tmp_path = os.path.join(output_dir, f".{base_name}.{uuid.uuid4().hex}.tmp")
+    tmp_mode = _existing_file_mode(target_path)
+
+    fd = None
+    tmp_created = False
+    try:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, tmp_mode)
+        tmp_created = True
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+
+        _preserve_existing_metadata(target_path, tmp_path)
+        os.replace(tmp_path, target_path)
+        _fsync_directory(output_dir)
+    except BaseException:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                logger.debug("Unable to close temporary file %s", tmp_path)
+        try:
+            if tmp_created and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            logger.debug("Unable to remove temporary file %s", tmp_path)
+        raise
 
 
 def preprocess_param_string(data: str, params: dict) -> str:

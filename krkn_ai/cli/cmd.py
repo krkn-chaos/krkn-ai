@@ -19,7 +19,7 @@ from krkn_ai.models.custom_errors import (
     PrometheusConnectionError,
     UniqueScenariosError,
 )
-from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.fs import atomic_write_text, read_config_from_file
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.cluster_manager import ClusterManager
 
@@ -273,7 +273,6 @@ def discover(
 
     template = create_krkn_ai_template(kubeconfig, cluster_components_data)
 
-    with open(output, "w") as f:
-        f.write(template)
+    atomic_write_text(output, template)
 
     logger.info("Saved component configuration to %s", output)

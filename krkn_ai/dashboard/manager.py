@@ -28,20 +28,25 @@ class DashboardManager:
 
         try:
             if background:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-                assert process.stdout is not None  # guaranteed by PIPE
-                assert process.stderr is not None  # guaranteed by PIPE
+                log_file_path = os.path.join(actual_output, "dashboard.log")
+                log_file = open(log_file_path, "a")
+
+                try:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                    )
+                finally:
+                    # Parent can safely close its file descriptor
+                    log_file.close()
+
                 # Check quickly if the process failed to start
                 try:
                     retcode = process.wait(timeout=2)
                     # Process exited immediately — something went wrong
-                    stdout = process.stdout.read().decode(errors="replace")
-                    stderr = process.stderr.read().decode(errors="replace")
-                    output = (stderr or stdout).strip()
+                    with open(log_file_path, "r", errors="replace") as f:
+                        output = f.read().strip()
                     logger.warning(
                         "Dashboard process exited immediately (code %d): %s",
                         retcode,
@@ -49,9 +54,7 @@ class DashboardManager:
                     )
                     return None
                 except subprocess.TimeoutExpired:
-                    # Still running after 2s — detach pipes so they don't block
-                    process.stdout.close()
-                    process.stderr.close()
+                    # Still running after 2s
                     logger.info(f"Dashboard running at http://localhost:{port}")
                     return process
             else:

@@ -113,6 +113,11 @@ class FitnessFunctionType(str, Enum):
     range = "range"
 
 
+class SelectionStrategy(str, Enum):
+    roulette = "roulette"
+    tournament = "tournament"
+
+
 auto_id = id_generator()
 
 
@@ -284,6 +289,9 @@ class ConfigFile(BaseModel):
     composition_rate: float = (
         0  # How often a crossover would lead to composition (0.0-1.0)
     )
+
+    selection_strategy: SelectionStrategy = SelectionStrategy.roulette
+    tournament_size: int = 3
 
     population_injection_rate: float = (
         const.POPULATION_INJECTION_RATE

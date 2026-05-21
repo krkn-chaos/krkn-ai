@@ -154,8 +154,8 @@ class HealthCheckWatcher:
         for _, results in health_check_results.items():
             response_times = [r.response_time for r in results if r.success]
 
-            if len(response_times) < 4:
-                continue
+            if len(response_times) < 4:  # Not enough data to calculate outliers
+                continue  # Skip this URL, but continue processing remaining URLs
 
             q1 = np.percentile(response_times, 25)
             q3 = np.percentile(response_times, 75)
@@ -164,8 +164,7 @@ class HealthCheckWatcher:
 
             outliers = [t for t in response_times if t > upper_bound]
             score += len(outliers)
-            total += len(results)
-
+            total += len(response_times)
         if total == 0:
             return 0.0
         score = (score / total) * 10.0

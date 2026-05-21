@@ -41,6 +41,11 @@ class RNG:
             return low
         return int(self.rng.integers(low, high + 1))
 
+    def sample(self, items: Sequence[T], k: int) -> List[T]:
+        """Return k unique elements from items, without replacement."""
+        indices = self.rng.choice(len(items), size=k, replace=False)
+        return [items[i] for i in indices]
+
     def uniform(self, low: float, high: float):
         return self.rng.uniform(low, high)
 

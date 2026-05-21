@@ -128,6 +128,20 @@ class TestRNG:
         )
         assert results == {1, 2}
 
+    def test_sample(self):
+        """Test sample() returns unique elements."""
+        rng = RNG(42)
+        items = [1, 2, 3, 4, 5]
+        sampled = rng.sample(items, k=3)
+        assert len(sampled) == 3
+        assert len(set(sampled)) == 3
+        assert all(x in items for x in sampled)
+
+        # Reproducibility check
+        rng.set_seed(42)
+        sampled2 = rng.sample(items, k=3)
+        assert sampled == sampled2
+
     def test_uniform(self):
         """Test uniform() returns a float within range."""
         rng = RNG(42)

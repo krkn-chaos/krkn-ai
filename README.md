@@ -232,7 +232,7 @@ adaptive_mutation:
 #   saturation_threshold: 0.0001
 ```
 
-You can modify `krkn-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Krkn-AI testing.
+You can modify `krkn-ai.yaml` as per your requirement to include/exclude any cluster components, scenarios, fitness function SLOs or health check endpoints for the Krkn-AI testing. For advanced customization, please refer to the krkn-ai docs.
 
 
 ## 🎯 Usage

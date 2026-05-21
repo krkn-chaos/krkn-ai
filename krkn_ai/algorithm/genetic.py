@@ -18,7 +18,7 @@ from krkn_ai.models.scenario.base import (
 )
 from krkn_ai.models.scenario.factory import ScenarioFactory
 
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, SelectionStrategy
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
@@ -44,11 +44,11 @@ class GeneticAlgorithm:
         output_dir: str,
         format: str,
         runner_type: KrknRunnerType = None,
-        run_uuid: str = str(uuid.uuid4()),
+        run_uuid: Optional[str] = None,
     ):
         self.config = config
         self.format = format
-        self.run_uuid = run_uuid
+        self.run_uuid = run_uuid if run_uuid is not None else str(uuid.uuid4())
 
         # Organize results under run_uuid subdirectory
         self.output_dir = output_dir
@@ -97,8 +97,9 @@ class GeneticAlgorithm:
         # Track run metadata for results summary
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
-        self.seed: Optional[int] = None  # Seed can be set externally if needed
+        self.seed: Optional[int] = self.config.seed
         self.completed_generations: int = 0
+        self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
 
         if self.config.population_size < 2:
             raise PopulationSizeError("Population size should be at least 2")
@@ -282,19 +283,24 @@ class GeneticAlgorithm:
         if self.stagnant_generations < cfg.generations:
             return
 
-        # adaptive update
-        if improvement < cfg.threshold:
-            self.config.scenario_mutation_rate *= 1.2
-        else:
-            self.config.scenario_mutation_rate *= 0.9
+        if cfg.min > cfg.max:
+            raise ValueError(
+                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
+                f"must be less than or equal to max ({cfg.max})"
+            )
 
-        self.config.scenario_mutation_rate = max(
-            cfg.min, min(self.config.scenario_mutation_rate, cfg.max)
+        if improvement < cfg.threshold:
+            self.current_scenario_mutation_rate *= 1.2
+        else:
+            self.current_scenario_mutation_rate *= 0.9
+
+        self.current_scenario_mutation_rate = max(
+            cfg.min, min(self.current_scenario_mutation_rate, cfg.max)
         )
 
         logger.info(
-            "Adaptive mutation triggered | mutation_rate=%.4f",
-            self.config.scenario_mutation_rate,
+            "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
+            self.current_scenario_mutation_rate,
         )
 
         self.stagnant_generations = 0
@@ -319,6 +325,8 @@ class GeneticAlgorithm:
                 cur_generation,
                 format_duration(elapsed_time),
             )
+            self.completed_generations = cur_generation
+            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
@@ -562,7 +570,7 @@ class GeneticAlgorithm:
             return scenario
 
         # Scenario mutation (new scenario, try to preserve properties)
-        if rng.random() < self.config.scenario_mutation_rate:
+        if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
                 # logger.debug("Scenario mutation successful")
@@ -584,7 +592,7 @@ class GeneticAlgorithm:
         for _, scenario_cls in self.valid_scenarios:
             # instantiate new scenario for a scenario type
             new_scenario = scenario_cls(
-                cluster_components=self.config.cluster_components
+                cluster_components=self.config.cluster_components.get_active_components()
             )
 
             common_params = set([type(x) for x in new_scenario.parameters]) & set(
@@ -614,8 +622,41 @@ class GeneticAlgorithm:
 
         return True, new_scenario
 
-    # TODO: Implement a more sophisticated selection method like Tournament Selection for better noise tolerance in fitness scores
     def select_parents(self, fitness_scores: List[CommandRunResult]):
+        """
+        Selects two parents based on the configured selection strategy.
+        """
+        if self.config.selection_strategy == SelectionStrategy.tournament:
+            parent1 = self.tournament_selection(
+                fitness_scores, self.config.tournament_size
+            )
+            parent2 = self.tournament_selection(
+                fitness_scores, self.config.tournament_size
+            )
+            return parent1, parent2
+
+        # Default to Roulette Wheel Selection
+        return self.roulette_wheel_selection(fitness_scores)
+
+    def tournament_selection(
+        self, fitness_scores: List[CommandRunResult], tournament_size: int
+    ):
+        """
+        Selects a parent using Tournament Selection.
+        Randomly picks 'tournament_size' individuals and returns the best one.
+        """
+        population_size = len(fitness_scores)
+        size = min(tournament_size, population_size)
+
+        # Pick random participants uniformly from the population
+        weights = [1.0 / population_size] * population_size
+        participants = rng.choices(items=fitness_scores, weights=weights, k=size)
+
+        # Return the scenario of the participant with the highest fitness score
+        best = max(participants, key=lambda x: x.fitness_result.fitness_score)
+        return best.scenario
+
+    def roulette_wheel_selection(self, fitness_scores: List[CommandRunResult]):
         """
         Selects two parents using Roulette Wheel Selection (proportionate selection).
         Higher fitness means higher chance of being selected.
@@ -740,6 +781,7 @@ class GeneticAlgorithm:
             end_time=self.end_time,
             completed_generations=self.completed_generations,
             seed=self.seed,
+            scenario_mutation_rate=self.current_scenario_mutation_rate,
         )
         summary_reporter.save(self.output_dir)
 

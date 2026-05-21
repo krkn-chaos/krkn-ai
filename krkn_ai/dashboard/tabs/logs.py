@@ -25,19 +25,12 @@ def render_logs(log_data, scen_id_to_name=None):
     options = [scen_label(s) for s in all_ids]
     id_map = {scen_label(s): s for s in all_ids}
 
-    scen_col, btn_col = st.columns([0.85, 0.15])
+    scen_col, _ = st.columns([1, 0.001])  # single-column layout, keep _ as spacer
     with scen_col:
         chosen = st.selectbox("Select Scenario:", options, key="logs_scen")
 
     sid = id_map[chosen]
     d = next((x for x in log_data if x["scenario_id"] == sid), {})
-
-    with btn_col:
-        st.write("")
-        st.write("")
-        if st.button("View Raw .log", type="tertiary", use_container_width=True):
-            if d:
-                show_raw_log_modal(d.get("raw_text", ""))
 
     if not d:
         st.info("No data for this scenario.")
@@ -61,10 +54,20 @@ def render_logs(log_data, scen_id_to_name=None):
     os_ver = (node_info.get("os_version") or "—").replace("GNU/Linux ", "")
     exit_st = d.get("exit_status", "—")
     duration = d.get("duration", "—")
+    dist = d.get("distribution", "—")
+
+    st.markdown(
+        """<style>
+        [data-testid="stMetricDelta"] svg {
+            display: none;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Duration", duration, scen_type)
-    m2.metric("Cluster version", cluster_ver, "Kubernetes")
+    m2.metric("Cluster version", cluster_ver, dist)
     m3.metric("Total nodes", node_cnt, f"{arch} · {os_ver}")
     m4.metric("Scenarios run", 1, f"exit status {exit_st}")
 
@@ -144,20 +147,9 @@ def render_logs(log_data, scen_id_to_name=None):
         ni5.metric("Instance type", inst)
         ni6.metric("Network plugin", net)
 
-    # Run Timeline
-    timeline = d.get("timeline", [])
-    if timeline:
-        st.markdown("### Run timeline")
-
-        SKIP_FRAGS = ["✅ type:", "✅ types:"]
-        key_lines = [t for t in timeline if not any(f in t["msg"] for f in SKIP_FRAGS)]
-
-        tl_text = ""
-        for item in key_lines:
-            ts = item["ts"]
-            level = item["level"]
-            msg = item["msg"]
-            tl_text += f"{ts}  [{level}]  {msg}\n"
-
-        with st.expander("View Timeline", expanded=True):
-            st.code(tl_text, language="log")
+    # Raw Log
+    raw_text = d.get("raw_text", "")
+    if raw_text:
+        st.markdown("### Raw Log")
+        with st.expander("View Raw Log", expanded=False):
+            st.code(raw_text, language="log")

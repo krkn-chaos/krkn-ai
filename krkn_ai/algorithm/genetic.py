@@ -97,8 +97,9 @@ class GeneticAlgorithm:
         # Track run metadata for results summary
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
-        self.seed: Optional[int] = None  # Seed can be set externally if needed
+        self.seed: Optional[int] = self.config.seed
         self.completed_generations: int = 0
+        self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
 
         if self.config.population_size < 2:
             raise PopulationSizeError("Population size should be at least 2")
@@ -282,19 +283,24 @@ class GeneticAlgorithm:
         if self.stagnant_generations < cfg.generations:
             return
 
-        # adaptive update
-        if improvement < cfg.threshold:
-            self.config.scenario_mutation_rate *= 1.2
-        else:
-            self.config.scenario_mutation_rate *= 0.9
+        if cfg.min > cfg.max:
+            raise ValueError(
+                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
+                f"must be less than or equal to max ({cfg.max})"
+            )
 
-        self.config.scenario_mutation_rate = max(
-            cfg.min, min(self.config.scenario_mutation_rate, cfg.max)
+        if improvement < cfg.threshold:
+            self.current_scenario_mutation_rate *= 1.2
+        else:
+            self.current_scenario_mutation_rate *= 0.9
+
+        self.current_scenario_mutation_rate = max(
+            cfg.min, min(self.current_scenario_mutation_rate, cfg.max)
         )
 
         logger.info(
-            "Adaptive mutation triggered | mutation_rate=%.4f",
-            self.config.scenario_mutation_rate,
+            "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
+            self.current_scenario_mutation_rate,
         )
 
         self.stagnant_generations = 0
@@ -319,6 +325,8 @@ class GeneticAlgorithm:
                 cur_generation,
                 format_duration(elapsed_time),
             )
+            self.completed_generations = cur_generation
+            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
@@ -562,7 +570,7 @@ class GeneticAlgorithm:
             return scenario
 
         # Scenario mutation (new scenario, try to preserve properties)
-        if rng.random() < self.config.scenario_mutation_rate:
+        if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
                 # logger.debug("Scenario mutation successful")
@@ -584,7 +592,7 @@ class GeneticAlgorithm:
         for _, scenario_cls in self.valid_scenarios:
             # instantiate new scenario for a scenario type
             new_scenario = scenario_cls(
-                cluster_components=self.config.cluster_components
+                cluster_components=self.config.cluster_components.get_active_components()
             )
 
             common_params = set([type(x) for x in new_scenario.parameters]) & set(
@@ -773,6 +781,7 @@ class GeneticAlgorithm:
             end_time=self.end_time,
             completed_generations=self.completed_generations,
             seed=self.seed,
+            scenario_mutation_rate=self.current_scenario_mutation_rate,
         )
         summary_reporter.save(self.output_dir)
 

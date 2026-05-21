@@ -353,17 +353,6 @@ class ClusterManager:
             node_component = Node(name=node.metadata.name, labels=labels, taints=taints)
 
             try:
-                node_component.interfaces = self.list_node_interfaces(
-                    node.metadata.name
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to list node interfaces for node %s: %s",
-                    node.metadata.name,
-                    e,
-                )
-
-            try:
                 alloc_cpu = self.parse_cpu(node.status.allocatable["cpu"])
                 alloc_mem = self.parse_memory(node.status.allocatable["memory"])
                 usage_cpu, usage_mem = self.__fetch_node_metrics(node.metadata.name)
@@ -378,6 +367,23 @@ class ClusterManager:
                     e,
                 )
             node_list.append(node_component)
+
+        if node_list:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_node = {
+                    executor.submit(self.list_node_interfaces, node.name): node
+                    for node in node_list
+                }
+                for future in concurrent.futures.as_completed(future_to_node):
+                    node = future_to_node[future]
+                    try:
+                        node.interfaces = future.result()
+                    except Exception as e:
+                        logger.error(
+                            "Failed to list node interfaces for node %s: %s",
+                            node.name,
+                            e,
+                        )
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list

@@ -1,6 +1,9 @@
 import os
+import sys
 import uuid
 import json
+from kubernetes.client.rest import ApiException
+from urllib3.exceptions import MaxRetryError
 from krkn_ai.constants import STATUS_STARTED, STATUS_FAILED
 
 import click
@@ -110,7 +113,7 @@ def run(
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
         exit(1)
-    except ValidationError as err:
+    except (ValueError, ValidationError) as err:
         logger.error("Unable to parse config file: %s", err)
         exit(1)
 
@@ -245,14 +248,24 @@ def discover(
         logger.error("Kubeconfig file not found.")
         exit(1)
 
-    cluster_manager = ClusterManager(kubeconfig)
+    try:
+        cluster_manager = ClusterManager(kubeconfig)
 
-    cluster_components = cluster_manager.discover_components(
-        namespace_pattern=namespace,
-        pod_label_pattern=pod_label,
-        node_label_pattern=node_label,
-        skip_pod_name=skip_pod_name,
-    )
+        cluster_components = cluster_manager.discover_components(
+            namespace_pattern=namespace,
+            pod_label_pattern=pod_label,
+            node_label_pattern=node_label,
+            skip_pod_name=skip_pod_name,
+        )
+    except ApiException as e:
+        logger.error("Kubernetes API error: %s", e)
+        sys.exit(1)
+    except MaxRetryError as e:
+        logger.error("Failed to connect to Kubernetes cluster: %s", e)
+        sys.exit(1)
+    except Exception as e:
+        logger.error("An unexpected error occurred during discovery: %s", e)
+        sys.exit(1)
 
     cluster_components_data = cluster_components.model_dump(
         mode="json", warnings="none", exclude_defaults=True

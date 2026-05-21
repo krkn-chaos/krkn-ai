@@ -1,0 +1,39 @@
+:root{--bg:#0f172a;--s:#1e293b;--b:#334155;--t:#e2e8f0;--m:#94a3b8;--g:#22c55e;--r:#ef4444;--o:#f97316}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--t);font-family:'Segoe UI',system-ui,sans-serif;padding:2rem;max-width:1400px;margin:auto}
+h1{font-size:2rem;font-weight:700;margin-bottom:.2rem}
+h2{font-size:1.2rem;font-weight:600;margin-bottom:1rem;padding-bottom:.4rem;border-bottom:1px solid var(--b)}
+h3{font-size:1rem;font-weight:600;margin:1rem 0 .5rem}
+.meta{color:var(--m);font-size:.82rem;margin-bottom:1.5rem}
+.nav{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem}
+.nav a{background:var(--s);border:1px solid var(--b);border-radius:6px;padding:.35rem .8rem;
+       text-decoration:none;color:var(--m);font-size:.82rem;transition:background .15s}
+.nav a:hover{background:var(--b);color:var(--t)}
+.report-section{background:var(--s);border:1px solid var(--b);border-radius:12px;
+                padding:1.5rem;margin-bottom:1.5rem}
+.metric-row{display:flex;flex-wrap:wrap;gap:1rem;margin-bottom:1.2rem}
+.metric-card{background:var(--bg);border:1px solid var(--b);border-radius:8px;
+             padding:.9rem 1.4rem;display:flex;flex-direction:column;align-items:center;min-width:130px}
+.metric-val{font-size:1.7rem;font-weight:700;color:var(--g)}
+.metric-val.bad{color:var(--r)}
+.metric-lbl{font-size:.78rem;color:var(--m);margin-top:.2rem}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.subsec{margin-top:1.2rem}
+.muted{color:var(--m);font-size:.88rem}
+.good{color:var(--g)}
+.report-table{width:100%;border-collapse:collapse;font-size:.8rem;margin-top:.5rem}
+.report-table th{background:var(--bg);color:var(--m);padding:.45rem .7rem;
+                  text-align:left;border-bottom:1px solid var(--b)}
+.report-table td{padding:.4rem .7rem;border-bottom:1px solid rgba(51,65,85,.5)}
+.report-table tr:hover td{background:rgba(255,255,255,.03)}
+hr.d{border:none;border-top:1px solid var(--b);margin:1rem 0}
+@media(max-width:900px){.two-col{grid-template-columns:1fr}}
+
+.scenario-dist-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+.scenario-dist-item {
+    width: 100%;
+}

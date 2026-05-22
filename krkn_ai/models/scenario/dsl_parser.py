@@ -88,8 +88,10 @@ class ScenarioDSLParser:
         for step in steps:
             name = step.get("name")
             if not name:
-                raise ValueError(f"DSL step is missing a 'name' field (type: {step.get('type')})")
-            
+                raise ValueError(
+                    f"DSL step is missing a 'name' field (type: {step.get('type')})"
+                )
+
             type_name = step.get("type")
             params = step.get("parameters", {})
             step_by_name[name] = step

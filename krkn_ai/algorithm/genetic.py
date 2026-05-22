@@ -4,10 +4,8 @@ import datetime
 import json
 import time
 import uuid
-import threading
-import concurrent.futures
 import yaml
-from typing import List, Optional, Tuple, Any, Dict
+from typing import List, Optional, Tuple, Dict
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 
@@ -25,7 +23,6 @@ from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
-from krkn_ai.models.scenario.dsl_parser import ScenarioDSLParser
 
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
@@ -40,9 +37,6 @@ class GeneticAlgorithm:
     """
     A class implementing a Genetic Algorithm for scenario optimization.
     """
-
-    _lock: threading.Lock
-    _inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]]
 
     def __init__(
         self,
@@ -70,7 +64,6 @@ class GeneticAlgorithm:
             config, output_dir=self.output_dir, runner_type=runner_type
         )
         self.population: List[BaseScenario] = []
-        self._lock = threading.Lock()
 
         self.stagnant_generations = 0
         self.saturation_stagnant_generations = (
@@ -96,7 +89,6 @@ class GeneticAlgorithm:
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
         self.seed: Optional[int] = self.config.seed
-        self.seeds: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
             self.output_dir, self.config.output
@@ -115,10 +107,6 @@ class GeneticAlgorithm:
         if self.config.elastic is not None:
             self.elastic_client = ElasticSearchClient(self.config.elastic)
 
-        self._lock = threading.Lock()
-        self._inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]] = {}
-
-        self._load_seeds()
         self.completed_generations: int = 0
         self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
 
@@ -140,26 +128,6 @@ class GeneticAlgorithm:
         # logger.debug("CONFIG")
         # logger.debug("--------------------------------------------------------")
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
-
-    def _load_seeds(self):
-        """Load expert-guided seeds from the recipes directory."""
-        if not self.config.recipes_path or not os.path.isdir(self.config.recipes_path):
-            return
-
-        logger.info("Loading chaos recipes from: %s", self.config.recipes_path)
-        parser = ScenarioDSLParser(
-            self.config.cluster_components.get_active_components()
-        )
-
-        for filename in os.listdir(self.config.recipes_path):
-            if filename.endswith(".yaml") or filename.endswith(".yml"):
-                path = os.path.join(self.config.recipes_path, filename)
-                try:
-                    recipes = parser.parse_file(path)
-                    self.seeds.extend(recipes)
-                    logger.info("Loaded %d recipes from %s", len(recipes), filename)
-                except Exception as e:
-                    logger.error("Failed to load recipe %s: %s", filename, e)
 
     def simulate(self):
         try:
@@ -210,25 +178,10 @@ class GeneticAlgorithm:
             logger.info("--------------------------------------------------------")
 
             # Evaluate fitness of the current population
-            if self.config.parallel:
-                logger.info(
-                    "Running generation %d in parallel (limit: %d)",
-                    cur_generation + 1,
-                    self.config.parallel_limit,
-                )
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=self.config.parallel_limit
-                ) as executor:
-                    futures = [
-                        executor.submit(self.calculate_fitness, member, cur_generation)
-                        for member in self.population
-                    ]
-                    fitness_scores = [f.result() for f in futures]
-            else:
-                fitness_scores = [
-                    self.calculate_fitness(member, cur_generation)
-                    for member in self.population
-                ]
+            fitness_scores = [
+                self.calculate_fitness(member, cur_generation)
+                for member in self.population
+            ]
 
             # Find the best individual in the current generation
             # Note: If there is no best solution, it will still consider based on sorting order
@@ -251,9 +204,6 @@ class GeneticAlgorithm:
             # Increment generation counter after evaluation
             cur_generation += 1
             self.completed_generations = cur_generation
-
-            # Save state for resumption
-            self.save_state(cur_generation)
 
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
             elapsed_after_eval = time.time() - start_time
@@ -563,14 +513,6 @@ class GeneticAlgorithm:
 
         population: List[BaseScenario] = []
 
-        # Priority: Expert-guided seeds
-        if self.seeds:
-            for seed in self.seeds:
-                if len(population) < population_size:
-                    population.append(seed)
-                    already_seen.add(seed)
-                    logger.info("Injected expert seed: %s", seed)
-
         # Make attempts to create population of given size, if not possible it will return less samples
         while len(population) < population_size and attempts < max_attempts:
             attempts += 1
@@ -609,73 +551,20 @@ class GeneticAlgorithm:
     ) -> CommandRunResult:
         """
         Calculates fitness score for a scenario.
-        Includes a thread-safe 'inflight' check to prevent duplicate executions in parallel mode.
         """
-        outcome: Dict[str, Any] = {"result": None, "exception": None}
-        event = None
+        if scenario in self.seen_population:
+            logger.debug("Scenario already seen, using cached result.")
+            result = self.seen_population[scenario]
+            result.generation_id = generation_id
+            return result
 
-        with self._lock:
-            # 1. Check if already finished
-            if scenario in self.seen_population:
-                logger.debug("Scenario already seen, using cached result.")
-                result = self.seen_population[scenario]
-                result.generation_id = generation_id
-                return result
+        self.new_scenarios_in_generation += 1
 
-            # 2. Check if currently in-flight
-            if scenario in self._inflight:
-                logger.debug("Scenario is in-flight, waiting for result...")
-                event, outcome = self._inflight[scenario]
-
-        # If in-flight, wait outside the lock
-        if event:
-            event.wait()
-            if outcome["exception"]:
-                raise outcome["exception"]
-            if scenario in self.seen_population:
-                return self.seen_population[scenario]
-
-            # Guard: If still not in seen_population after event is set, it means execution failed silently
-            if outcome["result"]:
-                return outcome["result"]
-
-            raise RuntimeError(
-                f"Scenario execution failed or result missing for: {scenario}"
-            )
-
-        # 3. If not seen and not in-flight, we are the ones to run it
-        my_event = threading.Event()
-        with self._lock:
-            # Double check inside lock
-            if scenario in self.seen_population:
-                return self.seen_population[scenario]
-            if scenario in self._inflight:
-                # Someone else beat us to the 'inflight' registry
-                event, outcome = self._inflight[scenario]
-            else:
-                self._inflight[scenario] = (my_event, outcome)
-                self.new_scenarios_in_generation += 1
-
-        if event:
-            event.wait()
-            if outcome["exception"]:
-                raise outcome["exception"]
-            if scenario in self.seen_population:
-                result = self.seen_population[scenario]
-                result.generation_id = generation_id
-                return result
-
-        # We are the execution thread
         try:
             result = self.krkn_client.run(scenario, generation_id)
-            outcome["result"] = result
+            self.seen_population[scenario] = result
+            self.health_check_reporter.write_fitness_result(result)
 
-            with self._lock:
-                self.seen_population[scenario] = result
-                # Log to reporters inside lock
-                self.health_check_reporter.write_fitness_result(result)
-
-            # Persist results outside the lock to minimize contention
             try:
                 self.save_scenario_result(result)
                 # Plot health check report if needed
@@ -688,14 +577,8 @@ class GeneticAlgorithm:
 
             return result
         except Exception as e:
-            outcome["exception"] = e
             logger.error(f"Scenario execution failed: {e}")
             raise e
-        finally:
-            with self._lock:
-                if scenario in self._inflight:
-                    del self._inflight[scenario]
-            my_event.set()
 
     def mutate(self, scenario: BaseScenario):
         if isinstance(scenario, CompositeScenario):
@@ -920,30 +803,6 @@ class GeneticAlgorithm:
         summary_reporter.save(self.output_dir)
 
         # TODO: Send run summary to Elasticsearch
-
-    def save_state(self, cur_generation: int):
-        """Save current GA state to a checkpoint file for resumption."""
-        state_path = os.path.join(self.output_dir, "checkpoint.json")
-        logger.info("Saving GA checkpoint to %s", state_path)
-
-        # We need to serialize scenarios. Since they might be complex,
-        # we'll store their names and parameters.
-        try:
-            state = {
-                "cur_generation": cur_generation,
-                "run_uuid": self.run_uuid,
-                "completed_generations": self.completed_generations,
-                "stagnant_generations": self.stagnant_generations,
-                "saturation_stagnant_generations": self.saturation_stagnant_generations,
-                "exploration_stagnant_generations": self.exploration_stagnant_generations,
-                "current_mutation_rate": self.current_scenario_mutation_rate,
-                "population": [s.model_dump() for s in self.population],
-                "best_of_generation": [s.model_dump() for s in self.best_of_generation],
-            }
-            with open(state_path, "w") as f:
-                json.dump(state, f, indent=4, default=str)
-        except Exception as e:
-            logger.error("Failed to save checkpoint: %s", e)
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")

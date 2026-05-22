@@ -298,9 +298,6 @@ class ConfigFile(BaseModel):
     parameters: Dict[str, ParameterValue] = {}
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
-    recipes_path: Optional[str] = (
-        None  # Path to directory containing chaos recipes (.yaml)
-    )
 
     generations: Optional[int] = (
         20  # Total number of generations to run. Ignored if duration is set.
@@ -309,9 +306,6 @@ class ConfigFile(BaseModel):
     duration: Optional[int] = (
         None  # Maximum duration in seconds to run the algorithm. When set, generations is ignored and algorithm runs until duration is reached.
     )
-
-    parallel: bool = False  # Enable concurrent execution of generations
-    parallel_limit: int = 5  # Maximum number of scenarios to run in parallel
 
     wait_duration: int = (
         const.WAIT_DURATION

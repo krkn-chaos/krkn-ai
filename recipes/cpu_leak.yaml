@@ -1,7 +1,0 @@
-name: "CPU Stress Test"
-steps:
-  - name: "CPU Hog"
-    type: "cpu-hog"
-    parameters:
-      node_name: "worker-node-1"
-      duration: 300

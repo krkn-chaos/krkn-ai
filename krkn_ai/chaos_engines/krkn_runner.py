@@ -161,25 +161,26 @@ class KrknRunner:
             logger.info("Fitness score set to -1 due to misconfiguration failure")
         else:
             # Normal execution path - calculate fitness scores
-            # If user provided fitness_function.query, then we use the default function to calculate
-            if self.config.fitness_function.query is not None:
-                fitness_value = self.calculate_fitness_value(
-                    result=CommandRunResult(
-                        start_time=start_time,
-                        end_time=end_time,
-                        scenario=scenario,
-                        generation_id=generation_id,
-                        cmd="", log="", returncode=0, duration_seconds=0, 
-                        fitness_result=fitness_result, health_check_results={}
-                    ),
-                    query=self.config.fitness_function.query,
-                    fitness_type=self.config.fitness_function.type,
-                )
-                fitness_result.fitness_score = fitness_value
-            elif len(self.config.fitness_function.items) > 0:
-                fitness_result = self.calculate_fitness_score_for_items(
-                    start=start_time, end=end_time, scenario=scenario, generation_id=generation_id
-                )
+            from krkn_ai.fitness.aggregator import WeightedAggregator
+
+            aggregator_context = {"prom_client": self.prom_client}
+            aggregator = WeightedAggregator(
+                evaluator_configs=self.config.fitness_function.evaluators,
+                context=aggregator_context
+            )
+
+            temp_result = CommandRunResult(
+                start_time=start_time,
+                end_time=end_time,
+                scenario=scenario,
+                generation_id=generation_id,
+                cmd="", log="", returncode=0, duration_seconds=0,
+                fitness_result=fitness_result,
+                health_check_results=health_check_results,
+                run_uuid=run_uuid
+            )
+
+            fitness_result = aggregator.aggregate(temp_result)
 
             # Include krkn hub run failure info to the fitness score
             if self.config.fitness_function.include_krkn_failure:
@@ -402,28 +403,79 @@ class KrknRunner:
             result["depends_on"] = depends_on
         return result
 
-    def calculate_fitness_value(self, result: CommandRunResult, query, fitness_type):
-        """Calculate fitness score for scenario run using PrometheusEvaluator"""
-        from krkn_ai.fitness.prometheus import PrometheusEvaluator
+    def calculate_fitness_value(self, *args, **kwargs):
+        """
+        Calculate fitness score. Supports both new signature:
+            (self, result: CommandRunResult, query: str, fitness_type: FitnessFunctionType)
+        and old signature:
+            (self, start: datetime.datetime, end: datetime.datetime, query: str, type: FitnessFunctionType)
+        """
+        import datetime
+        from krkn_ai.models.app import CommandRunResult, FitnessResult
+        from krkn_ai.fitness.factory import FitnessEvaluatorFactory, RetryEvaluator
+        from krkn_ai.models.config import EvaluatorConfig
+        from krkn_ai.models.scenario.scenario_dummy import DummyScenario
+        from krkn_ai.models.cluster_components import ClusterComponents
 
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
-        # Retry logic for Prometheus (case when data isn't available immediately)
-        retries = 3
-        retry_delay = 10
-        evaluator = PrometheusEvaluator(self.prom_client, query, fitness_type)
-        
-        for retry in range(retries):
-            try:
-                return evaluator.calculate(result)
-            except Exception as error:
-                logger.error(f"Fitness calculation failed: {error}")
-                if retry < retries - 1:
-                    logger.info(f"Retrying... (retry {retry + 1})")
-                    time.sleep(retry_delay)
-        
-        raise FitnessFunctionCalculationError(f"Fitness failed after {retries} retries")
+        # Parse arguments dynamically
+        if len(args) >= 3 and isinstance(args[0], CommandRunResult):
+            result = args[0]
+            query = args[1]
+            fitness_type = args[2]
+        elif "result" in kwargs:
+            result = kwargs["result"]
+            query = kwargs.get("query")
+            fitness_type = kwargs.get("fitness_type")
+        else:
+            # Old signature
+            if len(args) >= 4:
+                start, end, query, fitness_type = args[0], args[1], args[2], args[3]
+            else:
+                start = kwargs.get("start")
+                end = kwargs.get("end")
+                query = kwargs.get("query")
+                fitness_type = kwargs.get("fitness_type") or kwargs.get("type")
+            
+            # Construct a dummy CommandRunResult
+            result = CommandRunResult(
+                generation_id=0,
+                start_time=start,
+                end_time=end,
+                scenario=DummyScenario(cluster_components=ClusterComponents()),
+                cmd="", log="", returncode=0, duration_seconds=0,
+                fitness_result=FitnessResult()
+            )
+
+        config = EvaluatorConfig(
+            name="prometheus",
+            weight=1.0,
+            properties={"query": query, "type": fitness_type}
+        )
+        context = {"prom_client": self.prom_client}
+        evaluator = FitnessEvaluatorFactory.create_evaluator(config, context)
+        evaluator = RetryEvaluator(evaluator, retries=3, retry_delay=10.0)
+        return evaluator.calculate(result)
+
+    def calculate_point_fitness(self, start, end, query):
+        from krkn_ai.fitness.prometheus import PrometheusEvaluator
+        from krkn_ai.models.config import FitnessFunctionType
+        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.point)
+        return evaluator.calculate_point_fitness(start, end, query)
+
+    def calculate_range_fitness(self, start, end, query):
+        from krkn_ai.fitness.prometheus import PrometheusEvaluator
+        from krkn_ai.models.config import FitnessFunctionType
+        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.range)
+        return evaluator.calculate_range_fitness(start, end, query)
+
+    def _query_prometheus_single_point(self, query: str, timestamp, context: str) -> str:
+        from krkn_ai.fitness.prometheus import PrometheusEvaluator
+        from krkn_ai.models.config import FitnessFunctionType
+        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.point)
+        return evaluator._query_prometheus_single_point(query, timestamp, context)
 
     def calculate_fitness_score_for_items(self, start, end, scenario, generation_id):
         """

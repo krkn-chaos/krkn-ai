@@ -23,7 +23,8 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
             return self.calculate_point_fitness(start, end, query)
         elif self.fitness_type == FitnessFunctionType.range:
             return self.calculate_range_fitness(start, end, query)
-        return 0.0
+            
+        raise FitnessFunctionCalculationError(f"Unsupported fitness type: {self.fitness_type}")
 
     def calculate_point_fitness(self, start, end, query):
         result_at_beginning = self._query_prometheus_single_point(
@@ -48,12 +49,20 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
             granularity=100,
         )
         if not result:
-            raise FitnessFunctionCalculationError(f"No data for range query '{query}'")
+            raise FitnessFunctionCalculationError(
+                f"Prometheus returned no data for query '{query}' in range "
+                f"[{start}, {end}]. This may indicate the metric does not exist "
+                f"in the requested time range or Prometheus has not yet scraped data."
+            )
             
         for series in result:
             if series.get("values"):
                 return float(series["values"][-1][1])
-        return 0.0
+        raise FitnessFunctionCalculationError(
+            f"Prometheus returned no data for query '{query}' in range "
+            f"[{start}, {end}]. This may indicate the metric does not exist "
+            f"in the requested time range or Prometheus has not yet scraped data."
+        )
 
     def _query_prometheus_single_point(self, query: str, timestamp: datetime.datetime, context: str) -> str:
         result = self.prom_client.process_prom_query_in_range(
@@ -63,8 +72,16 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
             granularity=100,
         )
         if not result:
-            raise FitnessFunctionCalculationError(f"No data for query '{query}' at {timestamp}")
+            raise FitnessFunctionCalculationError(
+                f"Prometheus returned no data for query '{query}' at {timestamp} "
+                f"during {context}. This may indicate the metric does not exist "
+                f"in the requested time range or Prometheus has not yet scraped data."
+            )
         for series in result:
             if series.get("values"):
                 return series["values"][-1][1]
-        raise FitnessFunctionCalculationError(f"No data for query '{query}' at {timestamp}")
+        raise FitnessFunctionCalculationError(
+            f"Prometheus returned no data for query '{query}' at {timestamp} "
+            f"during {context}. This may indicate the metric does not exist "
+            f"in the requested time range or Prometheus has not yet scraped data."
+        )

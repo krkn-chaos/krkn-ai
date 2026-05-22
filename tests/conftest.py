@@ -29,7 +29,11 @@ from krkn_ai.algorithm.genetic import GeneticAlgorithm
 @pytest.fixture
 def temp_output_dir():
     """Create a temporary output directory"""
-    with tempfile.TemporaryDirectory() as tmpdir:
+    import sys
+    kwargs = {}
+    if sys.version_info >= (3, 10):
+        kwargs["ignore_cleanup_errors"] = True
+    with tempfile.TemporaryDirectory(**kwargs) as tmpdir:
         yield tmpdir
 
 

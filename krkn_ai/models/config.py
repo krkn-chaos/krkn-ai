@@ -1,6 +1,6 @@
 import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from pydantic import (
     BaseModel,
     Field,
@@ -135,6 +135,12 @@ class FitnessFunctionItem(BaseModel):
         return value
 
 
+class EvaluatorConfig(BaseModel):
+    name: str
+    weight: float = 1.0
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
+
 class FitnessFunction(BaseModel):
     query: Union[str, None] = None  # PromQL
     type: FitnessFunctionType = FitnessFunctionType.point
@@ -142,13 +148,32 @@ class FitnessFunction(BaseModel):
     include_health_check_failure: bool = True
     include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
+    evaluators: List[EvaluatorConfig] = []
 
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
         """Validates whether there is at least one fitness function is defined."""
-        if self.query is None and len(self.items) == 0:
+        # Convert legacy fields to evaluators if empty
+        if not self.evaluators:
+            if self.query is not None:
+                self.evaluators.append(
+                    EvaluatorConfig(
+                        name="prometheus",
+                        weight=1.0,
+                        properties={"query": self.query, "type": self.type}
+                    )
+                )
+            for item in self.items:
+                self.evaluators.append(
+                    EvaluatorConfig(
+                        name="prometheus",
+                        weight=item.weight,
+                        properties={"id": item.id, "query": item.query, "type": item.type}
+                    )
+                )
+        if self.query is None and len(self.items) == 0 and len(self.evaluators) == 0:
             raise ValueError(
-                "Please define at least one fitness function in query or items."
+                "Please define at least one fitness function in query, items or evaluators."
             )
         return self
 

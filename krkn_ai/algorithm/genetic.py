@@ -584,7 +584,7 @@ class GeneticAlgorithm:
             # 1. Check if already finished
             if scenario in self.seen_population:
                 logger.debug("Scenario already seen, using cached result.")
-                result = self.seen_population[scenario]
+                result = copy.deepcopy(self.seen_population[scenario])
                 result.generation_id = generation_id
                 return result
 
@@ -599,7 +599,7 @@ class GeneticAlgorithm:
             if outcome["exception"]:
                 raise outcome["exception"]
             if scenario in self.seen_population:
-                result = self.seen_population[scenario]
+                result = copy.deepcopy(self.seen_population[scenario])
                 result.generation_id = generation_id
                 return result
 
@@ -608,7 +608,7 @@ class GeneticAlgorithm:
         with self._lock:
             # Double check inside lock
             if scenario in self.seen_population:
-                result = self.seen_population[scenario]
+                result = copy.deepcopy(self.seen_population[scenario])
                 result.generation_id = generation_id
                 return result
             if scenario in self._inflight:
@@ -623,7 +623,7 @@ class GeneticAlgorithm:
             if outcome["exception"]:
                 raise outcome["exception"]
             if scenario in self.seen_population:
-                result = self.seen_population[scenario]
+                result = copy.deepcopy(self.seen_population[scenario])
                 result.generation_id = generation_id
                 return result
 
@@ -635,6 +635,8 @@ class GeneticAlgorithm:
                 # Log to reporters inside lock
                 self.save_scenario_result(result)
                 self.health_check_reporter.write_fitness_result(result)
+                if self.elastic_client is not None:
+                    self.elastic_client.index_run_result(result, self.run_uuid)
             return result
         except Exception as e:
             logger.error(f"Error executing scenario: {e}")

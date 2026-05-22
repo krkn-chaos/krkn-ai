@@ -25,7 +25,6 @@ from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
-from krkn_ai.models.scenario.dsl_parser import ScenarioDSLParser
 
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
@@ -96,7 +95,6 @@ class GeneticAlgorithm:
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
         self.seed: Optional[int] = self.config.seed
-        self.seeds: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
             self.output_dir, self.config.output
@@ -118,7 +116,6 @@ class GeneticAlgorithm:
         self._lock = threading.Lock()
         self._inflight: Dict[BaseScenario, Tuple[threading.Event, Dict[str, Any]]] = {}
 
-        self._load_seeds()
         self.completed_generations: int = 0
         self.current_scenario_mutation_rate: float = self.config.scenario_mutation_rate
 
@@ -140,26 +137,6 @@ class GeneticAlgorithm:
         # logger.debug("CONFIG")
         # logger.debug("--------------------------------------------------------")
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
-
-    def _load_seeds(self):
-        """Load expert-guided seeds from the recipes directory."""
-        if not self.config.recipes_path or not os.path.isdir(self.config.recipes_path):
-            return
-
-        logger.info("Loading chaos recipes from: %s", self.config.recipes_path)
-        parser = ScenarioDSLParser(
-            self.config.cluster_components.get_active_components()
-        )
-
-        for filename in os.listdir(self.config.recipes_path):
-            if filename.endswith(".yaml") or filename.endswith(".yml"):
-                path = os.path.join(self.config.recipes_path, filename)
-                try:
-                    recipes = parser.parse_file(path)
-                    self.seeds.extend(recipes)
-                    logger.info("Loaded %d recipes from %s", len(recipes), filename)
-                except Exception as e:
-                    logger.error("Failed to load recipe %s: %s", filename, e)
 
     def simulate(self):
         try:
@@ -251,9 +228,6 @@ class GeneticAlgorithm:
             # Increment generation counter after evaluation
             cur_generation += 1
             self.completed_generations = cur_generation
-
-            # Save state for resumption
-            self.save_state(cur_generation)
 
             # Check stopping criteria after fitness evaluation (for fitness threshold, saturation, and exploration)
             elapsed_after_eval = time.time() - start_time
@@ -562,14 +536,6 @@ class GeneticAlgorithm:
         max_attempts = population_size * 10
 
         population: List[BaseScenario] = []
-
-        # Priority: Expert-guided seeds
-        if self.seeds:
-            for seed in self.seeds:
-                if len(population) < population_size:
-                    population.append(seed)
-                    already_seen.add(seed)
-                    logger.info("Injected expert seed: %s", seed)
 
         # Make attempts to create population of given size, if not possible it will return less samples
         while len(population) < population_size and attempts < max_attempts:
@@ -903,33 +869,6 @@ class GeneticAlgorithm:
         summary_reporter.save(self.output_dir)
 
         # TODO: Send run summary to Elasticsearch
-
-    def save_state(self, cur_generation: int):
-        """Save current GA state to a checkpoint file for resumption."""
-        state_path = os.path.join(self.output_dir, "checkpoint.json")
-        logger.info("Saving GA checkpoint to %s", state_path)
-
-        # We need to serialize scenarios. Since they might be complex,
-        # we'll store their names and parameters.
-        try:
-            state = {
-                "cur_generation": cur_generation,
-                "run_uuid": self.run_uuid,
-                "completed_generations": self.completed_generations,
-                "stagnant_generations": self.stagnant_generations,
-                "saturation_stagnant_generations": self.saturation_stagnant_generations,
-                "exploration_stagnant_generations": self.exploration_stagnant_generations,
-                "current_mutation_rate": self.current_scenario_mutation_rate,
-                "population": [s.model_dump() for s in self.population],
-                "best_of_generation": [s.model_dump() for s in self.best_of_generation],
-            }
-            # Atomic write to avoid corrupted checkpoints
-            temp_path = f"{state_path}.tmp"
-            with open(temp_path, "w") as f:
-                json.dump(state, f, indent=4, default=str)
-            os.replace(temp_path, state_path)
-        except Exception as e:
-            logger.error("Failed to save checkpoint: %s", e)
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")

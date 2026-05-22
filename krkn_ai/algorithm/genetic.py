@@ -5,7 +5,9 @@ import json
 import time
 import uuid
 from typing_extensions import Dict
+import importlib
 import yaml
+from krkn_ai.fitness.fitness_plugin import FitnessPlugin
 from typing import List, Optional, Tuple
 
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
@@ -64,6 +66,15 @@ class GeneticAlgorithm:
             config, output_dir=self.output_dir, runner_type=runner_type
         )
         self.population: List[BaseScenario] = []
+        self.fitness_plugins: List[FitnessPlugin] = []
+        for plugin_path in self.config.fitness_plugins:
+            module = importlib.import_module(plugin_path)
+            plugin_cls = getattr(module, "Plugin", None)
+            if plugin_cls is None:
+                raise ValueError(
+                    f"Fitness plugin module '{plugin_path}' must define a 'Plugin' class."
+                )
+            self.fitness_plugins.append(plugin_cls())
 
         self.stagnant_generations = 0
         self.saturation_stagnant_generations = (
@@ -558,6 +569,17 @@ class GeneticAlgorithm:
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)
         self.health_check_reporter.write_fitness_result(scenario_result)
+        # Apply fitness plugins if any
+        if self.fitness_plugins:
+            for plugin in self.fitness_plugins:
+                plugin_result = plugin.compute_fitness(scenario_result)
+                # Merge plugin scores into the scenario result
+                scenario_result.fitness_result.scores.extend(plugin_result.scores)
+                # Combine overall fitness scores (simple additive merge)
+                scenario_result.fitness_result.fitness_score += (
+                    plugin_result.fitness_score
+                )
+        # Index result in Elasticsearch after all plugins have contributed
         if self.elastic_client is not None:
             self.elastic_client.index_run_result(scenario_result, self.run_uuid)
 

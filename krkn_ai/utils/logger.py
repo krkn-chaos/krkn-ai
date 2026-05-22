@@ -79,3 +79,16 @@ def get_log_dir() -> Optional[str]:
 def is_verbose() -> bool:
     """Return whether verbose mode is enabled."""
     return _VERBOSE
+
+
+def shutdown_logger():
+    """Close and remove all handlers from the global parent logger to release file locks."""
+    global _LOGGER_INITIALIZED, _LOG_DIR
+    parent_name = "krkn-ai"
+    parent = logging.getLogger(parent_name)
+    handlers = list(parent.handlers)
+    for handler in handlers:
+        handler.close()
+        parent.removeHandler(handler)
+    _LOGGER_INITIALIZED = False
+    _LOG_DIR = None

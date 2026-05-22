@@ -100,44 +100,44 @@ def run(
 
     logger.info("Krkn-AI run UUID: %s", run_uuid)
 
-    if config == "" or config is None:
-        logger.error("Config file invalid.")
-        exit(1)
-    if not os.path.exists(config):
-        logger.error("Config file not found.")
-        exit(1)
-
-    try:
-        parsed_config = read_config_from_file(config, param, kubeconfig)
-        logger.info("Initialized config: %s", config)
-    except KeyError as err:
-        logger.error("Unable to parse config file due to missing key: %s", err)
-        exit(1)
-    except (ValueError, ValidationError) as err:
-        logger.error("Unable to parse config file: %s", err)
-        exit(1)
-
-    # Override seed from CLI if provided
-    if seed is not None:
-        parsed_config.seed = seed
-
-    # Convert user-friendly string to enum if provided
-    enum_runner_type = None
-    if runner_type:
-        if runner_type.lower() == "krknctl":
-            enum_runner_type = KrknRunnerType.CLI_RUNNER
-        elif runner_type.lower() == "krknhub":
-            enum_runner_type = KrknRunnerType.HUB_RUNNER
-
-    streamlit_process = None
-    if monitoring:
-        logger.info("Starting live monitoring dashboard...")
-        streamlit_process = DashboardManager.start(
-            new_output_path, port, background=True
-        )
-
     run_success = False
+    streamlit_process = None
     try:
+        if config == "" or config is None:
+            logger.error("Config file invalid.")
+            exit(1)
+        if not os.path.exists(config):
+            logger.error("Config file not found.")
+            exit(1)
+
+        try:
+            parsed_config = read_config_from_file(config, param, kubeconfig)
+            logger.info("Initialized config: %s", config)
+        except KeyError as err:
+            logger.error("Unable to parse config file due to missing key: %s", err)
+            exit(1)
+        except (ValueError, ValidationError) as err:
+            logger.error("Unable to parse config file: %s", err)
+            exit(1)
+
+        # Override seed from CLI if provided
+        if seed is not None:
+            parsed_config.seed = seed
+
+        # Convert user-friendly string to enum if provided
+        enum_runner_type = None
+        if runner_type:
+            if runner_type.lower() == "krknctl":
+                enum_runner_type = KrknRunnerType.CLI_RUNNER
+            elif runner_type.lower() == "krknhub":
+                enum_runner_type = KrknRunnerType.HUB_RUNNER
+
+        if monitoring:
+            logger.info("Starting live monitoring dashboard...")
+            streamlit_process = DashboardManager.start(
+                new_output_path, port, background=True
+            )
+
         os.makedirs(new_output_path, exist_ok=True)
         with open(os.path.join(new_output_path, "results.json"), "w") as f:
             json.dump({"status": STATUS_STARTED}, f)
@@ -159,6 +159,8 @@ def run(
     except FitnessFunctionCalculationError as e:
         logger.error("Unable to calculate fitness function score: %s", e)
         exit(1)
+    except SystemExit:
+        raise
     except Exception as e:
         logger.exception("Something went wrong: %s", e)
         exit(1)
@@ -175,6 +177,10 @@ def run(
                 "Run finished. Monitoring dashboard will remain running. Terminate manually when done."
             )
         logger.info("Check run.log file in '%s' for more details.", new_output_path)
+
+        from krkn_ai.utils.logger import shutdown_logger
+
+        shutdown_logger()
 
 
 @main.command(help="Monitor results from previous completed runs")

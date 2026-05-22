@@ -1,5 +1,4 @@
 import datetime
-from typing import Optional
 from krkn_ai.fitness.base import BaseFitnessEvaluator
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import FitnessFunctionType
@@ -7,6 +6,7 @@ from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
 
 class PrometheusEvaluator(BaseFitnessEvaluator):
     def __init__(self, prom_client, query: str, fitness_type: FitnessFunctionType):
@@ -18,13 +18,15 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
         start = result.start_time
         end = result.end_time
         query = self.query
-        
+
         if self.fitness_type == FitnessFunctionType.point:
             return self.calculate_point_fitness(start, end, query)
         elif self.fitness_type == FitnessFunctionType.range:
             return self.calculate_range_fitness(start, end, query)
-            
-        raise FitnessFunctionCalculationError(f"Unsupported fitness type: {self.fitness_type}")
+
+        raise FitnessFunctionCalculationError(
+            f"Unsupported fitness type: {self.fitness_type}"
+        )
 
     def calculate_point_fitness(self, start, end, query):
         result_at_beginning = self._query_prometheus_single_point(
@@ -41,7 +43,7 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
             if time_dt_mins == 0:
                 time_dt_mins = 1
             query = query.replace("$range$", f"{time_dt_mins}m")
-            
+
         result = self.prom_client.process_prom_query_in_range(
             query,
             start_time=start,
@@ -54,7 +56,7 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
                 f"[{start}, {end}]. This may indicate the metric does not exist "
                 f"in the requested time range or Prometheus has not yet scraped data."
             )
-            
+
         for series in result:
             if series.get("values"):
                 return float(series["values"][-1][1])
@@ -64,7 +66,9 @@ class PrometheusEvaluator(BaseFitnessEvaluator):
             f"in the requested time range or Prometheus has not yet scraped data."
         )
 
-    def _query_prometheus_single_point(self, query: str, timestamp: datetime.datetime, context: str) -> str:
+    def _query_prometheus_single_point(
+        self, query: str, timestamp: datetime.datetime, context: str
+    ) -> str:
         result = self.prom_client.process_prom_query_in_range(
             query,
             start_time=timestamp,

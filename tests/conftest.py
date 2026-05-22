@@ -30,6 +30,7 @@ from krkn_ai.algorithm.genetic import GeneticAlgorithm
 def temp_output_dir():
     """Create a temporary output directory"""
     import sys
+
     kwargs = {}
     if sys.version_info >= (3, 10):
         kwargs["ignore_cleanup_errors"] = True

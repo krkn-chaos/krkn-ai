@@ -13,6 +13,7 @@ class TestRunShell:
 
     def test_timeout_raises_shell_command_timeout_error(self):
         import sys
+
         exec_path = sys.executable.replace("\\", "/")
         cmd = f'"{exec_path}" -c "import time; time.sleep(10)"'
         with pytest.raises(ShellCommandTimeoutError):

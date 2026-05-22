@@ -160,7 +160,7 @@ class FitnessFunction(BaseModel):
                     EvaluatorConfig(
                         name="prometheus",
                         weight=1.0,
-                        properties={"query": self.query, "type": self.type}
+                        properties={"query": self.query, "type": self.type},
                     )
                 )
             for item in self.items:
@@ -168,7 +168,11 @@ class FitnessFunction(BaseModel):
                     EvaluatorConfig(
                         name="prometheus",
                         weight=item.weight,
-                        properties={"id": item.id, "query": item.query, "type": item.type}
+                        properties={
+                            "id": item.id,
+                            "query": item.query,
+                            "type": item.type,
+                        },
                     )
                 )
         if self.query is None and len(self.items) == 0 and len(self.evaluators) == 0:

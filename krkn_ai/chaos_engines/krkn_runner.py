@@ -13,7 +13,6 @@ from krkn_ai.models.app import (
     KrknRunnerType,
 )
 from krkn_ai.models.config import ConfigFile, FitnessFunctionType
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -166,7 +165,7 @@ class KrknRunner:
             aggregator_context = {"prom_client": self.prom_client}
             aggregator = WeightedAggregator(
                 evaluator_configs=self.config.fitness_function.evaluators,
-                context=aggregator_context
+                context=aggregator_context,
             )
 
             temp_result = CommandRunResult(
@@ -174,10 +173,13 @@ class KrknRunner:
                 end_time=end_time,
                 scenario=scenario,
                 generation_id=generation_id,
-                cmd="", log="", returncode=0, duration_seconds=0,
+                cmd="",
+                log="",
+                returncode=0,
+                duration_seconds=0,
                 fitness_result=fitness_result,
                 health_check_results=health_check_results,
-                run_uuid=run_uuid
+                run_uuid=run_uuid,
             )
 
             fitness_result = aggregator.aggregate(temp_result)
@@ -410,7 +412,6 @@ class KrknRunner:
         and old signature:
             (self, start: datetime.datetime, end: datetime.datetime, query: str, type: FitnessFunctionType)
         """
-        import datetime
         from krkn_ai.models.app import CommandRunResult, FitnessResult
         from krkn_ai.fitness.factory import FitnessEvaluatorFactory, RetryEvaluator
         from krkn_ai.models.config import EvaluatorConfig
@@ -438,21 +439,24 @@ class KrknRunner:
                 end = kwargs.get("end")
                 query = kwargs.get("query")
                 fitness_type = kwargs.get("fitness_type") or kwargs.get("type")
-            
+
             # Construct a dummy CommandRunResult
             result = CommandRunResult(
                 generation_id=0,
                 start_time=start,
                 end_time=end,
                 scenario=DummyScenario(cluster_components=ClusterComponents()),
-                cmd="", log="", returncode=0, duration_seconds=0,
-                fitness_result=FitnessResult()
+                cmd="",
+                log="",
+                returncode=0,
+                duration_seconds=0,
+                fitness_result=FitnessResult(),
             )
 
         config = EvaluatorConfig(
             name="prometheus",
             weight=1.0,
-            properties={"query": query, "type": fitness_type}
+            properties={"query": query, "type": fitness_type},
         )
         context = {"prom_client": self.prom_client}
         evaluator = FitnessEvaluatorFactory.create_evaluator(config, context)
@@ -461,20 +465,28 @@ class KrknRunner:
 
     def calculate_point_fitness(self, start, end, query):
         from krkn_ai.fitness.prometheus import PrometheusEvaluator
-        from krkn_ai.models.config import FitnessFunctionType
-        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.point)
+
+        evaluator = PrometheusEvaluator(
+            self.prom_client, query, FitnessFunctionType.point
+        )
         return evaluator.calculate_point_fitness(start, end, query)
 
     def calculate_range_fitness(self, start, end, query):
         from krkn_ai.fitness.prometheus import PrometheusEvaluator
-        from krkn_ai.models.config import FitnessFunctionType
-        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.range)
+
+        evaluator = PrometheusEvaluator(
+            self.prom_client, query, FitnessFunctionType.range
+        )
         return evaluator.calculate_range_fitness(start, end, query)
 
-    def _query_prometheus_single_point(self, query: str, timestamp, context: str) -> str:
+    def _query_prometheus_single_point(
+        self, query: str, timestamp, context: str
+    ) -> str:
         from krkn_ai.fitness.prometheus import PrometheusEvaluator
-        from krkn_ai.models.config import FitnessFunctionType
-        evaluator = PrometheusEvaluator(self.prom_client, query, FitnessFunctionType.point)
+
+        evaluator = PrometheusEvaluator(
+            self.prom_client, query, FitnessFunctionType.point
+        )
         return evaluator._query_prometheus_single_point(query, timestamp, context)
 
     def calculate_fitness_score_for_items(self, start, end, scenario, generation_id):
@@ -483,15 +495,19 @@ class KrknRunner:
         """
         results = []
         overall_score = 0
-        
+
         # Create a temporary result object for the evaluator
         temp_result = CommandRunResult(
             start_time=start,
             end_time=end,
             scenario=scenario,
             generation_id=generation_id,
-            cmd="", log="", returncode=0, duration_seconds=0,
-            fitness_result=FitnessResult(), health_check_results={}
+            cmd="",
+            log="",
+            returncode=0,
+            duration_seconds=0,
+            fitness_result=FitnessResult(),
+            health_check_results={},
         )
 
         for fitness_item in self.config.fitness_function.items:
@@ -514,7 +530,6 @@ class KrknRunner:
 
         return FitnessResult(fitness_score=overall_score, scores=results)
 
-
     def __extract_returncode_from_run(
         self, log: str, default_returncode: int
     ) -> Tuple[int, Optional[str]]:
@@ -522,12 +537,12 @@ class KrknRunner:
         Try to extracts Krkn return code and uuid from the run log using the TelemetryExtractor.
         """
         from krkn_ai.utils.telemetry import TelemetryExtractor
-        
+
         exit_status, run_uuid, _ = TelemetryExtractor.extract_telemetry(log)
-        
+
         if run_uuid:
             logger.debug("Extracted exit_status: %s", exit_status)
             logger.debug("Extracted run_uuid: %s", run_uuid)
             return exit_status, run_uuid
-        
+
         return default_returncode, None

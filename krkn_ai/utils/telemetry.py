@@ -4,6 +4,7 @@ from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
 class TelemetryExtractor:
     @staticmethod
     def extract_telemetry(log: str) -> Tuple[int, Optional[str], Optional[dict]]:
@@ -58,7 +59,7 @@ class TelemetryExtractor:
             # Extract exit_status from first scenario
             scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
             run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-            
+
             if scenarios and len(scenarios) > 0:
                 exit_status = scenarios[0].get("exit_status", 1)
                 return exit_status, run_uuid, chaos_data

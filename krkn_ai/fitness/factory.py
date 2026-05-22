@@ -44,7 +44,8 @@ class FitnessEvaluatorFactory:
         
         if name in ("prometheus", "promql", "prom"):
             prom_client = context.get("prom_client")
-            query = properties.get("query")
+            raw_query = properties.get("query")
+            query = str(raw_query) if raw_query is not None else ""
             fitness_type_str = properties.get("type", "point")
             
             # Map string/Enum to FitnessFunctionType

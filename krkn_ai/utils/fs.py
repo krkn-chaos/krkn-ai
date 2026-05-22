@@ -31,6 +31,15 @@ def read_config_from_file(
     """
     with open(file_path, "r", encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
+    if config is None:
+        config = {}
+
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Config file {file_path} must be a mapping (dictionary), "
+            f"but found {type(config).__name__}."
+        )
+
     if kubeconfig is not None and kubeconfig != "" and os.path.exists(kubeconfig):
         config["kubeconfig_file_path"] = kubeconfig
 
@@ -48,7 +57,8 @@ def read_config_from_file(
 
         # Replace parameter in health check url string
         for app in config.get("health_checks", {}).get("applications", []):
-            app["url"] = preprocess_param_string(app["url"], raw)
+            if "url" in app:
+                app["url"] = preprocess_param_string(app["url"], raw)
 
         # Replace parameter in elastic configuration
         if "elastic" in config and "server" in config["elastic"]:
@@ -76,7 +86,7 @@ def read_config_from_file(
 
         config["parameters"] = params
 
-    return ConfigFile(**config)
+    return ConfigFile.model_validate(config)
 
 
 def env_is_truthy(var: str) -> bool:

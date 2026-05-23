@@ -3,7 +3,7 @@ import json
 import datetime
 import tempfile
 import time
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -13,7 +13,10 @@ from krkn_ai.models.app import (
     KrknRunnerType,
 )
 from krkn_ai.models.config import ConfigFile, FitnessFunctionType
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+    FitnessFunctionValidationError,
+)
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -59,6 +62,65 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
+
+    def validate_fitness_queries(self) -> None:
+        """Validate configured fitness queries before running any chaos scenario."""
+        if env_is_truthy("MOCK_FITNESS"):
+            logger.info("Skipping fitness query validation in mock mode")
+            return
+
+        fitness_function = self.config.fitness_function
+        if fitness_function.query is not None:
+            queries_to_validate = [
+                (
+                    fitness_function.query,
+                    "fitness_function.query",
+                    fitness_function.type,
+                )
+            ]
+        else:
+            queries_to_validate = [
+                (item.query, f"fitness_function.items (ID: {item.id})", item.type)
+                for item in fitness_function.items
+            ]
+
+        for query, context, fitness_type in queries_to_validate:
+            if fitness_type == FitnessFunctionType.range:
+                probe_query = query.replace("$range$", "5m")
+            elif fitness_type == FitnessFunctionType.point:
+                if "$range$" in query:
+                    raise FitnessFunctionValidationError(
+                        f"Prometheus query '{query}' in {context} contains $range$, "
+                        "but $range$ is only supported for range fitness queries."
+                    )
+                probe_query = query
+            else:
+                raise FitnessFunctionValidationError(
+                    f"Unsupported fitness_type: {fitness_type!r}. "
+                    "Expected 'point' or 'range'."
+                )
+
+            try:
+                result = self.prom_client.process_query(probe_query)
+            except Exception as error:
+                logger.debug(
+                    "Prometheus probe failed for query '%s'", query, exc_info=True
+                )
+                raise FitnessFunctionValidationError(
+                    f"Prometheus query validation failed for '{query}' in {context}. "
+                    "The query may be syntactically invalid or Prometheus may be "
+                    f"unreachable. Cause: {type(error).__name__}. "
+                    "Run with -v for the full traceback."
+                ) from error
+
+            if isinstance(result, list) and len(result) > 1:
+                raise FitnessFunctionValidationError(
+                    f"Prometheus query '{query}' in {context} returned {len(result)} "
+                    "time series during validation. Fitness queries must return "
+                    "exactly one time series. Use PromQL aggregation such as "
+                    "sum(...), avg(...), max(...), or otherwise constrain labels "
+                    "to produce a single series."
+                )
 
     def __check_runner_availability(self):
         # Check if krknctl is available
@@ -401,24 +463,34 @@ class KrknRunner:
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
+        if fitness_type not in (FitnessFunctionType.point, FitnessFunctionType.range):
+            raise FitnessFunctionCalculationError(
+                f"Unsupported fitness_type: {fitness_type!r}. "
+                "Expected 'point' or 'range'."
+            )
+
         # Retry to calculate fitness function if it fails
         # Case when data isn't available in prometheus for latest time range
         retries = 3  # Number of retries to calculate fitness function
         retry_delay = 10  # in seconds
+        last_error = None
         for retry in range(retries):
             try:
                 if fitness_type == FitnessFunctionType.point:
                     return self.calculate_point_fitness(start, end, query)
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
+            except FitnessFunctionValidationError:
+                raise
             except Exception as error:
+                last_error = error
                 logger.error(f"Fitness function calculation failed: {error}")
                 logger.info(
                     f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
                 )
                 time.sleep(retry_delay)
         raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
+            f"Fitness function calculation failed after {retries} retries: {last_error}"
         )
 
     def calculate_fitness_score_for_items(self, start, end):
@@ -477,7 +549,9 @@ class KrknRunner:
             The metric value as a string
 
         Raises:
-            FitnessFunctionCalculationError: If Prometheus returns no data
+            FitnessFunctionCalculationError: If Prometheus returns no data.
+            FitnessFunctionValidationError: If Prometheus returns more than
+                one time series for the query.
         """
         result = self.prom_client.process_prom_query_in_range(
             query,
@@ -485,20 +559,41 @@ class KrknRunner:
             end_time=timestamp,
             granularity=100,
         )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' at {timestamp} "
-                f"during {context}. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return series["values"][-1][1]
-        raise FitnessFunctionCalculationError(
+        no_data_error = (
             f"Prometheus returned no data for query '{query}' at {timestamp} "
             f"during {context}. This may indicate the metric does not exist "
             f"in the requested time range or Prometheus has not yet scraped data."
         )
+        return self._extract_single_prometheus_value(
+            result=result,
+            query=query,
+            context=f"{context} at {timestamp}",
+            no_data_error=no_data_error,
+        )
+
+    def _extract_single_prometheus_value(
+        self,
+        result: Optional[list[dict[str, Any]]],
+        query: str,
+        context: str,
+        no_data_error: str,
+    ) -> str:
+        if not result:
+            raise FitnessFunctionCalculationError(no_data_error)
+
+        if len(result) > 1:
+            raise FitnessFunctionValidationError(
+                f"Prometheus query '{query}' returned {len(result)} time series during "
+                f"{context}. Fitness queries must return exactly one time series. "
+                "Use PromQL aggregation such as sum(...), avg(...), max(...), or "
+                "otherwise constrain labels to produce a single series."
+            )
+
+        values = result[0].get("values")
+        if values:
+            return values[-1][1]
+
+        raise FitnessFunctionCalculationError(no_data_error)
 
     def calculate_range_fitness(self, start, end, query):
         """
@@ -527,19 +622,18 @@ class KrknRunner:
             end_time=end,
             granularity=100,
         )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' in range "
-                f"[{start}, {end}]. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return float(series["values"][-1][1])
-        raise FitnessFunctionCalculationError(
+        no_data_error = (
             f"Prometheus returned no data for query '{query}' in range "
             f"[{start}, {end}]. This may indicate the metric does not exist "
             f"in the requested time range or Prometheus has not yet scraped data."
+        )
+        return float(
+            self._extract_single_prometheus_value(
+                result=result,
+                query=query,
+                context=f"range [{start}, {end}]",
+                no_data_error=no_data_error,
+            )
         )
 
     def __extract_returncode_from_run(

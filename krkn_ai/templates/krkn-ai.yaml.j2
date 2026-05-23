@@ -38,6 +38,7 @@ elastic:
 
 
 fitness_function:
+  # Use an aggregate query that returns one Prometheus series.
   query: 'sum(kube_pod_container_status_restarts_total)'
   type: point
   include_krkn_failure: true

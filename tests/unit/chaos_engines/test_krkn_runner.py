@@ -11,13 +11,40 @@ from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
     FitnessFunction,
+    FitnessFunctionItem,
     FitnessFunctionType,
     HealthCheckConfig,
 )
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+    FitnessFunctionValidationError,
+)
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.base import CompositeScenario, CompositeDependency
 from krkn_ai.models.cluster_components import ClusterComponents
+
+
+def make_runner(minimal_config, temp_output_dir, mock_prom_client):
+    with patch(
+        "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+        return_value=mock_prom_client,
+    ):
+        return KrknRunner(
+            config=minimal_config,
+            output_dir=temp_output_dir,
+            runner_type=KrknRunnerType.CLI_RUNNER,
+        )
+
+
+MULTI_SERIES_RANGE_RESULT = [
+    {"metric": {"pod": "cart"}, "values": [[1000, "5"]]},
+    {"metric": {"pod": "catalogue"}, "values": [[1000, "8"]]},
+]
+
+MULTI_SERIES_INSTANT_RESULT = [
+    {"metric": {"pod": "cart"}, "value": [1000, "5"]},
+    {"metric": {"pod": "catalogue"}, "value": [1000, "8"]},
+]
 
 
 class TestKrknRunnerInitialization:
@@ -60,6 +87,151 @@ class TestKrknRunnerInitialization:
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
             with pytest.raises(Exception, match="krknctl and podman are not available"):
                 KrknRunner(config=minimal_config, output_dir=temp_output_dir)
+
+
+class TestKrknRunnerQueryValidation:
+    """Test opt-in preflight fitness query validation (validate_fitness_queries)"""
+
+    def test_validation_fails_with_multi_series(self, minimal_config, temp_output_dir):
+        """Preflight rejects queries that return multiple time series"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="kube_pod_container_status_restarts_total",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.return_value = MULTI_SERIES_INSTANT_RESULT
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        error = str(exc_info.value)
+        assert "returned 2 time series during validation" in error
+        assert "exactly one time series" in error
+
+    def test_validation_fails_with_invalid_query_syntax(
+        self, minimal_config, temp_output_dir
+    ):
+        """Preflight rejects invalid PromQL queries"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="invalid_query(",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.side_effect = RuntimeError(
+            "bad query syntax with secret-token"
+        )
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        error = str(exc_info.value)
+        assert "may be syntactically invalid" in error
+        assert "Cause: RuntimeError" in error
+        assert "secret-token" not in error
+
+    def test_validation_rejects_range_parameter_in_point_query(
+        self, minimal_config, temp_output_dir
+    ):
+        """Preflight rejects $range$ in point queries because runtime will not replace it"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="rate(container_cpu_usage_seconds_total[$range$])",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError) as exc_info:
+            runner.validate_fitness_queries()
+
+        error = str(exc_info.value)
+        assert "$range$ is only supported for range fitness queries" in error
+        mock_prom_client.process_query.assert_not_called()
+
+    def test_validation_substitutes_range_parameter(
+        self, minimal_config, temp_output_dir
+    ):
+        """Preflight substitutes $range$ with a sample range"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="rate(container_cpu_usage_seconds_total[$range$])",
+            type=FitnessFunctionType.range,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.return_value = [{"value": [1000, "0.5"]}]
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        mock_prom_client.process_query.assert_called_once_with(
+            "rate(container_cpu_usage_seconds_total[5m])"
+        )
+
+    def test_validation_skips_empty_result(self, minimal_config, temp_output_dir):
+        """Preflight allows queries with no data before chaos runs (metric may appear later)"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(metric_that_has_no_samples_yet)",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.return_value = []
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        mock_prom_client.process_query.assert_called_once()
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=True)
+    def test_validation_skips_in_mock_fitness_mode(
+        self, mock_env, minimal_config, temp_output_dir
+    ):
+        """Preflight is a no-op when MOCK_FITNESS is enabled"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="kube_pod_container_status_restarts_total",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        mock_prom_client.process_query.assert_not_called()
+
+    def test_validation_checks_fitness_items(self, minimal_config, temp_output_dir):
+        """Preflight validates each weighted fitness item when query is unset"""
+        minimal_config.fitness_function = FitnessFunction(
+            items=[
+                FitnessFunctionItem(
+                    query="sum(kube_pod_container_status_restarts_total)",
+                    type=FitnessFunctionType.point,
+                )
+            ]
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.return_value = [{"value": [1000, "1"]}]
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        runner.validate_fitness_queries()
+
+        mock_prom_client.process_query.assert_called_once_with(
+            "sum(kube_pod_container_status_restarts_total)"
+        )
+
+    def test_init_does_not_auto_validate(self, minimal_config, temp_output_dir):
+        """KrknRunner.__init__ must not call Prometheus; validation is opt-in via --validate-queries"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="kube_pod_container_status_restarts_total",
+            type=FitnessFunctionType.point,
+        )
+        mock_prom_client = Mock()
+        mock_prom_client.process_query.return_value = [
+            {"value": [1000, "5"]},
+            {"value": [1000, "8"]},
+        ]
+
+        make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        mock_prom_client.process_query.assert_not_called()
 
 
 class TestKrknRunnerRun:
@@ -387,6 +559,68 @@ class TestCalculatePointFitness:
             assert "up" in str(exc_info.value)
             assert "2024-01-01 12:00:00" in str(exc_info.value)
 
+    @pytest.mark.parametrize(
+        "result",
+        [
+            MULTI_SERIES_RANGE_RESULT,
+            [
+                {"metric": {"pod": "cart"}, "values": [[1000, "5"]]},
+                {"metric": {"pod": "catalogue"}, "values": []},
+            ],
+        ],
+    )
+    def test_query_prometheus_single_point_multi_series_raises_error(
+        self, result, minimal_config, temp_output_dir
+    ):
+        """Test point fitness rejects PromQL queries that return multiple time series"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="kube_pod_container_status_restarts_total",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = result
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError) as exc_info:
+            runner._query_prometheus_single_point(
+                "kube_pod_container_status_restarts_total",
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                "point fitness (start)",
+            )
+
+        error = str(exc_info.value)
+        assert "returned 2 time series" in error
+        assert "exactly one time series" in error
+        assert "sum(...)" in error
+
+    def test_calculate_range_fitness_multi_series_raises_error(
+        self, minimal_config, temp_output_dir
+    ):
+        """Test range fitness rejects PromQL queries that return multiple time series"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="rate(container_cpu_usage_seconds_total[$range$])",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = (
+            MULTI_SERIES_RANGE_RESULT
+        )
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError) as exc_info:
+            runner.calculate_range_fitness(
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                datetime.datetime(2024, 1, 1, 12, 10, 0),
+                "rate(container_cpu_usage_seconds_total[$range$])",
+            )
+
+        error = str(exc_info.value)
+        assert "returned 2 time series" in error
+        assert "rate(container_cpu_usage_seconds_total[10m])" in error
+        assert "exactly one time series" in error
+
 
 class TestCalculateRangeFitness:
     """Test calculate_range_fitness"""
@@ -501,6 +735,32 @@ class TestCalculateFitnessValueRetries:
 
     @patch("krkn_ai.chaos_engines.krkn_runner.time.sleep")
     @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_fitness_value_rejects_unsupported_type(
+        self, mock_env, mock_sleep, minimal_config, temp_output_dir
+    ):
+        """Test unsupported fitness types fail before entering the retry loop"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+            runner.calculate_fitness_value(
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                datetime.datetime(2024, 1, 1, 12, 5, 0),
+                "sum(kube_pod_container_status_restarts_total)",
+                "histogram",
+            )
+
+        assert "Unsupported fitness_type" in str(exc_info.value)
+        mock_sleep.assert_not_called()
+        mock_prom_client.process_prom_query_in_range.assert_not_called()
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.time.sleep")
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
     def test_calculate_fitness_value_retries_on_empty_data(
         self, mock_env, mock_sleep, minimal_config, temp_output_dir
     ):
@@ -585,3 +845,31 @@ class TestCalculateFitnessValueRetries:
             # Each retry calls calculate_point_fitness which calls _query_prometheus_single_point
             # for the start point. The guard fails immediately, so 1 Prometheus call per retry = 3 total.
             assert mock_prom_client.process_prom_query_in_range.call_count == 3
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.time.sleep")
+    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    def test_calculate_fitness_value_does_not_retry_validation_error(
+        self, mock_env, mock_sleep, minimal_config, temp_output_dir
+    ):
+        """Test that query validation errors are not retried as transient failures"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="kube_pod_container_status_restarts_total",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = (
+            MULTI_SERIES_RANGE_RESULT
+        )
+        runner = make_runner(minimal_config, temp_output_dir, mock_prom_client)
+
+        with pytest.raises(FitnessFunctionValidationError):
+            runner.calculate_fitness_value(
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                datetime.datetime(2024, 1, 1, 12, 5, 0),
+                "kube_pod_container_status_restarts_total",
+                FitnessFunctionType.point,
+            )
+
+        mock_sleep.assert_not_called()
+        assert mock_prom_client.process_prom_query_in_range.call_count == 1

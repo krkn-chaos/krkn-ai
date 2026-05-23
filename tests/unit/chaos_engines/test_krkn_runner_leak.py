@@ -28,7 +28,7 @@ class TestKrknRunnerThreadLeak(unittest.TestCase):
         config.health_checks = MagicMock(spec=HealthCheckConfig)
         config.elastic = None
         config.wait_duration = 10
-        config.parameters = {}  # Pydantic v2 fields aren't in MagicMock spec; set explicitly
+        config.parameters = {}
 
         from krkn_ai.models.scenario.base import Scenario
 

@@ -79,6 +79,16 @@ def main():
     help="Port to run Streamlit server on when monitoring is enabled.",
     default=8501,
 )
+@click.option(
+    "--validate-queries",
+    is_flag=True,
+    default=False,
+    help=(
+        "Pre-validate PromQL fitness queries against a live Prometheus "
+        "connection before running. Requires PROMETHEUS_URL/PROMETHEUS_TOKEN "
+        "or OpenShift auto-discovery."
+    ),
+)
 @click.pass_context
 def run(
     ctx,
@@ -92,6 +102,7 @@ def run(
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
     port: int = 8501,
+    validate_queries: bool = False,
 ):
     run_uuid = str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid)
@@ -149,6 +160,8 @@ def run(
             format=format,
             runner_type=enum_runner_type,
         )
+        if validate_queries:
+            genetic.validate_fitness_queries()
         genetic.simulate()
 
         genetic.save()

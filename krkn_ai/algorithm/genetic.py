@@ -134,6 +134,7 @@ class GeneticAlgorithm:
         # Variables to track the progress of the algorithm
         self.start_time = datetime.datetime.now(datetime.timezone.utc)
         start_time = time.time()
+        mono_start = time.monotonic()
         cur_generation = 0
 
         # Establish baseline by running dummy scenario to evaluate cluster health, fitness score before chaos testing
@@ -145,6 +146,13 @@ class GeneticAlgorithm:
         while True:
             # Calculate elapsed time since the start of the algorithm
             elapsed_time = time.time() - start_time
+
+            if self.config.duration is not None:
+                if time.monotonic() - mono_start >= self.config.duration:
+                    logger.info(
+                        "Duration budget exhausted before generation start, stopping."
+                    )
+                    break
 
             # Check all stopping criteria before processing generation
             if self._check_and_stop(cur_generation, elapsed_time):
@@ -198,6 +206,16 @@ class GeneticAlgorithm:
             elapsed_after_eval = time.time() - start_time
             if self._check_and_stop(cur_generation, elapsed_after_eval):
                 break
+
+            if self.config.duration is not None:
+                elapsed = time.monotonic() - mono_start
+                remaining = self.config.duration - elapsed
+                if remaining <= 0:
+                    logger.info("Duration budget exhausted, skipping wait.")
+                    break
+                time.sleep(min(self.config.wait_duration, remaining))
+            else:
+                time.sleep(self.config.wait_duration)
 
             # Repopulate off-springs
             self.population = []

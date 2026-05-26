@@ -125,4 +125,3 @@ class TestCrossover:
         assert child2.pod_name._namespace == "ns-a"
         assert child2.pod_name._owner_kind == "ReplicaSet"
         assert child2.pod_name._owner_name == "owner-a"
-

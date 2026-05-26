@@ -367,7 +367,6 @@ class PodNameParameter(BaseParameter):
         self._owner_name = state.get("_owner_name")
 
 
-
 class IngressParameter(BaseParameter):
     krknhub_name: str = "INGRESS"
     krknctl_name: str = "ingress"

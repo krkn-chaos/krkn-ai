@@ -80,9 +80,9 @@ class GeneticAlgorithm:
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(
             self.config
         )  # List valid scenarios
-        self.seen_population: Dict[
-            BaseScenario, CommandRunResult
-        ] = {}  # Map between scenario and its result
+        self.seen_population: Dict[BaseScenario, CommandRunResult] = (
+            {}
+        )  # Map between scenario and its result
         self.best_of_generation: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
@@ -622,7 +622,6 @@ class GeneticAlgorithm:
 
         return True, new_scenario
 
-
     def select_parents(self, fitness_scores: List[CommandRunResult]):
         """
         Selects two parents based on the configured selection strategy.
@@ -747,8 +746,6 @@ class GeneticAlgorithm:
 
             return scenario_a, scenario_b
 
-
-
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         # combines two scenario to create a single composite scenario
         dependency = rng.choice(
@@ -868,4 +865,3 @@ class GeneticAlgorithm:
             if isinstance(param, param_type):
                 param.set_state(state)
                 return
-

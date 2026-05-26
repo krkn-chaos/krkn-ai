@@ -25,7 +25,6 @@ class BaseParameter(BaseModel):
         self.value = state["value"]
 
 
-
 class BaseScenario(BaseModel):
     name: str
     krknctl_name: str  # Name of the scenario in krknctl

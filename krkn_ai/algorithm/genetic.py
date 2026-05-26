@@ -614,13 +614,14 @@ class GeneticAlgorithm:
             [type(x) for x in scenario.parameters]
         )
         for param_type in common_params:
-            # Get parameter value from original scenario
-            param_value = self.__get_param_value(scenario, param_type)
+            # Get parameter state from original scenario
+            param_state = self.__get_param_state(scenario, param_type)
 
-            # Set parameter value for new scenario
-            self.__set_param_value(new_scenario, param_type, param_value)
+            # Set parameter state for new scenario
+            self.__set_param_state(new_scenario, param_type, param_state)
 
         return True, new_scenario
+
 
     def select_parents(self, fitness_scores: List[CommandRunResult]):
         """
@@ -733,18 +734,20 @@ class GeneticAlgorithm:
             # adopt some different strategy
             return scenario_a, scenario_b
         else:
-            # if there are common params, lets switch values between them
+            # if there are common params, lets switch values/state between them
             for param_type in common_params:
                 if rng.random() < self.config.crossover_rate:
                     # find index of param in list
-                    a_value = self.__get_param_value(scenario_a, param_type)
-                    b_value = self.__get_param_value(scenario_b, param_type)
+                    a_state = self.__get_param_state(scenario_a, param_type)
+                    b_state = self.__get_param_state(scenario_b, param_type)
 
-                    # swap param values
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
+                    # swap param states
+                    self.__set_param_state(scenario_a, param_type, b_state)
+                    self.__set_param_state(scenario_b, param_type, a_state)
 
             return scenario_a, scenario_b
+
+
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         # combines two scenario to create a single composite scenario
@@ -852,16 +855,17 @@ class GeneticAlgorithm:
             elif self.format == "yaml":
                 yaml.dump(result, file_handler, sort_keys=False)
 
-    def __get_param_value(self, scenario: Scenario, param_type):
+    def __get_param_state(self, scenario: Scenario, param_type):
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                return param.value
+                return param.get_state()
         raise ValueError(
             f"Parameter type {param_type} not found in scenario {scenario}"
         )
 
-    def __set_param_value(self, scenario: Scenario, param_type, value):
+    def __set_param_state(self, scenario: Scenario, param_type, state):
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                param.value = value
+                param.set_state(state)
                 return
+

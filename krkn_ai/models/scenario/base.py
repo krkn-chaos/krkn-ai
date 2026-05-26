@@ -18,6 +18,13 @@ class BaseParameter(BaseModel):
     def get_value(self):
         return self.value
 
+    def get_state(self) -> dict:
+        return {"value": self.value}
+
+    def set_state(self, state: dict):
+        self.value = state["value"]
+
+
 
 class BaseScenario(BaseModel):
     name: str

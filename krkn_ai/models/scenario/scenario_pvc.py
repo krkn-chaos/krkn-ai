@@ -67,8 +67,8 @@ class PVCScenario(Scenario):
             )
 
         # Prefer PVCs
-        selected_pvc_name = None
-        selected_namespace = None
+        selected_pvc_name = ""
+        selected_namespace = ""
         if namespace_pvc_tuple:
             namespace, pvc = rng.choice(namespace_pvc_tuple)
             self.namespace.value = namespace.name
@@ -81,7 +81,7 @@ class PVCScenario(Scenario):
             self.namespace.value = namespace.name
             self.pod_name.set_pod(namespace.name, pod)
             self.pvc_name.value = ""  # Leave empty when using pod-name
-            selected_pvc_name = None
+            selected_pvc_name = ""
 
         min_usage = None
         if selected_pvc_name:

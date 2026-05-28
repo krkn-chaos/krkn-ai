@@ -32,7 +32,25 @@ class Scenario(BaseScenario):
     def __init__(self, **data):
         cluster_components = data.pop("cluster_components")
         super().__init__(**data)
-        self._cluster_components = cluster_components
+
+        # Local import to prevent circular dependencies
+        from krkn_ai.utils.node_selector import is_control_plane_node
+
+        # Filter out system namespaces
+        filtered_namespaces = [
+            ns
+            for ns in cluster_components.namespaces
+            if not is_system_namespace(ns.name)
+        ]
+
+        # Filter out control-plane nodes
+        filtered_nodes = [
+            n for n in cluster_components.nodes if not is_control_plane_node(n)
+        ]
+
+        self._cluster_components = ClusterComponents(
+            namespaces=filtered_namespaces, nodes=filtered_nodes
+        )
 
     def __str__(self):
         param_value = ", ".join([str(x.value) for x in self.parameters])
@@ -75,3 +93,14 @@ class CompositeScenario(BaseScenario):
 
     def __hash__(self):
         return hash(tuple([self.scenario_a, self.scenario_b]))
+
+
+def is_system_namespace(namespace_name: str) -> bool:
+    """Check if a namespace is a Kubernetes or OpenShift system namespace."""
+    name_lower = namespace_name.lower()
+    return (
+        name_lower.startswith("kube-")
+        or name_lower.startswith("openshift-")
+        or name_lower == "openshift"
+        or name_lower in ["kubernetes-dashboard"]
+    )

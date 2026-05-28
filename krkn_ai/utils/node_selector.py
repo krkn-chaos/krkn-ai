@@ -26,6 +26,24 @@ class NodeSelectionResult:
     matching_nodes: List[Node]  # Actual nodes matching the selector
 
 
+def is_control_plane_node(node: Node) -> bool:
+    """Check if a node is a master or control-plane node."""
+    # 1. Check labels
+    for label_key in node.labels.keys():
+        if "control-plane" in label_key or "master" in label_key:
+            return True
+    # 2. Check taints
+    if node.taints:
+        for taint in node.taints:
+            if "control-plane" in taint or "master" in taint:
+                return True
+    # 3. Check name
+    name_lower = node.name.lower()
+    if "control-plane" in name_lower or "master" in name_lower:
+        return True
+    return False
+
+
 def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
     """
     Select nodes for chaos injection using two strategies randomly.
@@ -45,6 +63,11 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
     """
     if not nodes:
         raise ValueError("No nodes available for selection")
+
+    # Filter out control-plane nodes to prevent unsafe chaos escalation
+    nodes = [n for n in nodes if not is_control_plane_node(n)]
+    if not nodes:
+        raise ValueError("No non-control-plane nodes available for selection")
 
     all_labels: Counter[str] = Counter()
     for node in nodes:

@@ -112,11 +112,12 @@ class NodeCPUPercentageParameter(BaseParameter):
     value: int = 50
 
     def mutate(self):
+        val = float(self.value)
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            val += rng.randint(1, 35) * val / 100
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
+            val -= rng.randint(1, 25) * val / 100
+        self.value = int(val)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
 
@@ -134,11 +135,12 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
+        val = float(self.value)
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            val += rng.randint(1, 35) * val / 100
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
+            val -= rng.randint(1, 25) * val / 100
+        self.value = int(val)
         self.value = max(self.value, 20)
         self.value = min(self.value, 100)
 
@@ -377,7 +379,7 @@ class FillPercentageParameter(BaseParameter):
     krknctl_name: str = "fill-percentage"
     value: int = 50
 
-    def mutate(self, min_value: float = None):
+    def mutate(self, min_value: Optional[float] = None):
         """
         Mutate the fill percentage value.
         Args:
@@ -501,11 +503,12 @@ class IOWriteBytesParameter(BaseParameter):
         """
         Mutate the percentage value between 1 and 100.
         """
+        val = float(self.value)
         if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+            val += rng.randint(1, 35) * val / 100
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
+            val -= rng.randint(1, 25) * val / 100
+        self.value = int(val)
         self.value = max(self.value, 1)
         self.value = min(self.value, 100)
 

@@ -339,7 +339,7 @@ class TestKubevirtDisruptionScenario:
         cluster = ClusterComponents(namespaces=[namespace], nodes=[])
 
         scenario = KubevirtDisruptionScenario(cluster_components=cluster)
-        assert scenario.name == "kubevirt-scenarios"
+        assert scenario.name == "kubevirt-outage"
         assert scenario.namespace.value == "test-ns"
         assert scenario.vm_name.value == "test-vm"
 

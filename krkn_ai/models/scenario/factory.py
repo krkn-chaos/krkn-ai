@@ -39,7 +39,7 @@ scenario_specs = [
     ("dns_outage", DnsOutageScenario),
     ("syn_flood", SynFloodScenario),
     ("pvc_scenarios", PVCScenario),
-    ("kubevirt_scenarios", KubevirtDisruptionScenario),
+    ("kubevirt_outage", KubevirtDisruptionScenario),
 ]
 
 

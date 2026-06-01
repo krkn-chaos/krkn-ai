@@ -84,8 +84,8 @@ class ScenarioConfig(BaseModel):
     pvc_scenarios: Optional[PVCScenarioConfig] = Field(
         alias="pvc-scenarios", default=None
     )
-    kubevirt_scenarios: Optional[KubevirtScenarioConfig] = Field(
-        alias="kubevirt-scenarios", default=None
+    kubevirt_outage: Optional[KubevirtScenarioConfig] = Field(
+        alias="kubevirt-outage", default=None
     )
 
 

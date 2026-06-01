@@ -72,3 +72,57 @@ class TestPopulationCreation:
                 UniqueScenariosError, match="Please adjust population size"
             ):
                 genetic_algorithm.create_population(population_size)
+
+    def test_create_population_with_seeds(self, genetic_algorithm):
+        """Test creating population with expert-guided seeds injected"""
+        population_size = 4
+        mock_seed = DummyScenario(cluster_components=ClusterComponents())
+        mock_seed.name = "Expert Seed"
+
+        genetic_algorithm.seeds = [mock_seed]
+
+        mock_random_scenario = DummyScenario(cluster_components=ClusterComponents())
+        mock_random_scenario.name = "Random Scenario"
+
+        with patch(
+            "krkn_ai.algorithm.genetic.ScenarioFactory.generate_random_scenario"
+        ) as mock_gen_scenario:
+            mock_gen_scenario.return_value = mock_random_scenario
+
+            population = genetic_algorithm.create_population(population_size)
+
+            assert len(population) == population_size
+            assert population[0] == mock_seed
+            assert all(s == mock_seed or s == mock_random_scenario for s in population)
+
+    def test_load_seeds_valid(self, minimal_config, temp_output_dir):
+        """Test loading seeds from recipes directory"""
+        import tempfile
+        import os
+        from unittest.mock import patch, Mock
+        from krkn_ai.algorithm.genetic import GeneticAlgorithm
+
+        with tempfile.TemporaryDirectory() as recipes_dir:
+            recipe_file = os.path.join(recipes_dir, "recipe.yaml")
+            with open(recipe_file, "w") as f:
+                f.write("""
+recipes:
+  - name: "Test Recipe"
+    steps:
+      - name: "Pod Killer"
+        type: "pod"
+        parameters:
+          namespace: "default"
+""")
+            minimal_config.recipes_path = recipes_dir
+
+            with patch("krkn_ai.algorithm.genetic.KrknRunner"):
+                with patch(
+                    "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+                ) as mock_gen:
+                    mock_gen.return_value = [("pod_scenarios", Mock)]
+                    ga = GeneticAlgorithm(
+                        config=minimal_config, output_dir=temp_output_dir, format="yaml"
+                    )
+                    assert len(ga.seeds) == 1
+                    assert isinstance(ga.seeds[0], BaseScenario)

@@ -221,17 +221,31 @@ class TestHealthCheckWatcherResults:
 
         # First URL has only 2 successful results (insufficient)
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.15
+            ),
         ]
 
         # Second URL has 5 successful results (sufficient - can detect outliers)
         second_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.16),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=2.5),  # outlier
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=2.5
+            ),  # outlier
         ]
 
         health_check_results = {
@@ -253,13 +267,23 @@ class TestHealthCheckWatcherResults:
 
         # All URLs have insufficient data
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.15
+            ),
         ]
         second_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.2),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.15
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.2
+            ),
         ]
 
         health_check_results = {
@@ -280,21 +304,43 @@ class TestHealthCheckWatcherResults:
 
         # Three URLs where the middle one has insufficient data
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.16),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.16
+            ),
         ]
         middle_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.15
+            ),
         ]  # Only 2 - insufficient
         last_url_results = [
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.16),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=3.0),  # outlier
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=3.0
+            ),  # outlier
         ]
 
         health_check_results = {

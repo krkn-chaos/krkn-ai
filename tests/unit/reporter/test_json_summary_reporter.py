@@ -38,10 +38,10 @@ class TestJSONSummaryReporter:
         now = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
         cc = minimal_config.cluster_components
         scenario = DummyScenario(cluster_components=cc)
-        
+
         gen0 = self._create_results(0, 0, 3, scenario, now)
         gen1 = self._create_results(1, 40, 3, scenario, now)
-        
+
         pop = {**gen0, **gen1}
         best = [gen0[2], gen1[102]]
 
@@ -53,24 +53,24 @@ class TestJSONSummaryReporter:
             start_time=now,
             end_time=now + datetime.timedelta(seconds=100),
             completed_generations=2,
-            seed=123
+            seed=123,
         )
-        
+
         summary = reporter.generate_summary()
 
         assert summary["run_id"] == "test-run"
         assert summary["seed"] == 123
         assert summary["start_time"] == now.isoformat()
         assert summary["duration_seconds"] == 100.0
-        
+
         assert summary["config"]["generations"] == minimal_config.generations
         assert summary["config"]["population_size"] == minimal_config.population_size
-        
+
         assert summary["summary"]["total_scenarios_executed"] == 6
         assert summary["summary"]["best_fitness_score"] == 60.0
         assert summary["summary"]["average_fitness_score"] == 30.0
         assert summary["summary"]["generations_completed"] == 2
-        
+
         assert len(summary["fitness_progression"]) == 2
         assert summary["fitness_progression"][0]["average"] == 10.0
         assert summary["fitness_progression"][0]["best"] == 20.0
@@ -82,19 +82,19 @@ class TestJSONSummaryReporter:
         now = datetime.datetime.now(datetime.timezone.utc)
         cc = minimal_config.cluster_components
         scenario = DummyScenario(cluster_components=cc)
-        
+
         pop = self._create_results(0, 0, 15, scenario, now)
-        
+
         reporter = JSONSummaryReporter(
             run_uuid="test",
             config=minimal_config,
             seen_population=pop,
             best_of_generation=[],
         )
-        
+
         best = reporter.generate_summary()["best_scenarios"]
         assert len(best) == 10
-        
+
         for i in range(10):
             item = best[i]
             assert item["rank"] == i + 1
@@ -117,7 +117,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             seen_population=gen0,
             best_of_generation=[gen0[1]],
-            completed_generations=1
+            completed_generations=1,
         )
         summary = reporter.generate_summary()
         assert len(summary["fitness_progression"]) == 1
@@ -171,10 +171,10 @@ class TestJSONSummaryReporter:
             seen_population=pop,
             best_of_generation=[],
         )
-        
+
         expected_summary = reporter.generate_summary()
         reporter.save(temp_output_dir)
-        
+
         path = os.path.join(temp_output_dir, "results.json")
         assert os.path.exists(path)
         with open(path, "r") as f:

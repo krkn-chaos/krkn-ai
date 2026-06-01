@@ -1,4 +1,5 @@
 import datetime
+import importlib
 from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import (
@@ -260,6 +261,16 @@ class StoppingCriteria(BaseModel):
 
 
 class ConfigFile(BaseModel):
+    @field_validator("fitness_plugins", mode="after")
+    @classmethod
+    def validate_fitness_plugins(cls, value: List[str]) -> List[str]:
+        for path in value:
+            try:
+                importlib.import_module(path)
+            except Exception as e:
+                raise ValueError(f"Cannot import fitness plugin '{path}': {e}")
+        return value
+
     kubeconfig_file_path: str  # Path to kubeconfig
     parameters: Dict[str, ParameterValue] = {}
 
@@ -308,6 +319,10 @@ class ConfigFile(BaseModel):
 
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
+    # New optional fields for fitness plugins and telemetry
+    fitness_plugins: List[str] = []  # dotted paths to FitnessPlugin implementations
+    enable_telemetry: bool = False
+    telemetry_endpoint: Optional[str] = None
 
     output: OutputConfig = OutputConfig()
 

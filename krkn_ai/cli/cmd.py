@@ -34,10 +34,10 @@ def main():
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file. Setting this will override value in config file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option("--config", "-c", help="Path to krkn-ai config file.")
-@click.option("--output", "-o", help="Directory to save results.")
+@click.option("--output", "-o", help="Directory to save results.", default="./")
 @click.option(
     "--format",
     "-f",
@@ -57,7 +57,6 @@ def main():
     "-p",
     multiple=True,
     help="Additional parameters for config file in key=value format.",
-    default=[],
 )
 @click.option(
     "--seed",
@@ -87,7 +86,7 @@ def run(
     output: str = "./",
     format: str = "yaml",
     runner_type: str = None,
-    param: list[str] = None,
+    param: tuple[str, ...] = (),
     seed: int = None,
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
@@ -129,30 +128,36 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
-    streamlit_process = None
-    if monitoring:
-        logger.info("Starting live monitoring dashboard...")
-        streamlit_process = DashboardManager.start(
-            new_output_path, port, background=True
-        )
-
     run_success = False
     try:
         os.makedirs(new_output_path, exist_ok=True)
         with open(os.path.join(new_output_path, "results.json"), "w") as f:
             json.dump({"status": STATUS_STARTED}, f)
 
-        genetic = GeneticAlgorithm(
-            run_uuid=run_uuid,
-            config=parsed_config,
-            output_dir=new_output_path,
-            format=format,
-            runner_type=enum_runner_type,
-        )
-        genetic.simulate()
-
-        genetic.save()
-        run_success = True
+        if monitoring:
+            logger.info("Starting live monitoring dashboard...")
+            with DashboardManager.session(new_output_path, port):
+                genetic = GeneticAlgorithm(
+                    run_uuid=run_uuid,
+                    config=parsed_config,
+                    output_dir=new_output_path,
+                    format=format,
+                    runner_type=enum_runner_type,
+                )
+                genetic.simulate()
+                genetic.save()
+                run_success = True
+        else:
+            genetic = GeneticAlgorithm(
+                run_uuid=run_uuid,
+                config=parsed_config,
+                output_dir=new_output_path,
+                format=format,
+                runner_type=enum_runner_type,
+            )
+            genetic.simulate()
+            genetic.save()
+            run_success = True
     except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
         logger.error("%s", e)
         exit(1)
@@ -170,9 +175,9 @@ def run(
             except Exception:
                 pass
 
-        if streamlit_process:
+        if monitoring:
             logger.info(
-                "Run finished. Monitoring dashboard will remain running. Terminate manually when done."
+                "Run finished. The monitoring dashboard has been shut down automatically."
             )
         logger.info("Check run.log file in '%s' for more details.", new_output_path)
 
@@ -198,7 +203,7 @@ def monitor(ctx, output: str, port: int):
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option(
     "--output", "-o", help="Path to save config file.", default="./krkn-ai.yaml"
@@ -234,8 +239,8 @@ def monitor(ctx, output: str, port: int):
 def discover(
     ctx,
     kubeconfig: str,
-    output: str = "./",
-    namespace: str = "*",
+    output: str = "./krkn-ai.yaml",
+    namespace: str = ".*",
     pod_label: str = ".*",
     node_label: str = ".*",
     verbose: int = 0,

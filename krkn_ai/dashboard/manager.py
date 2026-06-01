@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 from krkn_ai.utils.logger import get_logger
+from contextlib import contextmanager
 
 
 class DashboardManager:
@@ -64,3 +65,27 @@ class DashboardManager:
         except Exception as e:
             logger.error(f"Failed to start monitoring dashboard: {e}")
             return None
+
+    @staticmethod
+    def stop(process):
+        """Terminate the dashboard subprocess if it is still running."""
+        if process is None:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+    @staticmethod
+    @contextmanager
+    def session(output_dir: str, port: int):
+        """Context manager that starts the dashboard and stops it on exit."""
+        process = DashboardManager.start(output_dir, port, background=True)
+        try:
+            yield process
+        finally:
+            if process:
+                DashboardManager.stop(process)

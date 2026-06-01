@@ -9,10 +9,12 @@ Working Details:
 """
 
 from collections import defaultdict
+import importlib
 import threading
 import time
-import requests
-from typing import Dict, List, Optional, Tuple
+
+from typing import List, Dict, Tuple, Optional
+
 import numpy as np
 
 from krkn_ai.utils.logger import get_logger
@@ -23,6 +25,8 @@ from krkn_ai.models.config import (
     HealthCheckResult,
     ParameterValue,
 )
+from krkn_ai.chaos_engines.workload.base_workload_generator import BaseWorkloadGenerator
+from krkn_ai.chaos_engines.workload.http_workload_generator import HttpWorkloadGenerator
 
 logger = get_logger(__name__)
 
@@ -37,8 +41,33 @@ class HealthCheckWatcher:
         self._params = {k: v.value for k, v in (params or {}).items()}
         self._stop_event = threading.Event()
         self._threads: List[threading.Thread] = []
-        self._results_lock = threading.Lock()
+        # Each thread stores results in its own list - ZERO contention!
         self._thread_results: Dict[int, Tuple[str, List[HealthCheckResult]]] = {}
+
+    def _load_generator(
+        self, health_check: HealthCheckApplicationConfig, headers: Optional[dict] = None
+    ) -> BaseWorkloadGenerator:
+        """
+        Load custom workload generator from config if specified.
+        Falls back to HttpWorkloadGenerator (plain GET) if not set.
+        """
+        if health_check.workload:
+            dotted_path = health_check.workload["generator"]
+            cfg = health_check.workload.get("config", {})
+            module_path, class_name = dotted_path.rsplit(".", 1)
+            module = importlib.import_module(module_path)
+            cls = getattr(module, class_name)
+            return cls(cfg)
+
+        # default: plain HTTP GET (same behaviour as before)
+        return HttpWorkloadGenerator(
+            {
+                "url": health_check.url,
+                "timeout": health_check.timeout,
+                "status_code": health_check.status_code,
+                "headers": headers or {},
+            }
+        )
 
     def run(self):
         # Start a thread for each health check
@@ -46,12 +75,7 @@ class HealthCheckWatcher:
             f"Starting health check watcher for {len(self.config.applications)} applications"
         )
         for health_check in self.config.applications:
-            t = threading.Thread(
-                target=self.run_health_check,
-                args=(health_check,),
-                daemon=True,
-                name=f"health-check-{health_check.name}",
-            )
+            t = threading.Thread(target=self.run_health_check, args=(health_check,))
             t.start()
             self._threads.append(t)
 
@@ -65,72 +89,46 @@ class HealthCheckWatcher:
         if thread_id is None:
             return  # Skip if thread ID is None (should not happen in normal operation)
         thread_results: List[HealthCheckResult] = []
-        with self._results_lock:
-            self._thread_results[thread_id] = (health_check.url, thread_results)
-
+        self._thread_results[thread_id] = (health_check.url, thread_results)
         resolved_headers = self._resolve_headers(health_check)
+        generator = self._load_generator(health_check, headers=resolved_headers)
+        generator.setup()
 
         # Simple polling loop, stops when stop() is called
         while not self._stop_event.is_set():
-            try:
-                resp = requests.get(
-                    health_check.url,
-                    headers=resolved_headers,
-                    timeout=health_check.timeout,
-                )
-                status = resp.status_code
-                success = status == health_check.status_code
-                error = None
-            except Exception as e:
-                status = -1
-                success = False
-                resp = None
-                error = str(e)
+            workload_result = generator.generate()
 
             result = HealthCheckResult(
                 name=health_check.name,
-                status_code=status,
-                success=success,
-                error=error,
-                response_time=resp.elapsed.total_seconds() if resp is not None else -1,
+                status_code=workload_result.status_code,
+                success=workload_result.success,
+                error=workload_result.error,
+                response_time=workload_result.response_time,
             )
 
-            with self._results_lock:
-                thread_results.append(result)
+            # Store in thread-private list - NO LOCKS, NO CONTENTION!
+            thread_results.append(result)
 
-            if not success and self.config.stop_watcher_on_failure:
+            if not workload_result.success and self.config.stop_watcher_on_failure:
                 self._stop_event.set()
                 break
 
-            if self._stop_event.wait(health_check.interval):
-                break
+            time.sleep(health_check.interval)
+
+        generator.teardown()
 
     def stop(self):
         logger.debug("Stopping health check watcher")
         self._stop_event.set()
-        deadline = time.monotonic() + self.config.stop_timeout
         for t in self._threads:
-            timeout = max(0.0, deadline - time.monotonic())
-            t.join(timeout=timeout)
-            if t.is_alive():
-                logger.warning(
-                    "Health check worker thread %s is still running after %.2f seconds; "
-                    "continuing shutdown",
-                    t.name,
-                    self.config.stop_timeout,
-                )
+            t.join()
 
     def get_results(self) -> Dict[str, List[HealthCheckResult]]:
-        """Aggregate a stable snapshot of collected health check results."""
+        """Aggregate results from all threads - called after threads complete"""
         results = defaultdict(list)
 
-        with self._results_lock:
-            snapshots = [
-                (url, list(thread_results))
-                for url, thread_results in self._thread_results.values()
-            ]
-
-        for url, thread_results in snapshots:
+        # Each thread has its own URL and results list
+        for url, thread_results in self._thread_results.values():
             results[url].extend(thread_results)
 
         return dict(results)

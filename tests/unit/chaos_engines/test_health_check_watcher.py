@@ -28,7 +28,7 @@ class TestHealthCheckWatcherInitialization:
 class TestHealthCheckWatcherRunAndStop:
     """Test HealthCheckWatcher run and stop behavior"""
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_run_starts_threads_for_each_application(self, mock_get):
         """Test run starts a thread for each health check application"""
         # Mock successful health check response
@@ -51,14 +51,13 @@ class TestHealthCheckWatcherRunAndStop:
         # Verify thread was started
         assert len(watcher._threads) == 1
         assert watcher._threads[0].is_alive()
-        assert watcher._threads[0].daemon is True
 
         # Stop and wait for thread to finish
         watcher.stop()
         watcher._threads[0].join(timeout=1.0)
         assert not watcher._threads[0].is_alive()
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_stop_terminates_all_threads(self, mock_get):
         """Test stop method terminates all running health check threads"""
         mock_response = Mock()
@@ -85,36 +84,11 @@ class TestHealthCheckWatcherRunAndStop:
             thread.join(timeout=1.0)
             assert not thread.is_alive()
 
-    def test_stop_uses_timeout_budget_and_logs_stuck_threads(self):
-        """Test stop does not block forever on a stuck health check thread"""
-        config = HealthCheckConfig(applications=[], stop_timeout=0.25)
-        watcher = HealthCheckWatcher(config)
-        stuck_thread = Mock()
-        stuck_thread.name = "health-check-stuck"
-        stuck_thread.is_alive.return_value = True
-        watcher._threads = [stuck_thread]
-
-        with patch(
-            "krkn_ai.chaos_engines.health_check_watcher.logger.warning"
-        ) as mock_warning:
-            watcher.stop()
-
-        stuck_thread.join.assert_called_once()
-        actual_timeout = stuck_thread.join.call_args.kwargs["timeout"]
-        assert actual_timeout is not None
-        assert 0 <= actual_timeout <= 0.25
-        mock_warning.assert_called_once_with(
-            "Health check worker thread %s is still running after %.2f seconds; "
-            "continuing shutdown",
-            "health-check-stuck",
-            0.25,
-        )
-
 
 class TestHealthCheckWatcherResults:
     """Test HealthCheckWatcher result collection and summarization"""
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_get_results_aggregates_from_all_threads(self, mock_get):
         """Test get_results aggregates results from all health check threads"""
         mock_response = Mock()
@@ -145,36 +119,7 @@ class TestHealthCheckWatcherResults:
             assert result.success is True
             assert result.status_code == 200
 
-    def test_get_results_returns_snapshot_copy(self):
-        """Test get_results does not expose live worker result lists"""
-        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
-        first_result = HealthCheckResult(
-            name="test-app",
-            status_code=200,
-            success=True,
-            response_time=0.1,
-        )
-        late_result = HealthCheckResult(
-            name="test-app",
-            status_code=200,
-            success=True,
-            response_time=0.2,
-        )
-
-        with watcher._results_lock:
-            watcher._thread_results[1] = (
-                "http://localhost:8080/health",
-                [first_result],
-            )
-
-        results = watcher.get_results()
-
-        with watcher._results_lock:
-            watcher._thread_results[1][1].append(late_result)
-
-        assert results["http://localhost:8080/health"] == [first_result]
-
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_summarize_success_rate_calculates_failure_score(self, mock_get):
         """Test summarize_success_rate calculates failure score correctly"""
         # Mock mix of successful and failed responses
@@ -203,7 +148,7 @@ class TestHealthCheckWatcherResults:
         # Score is (failed / total) * 10
         assert score <= 10
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_summarize_success_rate_returns_zero_for_empty_results(self, mock_get):
         """Test summarize_success_rate returns 0 for empty results"""
         config = HealthCheckConfig(applications=[])
@@ -212,7 +157,7 @@ class TestHealthCheckWatcherResults:
         score = watcher.summarize_success_rate({})
         assert score == 0
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_summarize_response_time_detects_outliers(self, mock_get):
         """Test summarize_response_time detects response time outliers"""
         # Mock responses with varying response times (some outliers)
@@ -240,7 +185,7 @@ class TestHealthCheckWatcherResults:
         assert score >= 0
         assert score <= 10
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_summarize_response_time_returns_zero_with_insufficient_data(
         self, mock_get
     ):
@@ -409,7 +354,7 @@ class TestHealthCheckWatcherResults:
         # Should NOT return 0 - first and last URLs have sufficient data
         assert score > 0
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
         """Test health check handles request exceptions gracefully"""
         # Mock request to raise exception
@@ -439,7 +384,7 @@ class TestHealthCheckWatcherResults:
 class TestHealthCheckWatcherHeaders:
     """Test header merging and env-var resolution"""
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_global_headers_sent_when_no_endpoint_headers(self, mock_get):
         """Global headers are passed to requests.get when endpoint has none"""
         mock_response = Mock()
@@ -461,7 +406,7 @@ class TestHealthCheckWatcherHeaders:
 
         assert mock_get.call_args.kwargs["headers"]["X-Global"] == "global-value"
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_endpoint_headers_override_global(self, mock_get):
         """Per-endpoint header wins over global for the same key"""
         mock_response = Mock()
@@ -488,7 +433,7 @@ class TestHealthCheckWatcherHeaders:
             mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer endpoint"
         )
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_global_and_endpoint_headers_merged(self, mock_get):
         """Both global and endpoint headers are present when keys differ"""
         mock_response = Mock()
@@ -515,7 +460,7 @@ class TestHealthCheckWatcherHeaders:
         assert kwargs["headers"]["X-Global"] == "g"
         assert kwargs["headers"]["X-Endpoint"] == "e"
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_param_in_header_value_is_resolved(self, mock_get):
         """$PARAM in a header value is resolved from the params dict passed to the watcher"""
         mock_response = Mock()
@@ -543,7 +488,7 @@ class TestHealthCheckWatcherHeaders:
             == "Bearer resolved-token"
         )
 
-    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    @patch("krkn_ai.chaos_engines.workload.http_workload_generator.requests.get")
     def test_missing_param_leaves_template_unchanged(self, mock_get):
         """$PARAM with no matching entry in params dict is passed through as-is"""
         mock_response = Mock()

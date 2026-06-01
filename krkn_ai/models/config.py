@@ -11,6 +11,7 @@ from pydantic import (
 import krkn_ai.constants as const
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.utils import id_generator
+from typing import Any
 
 
 class ParameterValue(BaseModel):
@@ -165,11 +166,12 @@ class HealthCheckApplicationConfig(BaseModel):
     timeout: int = 4  # in seconds
     interval: int = 2  # in seconds
     headers: Optional[Dict[str, str]] = None
+    workload: Optional[Dict[str, Any]] = None  # Custom workload generator config
 
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
-    stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
+    stop_timeout: float = 5.0
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
 

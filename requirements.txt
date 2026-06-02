@@ -5,6 +5,6 @@ notebook
 jupyterlab
 requests
 click
-krkn-lib@git+https://github.com/krkn-chaos/krkn-lib
+krkn-lib @ git+https://github.com/krkn-chaos/krkn-lib@a89b299b1789eeb8f8ed07213eccd77414f03283
 pyyaml
 seaborn

@@ -126,11 +126,18 @@ def main():
         auto_refresh = False
 
     # Load data — loaders return (file_found: bool, df | None)
-    results_file_found, df_results = load_results_csv(output_dir)
-    config_data = load_config_yaml(output_dir)
-    health_file_found, df_health = load_health_check_csv(output_dir)
-    df_details = load_detailed_scenarios_data(output_dir)
-    df_logs = load_logs(output_dir)
+    if running:
+        results_file_found, df_results = load_results_csv.__wrapped__(output_dir)
+        config_data = load_config_yaml.__wrapped__(output_dir)
+        health_file_found, df_health = load_health_check_csv.__wrapped__(output_dir)
+        df_details = load_detailed_scenarios_data.__wrapped__(output_dir)
+        df_logs = load_logs.__wrapped__(output_dir)
+    else:
+        results_file_found, df_results = load_results_csv(output_dir)
+        config_data = load_config_yaml(output_dir)
+        health_file_found, df_health = load_health_check_csv(output_dir)
+        df_details = load_detailed_scenarios_data(output_dir)
+        df_logs = load_logs(output_dir)
 
     # fully unfiltered copy (baseline row included) for anomaly detection
     df_results_all = df_results.copy() if df_results is not None else None

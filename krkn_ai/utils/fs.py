@@ -1,6 +1,7 @@
 import json
 import os
 import yaml
+from collections.abc import Sequence
 from typing import Union, List, Dict
 
 from krkn_ai.models.config import ConfigFile, ParameterValue
@@ -20,7 +21,9 @@ def preprocess_param_string(data: str, params: dict) -> str:
 
 
 def read_config_from_file(
-    file_path: str, param: list[str] = None, kubeconfig: str = None
+    file_path: str,
+    param: Union[Sequence[str], None] = None,
+    kubeconfig: Union[str, None] = None,
 ) -> ConfigFile:
     """Read config file from local
     Args:

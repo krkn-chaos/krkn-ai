@@ -51,6 +51,7 @@ class TestHealthCheckWatcherRunAndStop:
         # Verify thread was started
         assert len(watcher._threads) == 1
         assert watcher._threads[0].is_alive()
+        assert watcher._threads[0].daemon is True
 
         # Stop and wait for thread to finish
         watcher.stop()
@@ -83,6 +84,31 @@ class TestHealthCheckWatcherRunAndStop:
         for thread in watcher._threads:
             thread.join(timeout=1.0)
             assert not thread.is_alive()
+
+    def test_stop_uses_timeout_budget_and_logs_stuck_threads(self):
+        """Test stop does not block forever on a stuck health check thread"""
+        config = HealthCheckConfig(applications=[], stop_timeout=0.25)
+        watcher = HealthCheckWatcher(config)
+        stuck_thread = Mock()
+        stuck_thread.name = "health-check-stuck"
+        stuck_thread.is_alive.return_value = True
+        watcher._threads = [stuck_thread]
+
+        with patch(
+            "krkn_ai.chaos_engines.health_check_watcher.logger.warning"
+        ) as mock_warning:
+            watcher.stop()
+
+        stuck_thread.join.assert_called_once()
+        actual_timeout = stuck_thread.join.call_args.kwargs["timeout"]
+        assert actual_timeout is not None
+        assert 0 <= actual_timeout <= 0.25
+        mock_warning.assert_called_once_with(
+            "Health check worker thread %s is still running after %.2f seconds; "
+            "continuing shutdown",
+            "health-check-stuck",
+            0.25,
+        )
 
 
 class TestHealthCheckWatcherResults:
@@ -118,6 +144,35 @@ class TestHealthCheckWatcherResults:
             assert isinstance(result, HealthCheckResult)
             assert result.success is True
             assert result.status_code == 200
+
+    def test_get_results_returns_snapshot_copy(self):
+        """Test get_results does not expose live worker result lists"""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+        first_result = HealthCheckResult(
+            name="test-app",
+            status_code=200,
+            success=True,
+            response_time=0.1,
+        )
+        late_result = HealthCheckResult(
+            name="test-app",
+            status_code=200,
+            success=True,
+            response_time=0.2,
+        )
+
+        with watcher._results_lock:
+            watcher._thread_results[1] = (
+                "http://localhost:8080/health",
+                [first_result],
+            )
+
+        results = watcher.get_results()
+
+        with watcher._results_lock:
+            watcher._thread_results[1][1].append(late_result)
+
+        assert results["http://localhost:8080/health"] == [first_result]
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_calculates_failure_score(self, mock_get):
@@ -221,17 +276,31 @@ class TestHealthCheckWatcherResults:
 
         # First URL has only 2 successful results (insufficient)
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.15
+            ),
         ]
 
         # Second URL has 5 successful results (sufficient - can detect outliers)
         second_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.16),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=2.5),  # outlier
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=2.5
+            ),  # outlier
         ]
 
         health_check_results = {
@@ -253,13 +322,23 @@ class TestHealthCheckWatcherResults:
 
         # All URLs have insufficient data
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.15
+            ),
         ]
         second_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.2),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.15
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.2
+            ),
         ]
 
         health_check_results = {
@@ -280,21 +359,43 @@ class TestHealthCheckWatcherResults:
 
         # Three URLs where the middle one has insufficient data
         first_url_results = [
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app1", status_code=200, success=True, response_time=0.16),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.16
+            ),
         ]
         middle_url_results = [
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app2", status_code=200, success=True, response_time=0.15),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.15
+            ),
         ]  # Only 2 - insufficient
         last_url_results = [
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.1),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.12),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.14),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=0.16),
-            HealthCheckResult(name="app3", status_code=200, success=True, response_time=3.0),  # outlier
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=3.0
+            ),  # outlier
         ]
 
         health_check_results = {

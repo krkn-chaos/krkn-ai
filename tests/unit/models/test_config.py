@@ -181,7 +181,11 @@ class TestHealthCheckConfig:
         # Test HealthCheckConfig defaults
         config = HealthCheckConfig()
         assert config.stop_watcher_on_failure is False
+        assert config.stop_timeout == 5.0
         assert config.applications == []
+
+        custom_config = HealthCheckConfig(stop_timeout=0.25)
+        assert custom_config.stop_timeout == 0.25
 
         # Test HealthCheckApplicationConfig with defaults and custom values
         app = HealthCheckApplicationConfig(

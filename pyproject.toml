@@ -21,8 +21,8 @@ dependencies = [
   "seaborn",
   "plotly>=6.6.0",
   "streamlit>=1.55.0",
-  # VCS dependency
-  "krkn-lib @ git+https://github.com/krkn-chaos/krkn-lib",
+  "kubernetes>=34.1.0,<36",
+  "krkn-lib @ git+https://github.com/krkn-chaos/krkn-lib@a89b299b1789eeb8f8ed07213eccd77414f03283",
 ]
 
 [project.scripts]
@@ -37,6 +37,7 @@ dev = [
   "coverage",
   "notebook",
   "jupyterlab",
+  "beautifulsoup4",
 ]
 
 [tool.setuptools.packages.find]

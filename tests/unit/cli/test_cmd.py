@@ -69,6 +69,49 @@ class TestRunCommand:
         finally:
             os.unlink(config_path)
 
+    def test_run_uses_default_output_when_flag_is_omitted(self, minimal_config):
+        """Test command uses default output directory when --output is omitted"""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            import yaml
+
+            config_dict = {
+                "kubeconfig_file_path": minimal_config.kubeconfig_file_path,
+                "generations": minimal_config.generations,
+                "population_size": minimal_config.population_size,
+                "fitness_function": {
+                    "query": minimal_config.fitness_function.query,
+                    "type": minimal_config.fitness_function.type.value,
+                },
+                "scenario": {"pod_scenarios": {"enable": True}},
+            }
+            yaml.dump(config_dict, f)
+            config_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_read.return_value = minimal_config
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+
+                    with runner.isolated_filesystem():
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                            ],
+                        )
+
+                    assert result.exit_code == 0, result.exception
+                    mock_ga.simulate.assert_called_once()
+                    mock_ga.save.assert_called_once()
+        finally:
+            os.unlink(config_path)
+
     def test_run_fails_when_config_missing_or_invalid(self, temp_output_dir):
         """Test command fails when config file is missing or invalid"""
         runner = CliRunner()

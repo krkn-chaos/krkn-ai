@@ -109,9 +109,9 @@ class TestGeneticAlgorithmCoreMethods:
                             genetic_algorithm.current_scenario_mutation_rate = (
                                 final_rate
                             )
+                            genetic_algorithm.completed_generations = 2
                             genetic_algorithm.save()
 
-                            # Verify all reporter methods are called
                             assert mock_save_gen.called
                             assert mock_graph.called
                             assert mock_save_report.called
@@ -122,5 +122,11 @@ class TestGeneticAlgorithmCoreMethods:
                                     "scenario_mutation_rate"
                                 ]
                                 == final_rate
+                            )
+                            assert (
+                                mock_summary_reporter.call_args.kwargs[
+                                    "completed_generations"
+                                ]
+                                == 2
                             )
                             assert mock_reporter_instance.save.called

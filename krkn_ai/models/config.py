@@ -169,6 +169,7 @@ class HealthCheckApplicationConfig(BaseModel):
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
+    stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
 

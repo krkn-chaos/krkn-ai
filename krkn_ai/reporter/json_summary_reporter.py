@@ -34,6 +34,7 @@ class JSONSummaryReporter:
         end_time: Optional[datetime.datetime] = None,
         completed_generations: int = 0,
         seed: Optional[int] = None,
+        scenario_mutation_rate: Optional[float] = None,
     ):
         """
         Initialize the JSON summary reporter.
@@ -47,6 +48,8 @@ class JSONSummaryReporter:
             end_time: When the run ended.
             completed_generations: Number of generations completed.
             seed: Random seed used for the run (if any).
+            scenario_mutation_rate: Scenario mutation rate to write in the
+                summary.
         """
         self.run_uuid = run_uuid
         self.config = config
@@ -57,6 +60,11 @@ class JSONSummaryReporter:
         self.end_time = end_time
         self.completed_generations = completed_generations
         self.seed = seed
+        self.scenario_mutation_rate = (
+            config.scenario_mutation_rate
+            if scenario_mutation_rate is None
+            else scenario_mutation_rate
+        )
         self.status = STATUS_COMPLETED
 
     def generate_summary(self) -> Dict[str, Any]:
@@ -111,7 +119,7 @@ class JSONSummaryReporter:
                 "generations": self.config.generations,
                 "population_size": self.config.population_size,
                 "mutation_rate": self.config.mutation_rate,
-                "scenario_mutation_rate": self.config.scenario_mutation_rate,
+                "scenario_mutation_rate": self.scenario_mutation_rate,
                 "crossover_rate": self.config.crossover_rate,
                 "composition_rate": self.config.composition_rate,
             },

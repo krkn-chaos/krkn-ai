@@ -6,7 +6,6 @@ their metadata.
 """
 
 import json
-import random
 from collections import Counter
 from dataclasses import dataclass
 from typing import List, Set, Optional
@@ -79,7 +78,7 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
         ]
 
         count = rng.randint(1, len(all_matching_nodes))
-        selected_nodes = random.sample(all_matching_nodes, k=count)
+        selected_nodes = rng.sample(all_matching_nodes, k=count)
 
         taints_json = _collect_taints_from_nodes(selected_nodes)
 

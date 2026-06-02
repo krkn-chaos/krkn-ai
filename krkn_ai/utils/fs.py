@@ -1,9 +1,10 @@
 import json
 import os
 import yaml
+from collections.abc import Sequence
 from typing import Union, List, Dict
 
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, ParameterValue
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -20,7 +21,9 @@ def preprocess_param_string(data: str, params: dict) -> str:
 
 
 def read_config_from_file(
-    file_path: str, param: list[str] = None, kubeconfig: str = None
+    file_path: str,
+    param: Union[Sequence[str], None] = None,
+    kubeconfig: Union[str, None] = None,
 ) -> ConfigFile:
     """Read config file from local
     Args:
@@ -31,6 +34,15 @@ def read_config_from_file(
     """
     with open(file_path, "r", encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
+    if config is None:
+        config = {}
+
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Config file {file_path} must be a mapping (dictionary), "
+            f"but found {type(config).__name__}."
+        )
+
     if kubeconfig is not None and kubeconfig != "" and os.path.exists(kubeconfig):
         config["kubeconfig_file_path"] = kubeconfig
 
@@ -38,49 +50,49 @@ def read_config_from_file(
     if param:
         params = {}
         for p in param:
-            key, value = p.split("=")
-            params[str(key)] = str(value)
+            if "=" in p:
+                key, value = p.split("=", 1)
+            else:
+                key, value = p, ""
+            params[str(key)] = ParameterValue.from_cli(str(key), str(value))
+
+        raw = {k: v.value for k, v in params.items()}
 
         # Replace parameter in health check url string
-        if "health_checks" in config and "applications" in config["health_checks"]:
-            for health_check in config["health_checks"]["applications"]:
-                health_check["url"] = preprocess_param_string(
-                    health_check["url"], params
-                )
+        for app in config.get("health_checks", {}).get("applications", []):
+            if "url" in app:
+                app["url"] = preprocess_param_string(app["url"], raw)
 
         # Replace parameter in elastic configuration
         if "elastic" in config and "server" in config["elastic"]:
             config["elastic"]["enable"] = is_truthy(
-                preprocess_param_string(config["elastic"]["enable"], params)
+                preprocess_param_string(config["elastic"]["enable"], raw)
             )
             config["elastic"]["verify_certs"] = is_truthy(
-                preprocess_param_string(config["elastic"]["verify_certs"], params)
+                preprocess_param_string(config["elastic"]["verify_certs"], raw)
             )
             config["elastic"]["server"] = preprocess_param_string(
-                config["elastic"]["server"], params
+                config["elastic"]["server"], raw
             )
             config["elastic"]["port"] = preprocess_param_string(
-                config["elastic"]["port"], params
+                config["elastic"]["port"], raw
             )
             config["elastic"]["username"] = preprocess_param_string(
-                config["elastic"]["username"], params
+                config["elastic"]["username"], raw
             )
             config["elastic"]["password"] = preprocess_param_string(
-                config["elastic"]["password"], params
+                config["elastic"]["password"], raw
             )
             config["elastic"]["index"] = preprocess_param_string(
-                config["elastic"]["index"], params
+                config["elastic"]["index"], raw
             )
 
-        # Remove private parameters from config (starts with double __underscore)
-        config["parameters"] = {
-            k: v for k, v in params.items() if not k.startswith("__")
-        }
+        config["parameters"] = params
 
-    return ConfigFile(**config)
+    return ConfigFile.model_validate(config)
 
 
-def env_is_truthy(var: str):
+def env_is_truthy(var: str) -> bool:
     """
     Checks whether a environment variable is set to truthy value.
     """
@@ -88,11 +100,11 @@ def env_is_truthy(var: str):
     return is_truthy(value)
 
 
-def is_truthy(value: str):
+def is_truthy(value: Union[str, bool, int]) -> bool:
     """
     Checks whether a value is set to truthy value.
     """
-    value = value.lower().strip()
+    value = str(value).lower().strip()
     return value in ["yes", "y", "true", "1"]
 
 

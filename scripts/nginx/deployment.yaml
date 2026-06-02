@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: nginx:latest
+          image: mirror.gcr.io/nginx:latest
           ports:
             - containerPort: 8080
           volumeMounts:

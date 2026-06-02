@@ -4,6 +4,9 @@ from typing import List
 
 import yaml
 
+import matplotlib
+
+matplotlib.use("Agg")
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator

@@ -79,6 +79,12 @@ def main():
     help="Port to run Streamlit server on when monitoring is enabled.",
     default=8501,
 )
+@click.option(
+    "--resume",
+    is_flag=True,
+    default=False,
+    help="Resume from last saved checkpoint in the output directory.",
+)
 @click.pass_context
 def run(
     ctx,
@@ -92,6 +98,7 @@ def run(
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
     port: int = 8501,
+    resume: bool = False,
 ):
     run_uuid = str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid)
@@ -149,7 +156,7 @@ def run(
             format=format,
             runner_type=enum_runner_type,
         )
-        genetic.simulate()
+        genetic.simulate(resume=resume)
 
         genetic.save()
         run_success = True

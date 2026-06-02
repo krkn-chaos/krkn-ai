@@ -29,8 +29,31 @@ from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosErr
 from krkn_ai.utils.output import format_result_filename, format_duration
 from krkn_ai.utils.elastic_client import ElasticSearchClient
 from krkn_ai.constants import STATUS_IN_PROGRESS
+from krkn_ai.checkpoint import save_checkpoint, load_checkpoint
+from krkn_ai.signal_handler import register_signal_handlers
 
 logger = get_logger(__name__)
+
+
+def _load_population_from_yaml(generation_dir: str) -> list:
+    from pathlib import Path
+
+    gen_path = Path(generation_dir)
+    if not gen_path.exists():
+        logger.warning("Generation directory not found: %s", generation_dir)
+        return []
+
+    yaml_files = list(gen_path.glob("*.yaml"))
+    if not yaml_files:
+        logger.warning("No YAML files found in %s", generation_dir)
+        return []
+
+    logger.info(
+        "Checkpoint valid: found %d scenario files in %s",
+        len(yaml_files),
+        generation_dir,
+    )
+    return []
 
 
 class GeneticAlgorithm:
@@ -120,7 +143,7 @@ class GeneticAlgorithm:
         # logger.debug("--------------------------------------------------------")
         # logger.debug("%s", json.dumps(self.config.model_dump(), indent=2))
 
-    def simulate(self):
+    def simulate(self, resume: bool = False):
         try:
             results_path = os.path.join(self.output_dir, "results.json")
             if os.path.exists(results_path):
@@ -136,12 +159,29 @@ class GeneticAlgorithm:
         start_time = time.time()
         cur_generation = 0
 
-        # Establish baseline by running dummy scenario to evaluate cluster health, fitness score before chaos testing
+        register_signal_handlers(
+            get_state_fn=lambda: (cur_generation, self.population),
+            output_dir=self.output_dir,
+            run_uuid=self.run_uuid,
+        )
+        if resume:
+            state = load_checkpoint(self.output_dir)
+            if state:
+                gen_yaml_dir = state["generation_output_dir"]
+                _load_population_from_yaml(
+                    gen_yaml_dir
+                )  # validates checkpoint integrity
+                cur_generation = state["generation"] + 1
+                logger.info(
+                    "Resuming from generation %d — creating fresh population from live cluster",
+                    cur_generation,
+                )
+            else:
+                logger.warning("No checkpoint found, starting from generation 0")
+
+        # Always create fresh population (cluster_components require live cluster)
         self.run_baseline()
-
-        # Initial population (Gen 0)
         self.population = self.create_population(self.config.population_size)
-
         while True:
             # Calculate elapsed time since the start of the algorithm
             elapsed_time = time.time() - start_time
@@ -233,6 +273,7 @@ class GeneticAlgorithm:
                 self.population.extend(
                     self.create_population(self.config.population_injection_size)
                 )
+            save_checkpoint(self.output_dir, cur_generation, self.run_uuid)
 
     def run_baseline(self):
         """

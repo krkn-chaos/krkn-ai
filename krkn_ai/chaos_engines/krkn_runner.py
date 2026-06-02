@@ -3,7 +3,6 @@ import json
 import datetime
 import tempfile
 import time
-from typing import Optional, Tuple
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -26,6 +25,7 @@ from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
+from krkn_ai.utils.telemetry_parser import extract_telemetry_from_log
 
 logger = get_logger(__name__)
 
@@ -126,9 +126,7 @@ class KrknRunner:
                     # Use the return-code from the shell command for composite scenario
                     pass
                 else:
-                    returncode, run_uuid = self.__extract_returncode_from_run(
-                        log, returncode
-                    )
+                    returncode, run_uuid = extract_telemetry_from_log(log, returncode)
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
@@ -533,63 +531,3 @@ class KrknRunner:
             f"[{start}, {end}]. This may indicate the metric does not exist "
             f"in the requested time range or Prometheus has not yet scraped data."
         )
-
-    def __extract_returncode_from_run(
-        self, log: str, default_returncode: int
-    ) -> Tuple[int, Optional[str]]:
-        """
-        Try to extracts Krkn return code and uuid from the run log. If extraction fails, return default_returncode.
-        """
-        try:
-            # TODO: Look into if we can save telemetry data to file from Krkn itself.
-            # Find the line with "Chaos data:" and extract JSON from next lines
-            marker = "Chaos data:"
-            marker_idx = log.find(marker)
-
-            if marker_idx == -1:
-                logger.warning("Could not find 'Chaos data:' in log")
-                return default_returncode, None
-
-            # JSON Decoding
-            decoder = json.JSONDecoder()
-            chaos_data_text = log[marker_idx + len(marker) :]
-            search_idx = 0
-
-            while True:
-                object_start = chaos_data_text.find("{", search_idx)
-                if object_start == -1:
-                    break
-
-                try:
-                    chaos_data, object_end = decoder.raw_decode(
-                        chaos_data_text[object_start:]
-                    )
-                except json.JSONDecodeError:
-                    search_idx = object_start + 1
-                    continue
-
-                search_idx = object_start + object_end
-                if not isinstance(chaos_data, dict):
-                    continue
-
-                telemetry = chaos_data.get("telemetry")
-                if not isinstance(telemetry, dict):
-                    continue
-
-                scenarios = telemetry.get("scenarios", [])
-                if scenarios and isinstance(scenarios[0], dict):
-                    exit_status = scenarios[0].get("exit_status", default_returncode)
-                    run_uuid = telemetry.get("run_uuid", None)
-                    logger.debug("Extracted exit_status: %s", exit_status)
-                    logger.debug("Extracted run_uuid: %s", run_uuid)
-                    return exit_status, run_uuid
-
-            logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None
-
-            # Extract exit_status from first scenario
-            scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-
-        except Exception as e:
-            logger.error("Failed to extract return code from run log: %s", e)
-            return default_returncode, None

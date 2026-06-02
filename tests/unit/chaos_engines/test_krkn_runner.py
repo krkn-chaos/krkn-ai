@@ -109,9 +109,8 @@ class TestKrknRunnerRun:
         mock_run_shell.return_value = ("error log", 1)
 
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
-            with patch.object(
-                KrknRunner,
-                "_KrknRunner__extract_returncode_from_run",
+            with patch(
+                "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
                 return_value=(1, None),
             ):
                 runner = KrknRunner(
@@ -143,64 +142,6 @@ class TestKrknRunnerRun:
 
             with pytest.raises(NotImplementedError, match="Scenario unable to run"):
                 runner.run(unsupported_scenario, generation_id=0)
-
-
-class TestKrknRunnerReturnCodeExtraction:
-    """Test return code extraction from runner output logs"""
-
-    def extract_returncode(self, log, default_returncode=0):
-        runner = KrknRunner.__new__(KrknRunner)
-        return runner._KrknRunner__extract_returncode_from_run(log, default_returncode)
-
-    def test_extract_returncode_from_multiline_telemetry(self):
-        log = """
-Chaos data:
-{
-  "telemetry": {
-    "run_uuid": "run-123",
-    "scenarios": [
-      {"exit_status": 2}
-    ]
-  }
-}
-"""
-
-        assert self.extract_returncode(log) == (2, "run-123")
-
-    def test_extract_returncode_skips_empty_json_before_telemetry(self):
-        log = """
-Chaos data:
-{}
-{"telemetry": {"run_uuid": "run-456", "scenarios": [{"exit_status": 2}]}}
-"""
-
-        assert self.extract_returncode(log) == (2, "run-456")
-
-    def test_extract_returncode_handles_brace_inside_string(self):
-        log = """
-Chaos data:
-{
-  "telemetry": {
-    "run_uuid": "run-789",
-    "scenarios": [
-      {
-        "exit_status": 2,
-        "message": "output had } inside"
-      }
-    ]
-  }
-}
-"""
-
-        assert self.extract_returncode(log) == (2, "run-789")
-
-    def test_extract_returncode_bad_log_returns_default(self):
-        log = """
-Chaos data:
-{"telemetry": {"run_uuid": "bad", "scenarios": [{"exit_status": 2}]}
-"""
-
-        assert self.extract_returncode(log, 7) == (7, None)
 
 
 class TestKrknRunnerCommandGeneration:

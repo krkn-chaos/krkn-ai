@@ -6,10 +6,12 @@ from typing import Optional
 CHECKPOINT_FILENAME = "checkpoint.json"
 
 
-def save_checkpoint(output_dir: str, generation: int, run_uuid: str) -> None:
+def save_checkpoint(
+    output_dir: str, generation: int, run_uuid: str, format: str = "yaml"
+) -> None:
     """
     Save a lightweight checkpoint: just the generation index and run UUID.
-    Population state is already fully persisted in results/<uuid>/yaml/generation_N/
+    Population state is already fully persisted in results/<uuid>/<format>/generation_N/
     so we don't duplicate it — we just record where to find it.
     """
     path = Path(output_dir) / CHECKPOINT_FILENAME
@@ -18,7 +20,7 @@ def save_checkpoint(output_dir: str, generation: int, run_uuid: str) -> None:
         "generation": generation,
         "run_uuid": run_uuid,
         "generation_output_dir": str(
-            Path(output_dir) / "yaml" / f"generation_{generation}"
+            Path(output_dir) / format / f"generation_{generation}"
         ),
     }
     tmp_path = str(path) + ".tmp"

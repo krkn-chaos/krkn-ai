@@ -102,6 +102,18 @@ def run(
 ):
     run_uuid = str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid)
+    if resume:
+        checkpoint_found = False
+        if os.path.isdir(output):
+            for entry in sorted(os.listdir(output), reverse=True):
+                candidate = os.path.join(output, entry, "checkpoint.json")
+                if os.path.exists(candidate):
+                    new_output_path = os.path.join(output, entry)
+                    run_uuid = entry
+                    checkpoint_found = True
+                    break
+        if not checkpoint_found:
+            resume = False  # fall through to fresh run
     init_logger(new_output_path, verbose >= 2)
     logger = get_logger(__name__)
 

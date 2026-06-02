@@ -8,10 +8,12 @@ from krkn_ai.algorithm.genetic import _load_population_from_yaml
 
 def test_roundtrip():
     with tempfile.TemporaryDirectory() as tmp:
-        save_checkpoint(tmp, generation=2, run_uuid="abc-123")
+        save_checkpoint(tmp, generation=2, run_uuid="abc-123", format="yaml")
         state = load_checkpoint(tmp)
         assert state["generation"] == 2
         assert state["run_uuid"] == "abc-123"
+        assert "generation_2" in state["generation_output_dir"]
+        assert "yaml" in state["generation_output_dir"]
 
 
 def test_returns_none_when_missing():
@@ -60,3 +62,12 @@ def test_save_stores_generation_zero():
         save_checkpoint(tmp, generation=0, run_uuid="abc-123")
         state = load_checkpoint(tmp)
         assert state["generation"] == 0
+
+
+def test_format_json_uses_correct_directory():
+    """generation_output_dir should use format name not hardcoded yaml."""
+    with tempfile.TemporaryDirectory() as tmp:
+        save_checkpoint(tmp, generation=1, run_uuid="abc-123", format="json")
+        state = load_checkpoint(tmp)
+        assert "json" in state["generation_output_dir"]
+        assert "yaml" not in state["generation_output_dir"]

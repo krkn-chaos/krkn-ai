@@ -273,7 +273,9 @@ class GeneticAlgorithm:
                 self.population.extend(
                     self.create_population(self.config.population_injection_size)
                 )
-            save_checkpoint(self.output_dir, cur_generation, self.run_uuid)
+            save_checkpoint(
+                self.output_dir, cur_generation - 1, self.run_uuid, self.format
+            )
 
     def run_baseline(self):
         """

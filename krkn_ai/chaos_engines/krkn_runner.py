@@ -10,6 +10,7 @@ from krkn_ai.models.app import (
     FitnessResult,
     FitnessScoreResult,
     KrknRunnerType,
+    coerce_finite_fitness,
 )
 from krkn_ai.models.config import ConfigFile, FitnessFunctionType
 from krkn_ai.models.custom_errors import (
@@ -467,7 +468,7 @@ class KrknRunner:
             query, end, "point fitness (end)"
         )
 
-        return float(result_at_end) - float(result_at_beginning)
+        return coerce_finite_fitness(float(result_at_end) - float(result_at_beginning))
 
     def _query_prometheus_single_point(
         self, query: str, timestamp: datetime.datetime, context: str
@@ -554,11 +555,13 @@ class KrknRunner:
             f"in the requested time range or Prometheus has not yet scraped data."
         )
 
-        return float(
-            self._extract_single_prometheus_value(
-                result,
-                query,
-                f"range fitness [{start}, {end}]",
-                no_data_error,
+        return coerce_finite_fitness(
+            float(
+                self._extract_single_prometheus_value(
+                    result,
+                    query,
+                    f"range fitness [{start}, {end}]",
+                    no_data_error,
+                )
             )
         )

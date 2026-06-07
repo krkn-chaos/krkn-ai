@@ -559,3 +559,12 @@ class TestClusterManager:
         by_name = {n.name: n for n in nodes}
         assert by_name["good-node"].interfaces == ["eth0"]
         assert by_name["bad-node"].interfaces == []
+
+    def test_can_pull_openshift_debug_image_caching(self, cluster_manager):
+        """Test that can_pull_openshift_debug_image caches the result and calls run_shell only once"""
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell", return_value=("", 0)
+        ) as mock_run_shell:
+            assert cluster_manager.can_pull_openshift_debug_image() is True
+            assert cluster_manager.can_pull_openshift_debug_image() is True
+            mock_run_shell.assert_called_once()

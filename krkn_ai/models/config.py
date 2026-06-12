@@ -50,6 +50,10 @@ class NetworkScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class PodNetworkScenarioConfig(BaseModel):
+    enable: bool = False
+
+
 class DnsOutageScenarioConfig(BaseModel):
     enable: bool = False
 
@@ -99,6 +103,9 @@ class ScenarioConfig(BaseModel):
     )
     network_scenarios: Optional[NetworkScenarioConfig] = Field(
         alias="network-scenarios", default=None
+    )
+    pod_network_chaos: Optional[PodNetworkScenarioConfig] = Field(
+        alias="pod-network-chaos", default=None
     )
     dns_outage: Optional[DnsOutageScenarioConfig] = Field(
         alias="dns-outage", default=None

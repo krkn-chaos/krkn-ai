@@ -17,6 +17,7 @@ from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_pod_network import PodNetworkScenario
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -415,3 +416,39 @@ class TestStorageThrottleScenario:
         assert "write-iops" in param_names
         assert "read-bps" in param_names
         assert "write-bps" in param_names
+
+
+class TestPodNetworkScenario:
+    """Test TestPodNetworkScenario class"""
+
+    def test_pod_network_scenario_initialization_with_valid_pods(self):
+        """Test that PodNetworkScenario initializes when pods exist"""
+        pod1 = Pod(name="test-pod-1", labels={"app": "db", "env": "prod"})
+        pod2 = Pod(name="test-pod-2", labels={"app": "web"})
+        namespace = Namespace(name="test-ns", pods=[pod1, pod2])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = PodNetworkScenario(cluster_components=cluster)
+        assert scenario.name == "pod-network-chaos"
+        assert scenario.namespace.value == "test-ns"
+        assert len(scenario.parameters) == 11
+
+        # Check wait duration constraint
+        assert scenario.wait_duration.value >= 2 * scenario.test_duration.value
+
+        # Make sure target selection is set correctly (either pod_name or label_selector)
+        if scenario.pod_name.value:
+            assert scenario.pod_name.value in ["test-pod-1", "test-pod-2"]
+            assert scenario.label_selector.value == ""
+            assert scenario.exclude_label.value == ""
+        else:
+            assert "=" in scenario.label_selector.value
+            assert scenario.pod_name.value == ""
+
+    def test_pod_network_scenario_raises_error_when_no_pods(self):
+        """Test that PodNetworkScenario raises error when no pods exist in cluster"""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No pods found"):
+            PodNetworkScenario(cluster_components=cluster)
+

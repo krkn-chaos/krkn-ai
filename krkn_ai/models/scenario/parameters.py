@@ -613,3 +613,62 @@ class StorageThrottleImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
     value: str = "quay.io/krkn-chaos/krkn:tools"
+
+
+# Pod Network Scenario Parameters
+class PodNetworkChaosImageParameter(BaseParameter):
+    krknhub_name: str = "IMAGE"
+    krknctl_name: str = "image"
+    value: str = "quay.io/krkn-chaos/krkn:tools"
+
+
+class ExcludeLabelParameter(BaseParameter):
+    krknhub_name: str = "EXCLUDE_LABEL"
+    krknctl_name: str = "exclude-label"
+    value: str = ""
+
+
+class InstanceCountParameter(BaseParameter):
+    krknhub_name: str = "INSTANCE_COUNT"
+    krknctl_name: str = "instance-count"
+    value: int = 1
+
+    def mutate(self):
+        self.value = rng.randint(1, 5)
+
+
+class PodNetworkTrafficTypeParameter(BaseParameter):
+    krknhub_name: str = "TRAFFIC_TYPE"
+    krknctl_name: str = "traffic-type"
+    value: str = "[ingress,egress]"
+
+    def mutate(self):
+        self.value = rng.choice(["[ingress]", "[egress]", "[ingress,egress]"])
+
+
+class IngressPortsParameter(BaseParameter):
+    krknhub_name: str = "INGRESS_PORTS"
+    krknctl_name: str = "ingress-ports"
+    value: str = ""
+
+
+class EgressPortsParameter(BaseParameter):
+    krknhub_name: str = "EGRESS_PORTS"
+    krknctl_name: str = "egress-ports"
+    value: str = ""
+
+
+class TestDurationParameter(BaseParameter):
+    krknhub_name: str = "TEST_DURATION"
+    krknctl_name: str = "test-duration"
+    value: int = 120
+
+    def mutate(self):
+        self.value = rng.choice([60, 120, 180, 240])
+
+
+class PodNetworkWaitDurationParameter(BaseParameter):
+    krknhub_name: str = "WAIT_DURATION"
+    krknctl_name: str = "wait-duration"
+    value: int = 300
+

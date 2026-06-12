@@ -345,6 +345,13 @@ class PodNameParameter(BaseParameter):
             self._owner_kind = None
             self._owner_name = None
 
+    def clear(self):
+        """Clear the parameter value and cached private identity fields."""
+        self.value = ""
+        self._namespace = ""
+        self._owner_kind = None
+        self._owner_name = None
+
     def get_value(self):
         if self._namespace and self._owner_kind and self._owner_name:
             from krkn_ai.utils.pvc_utils import resolve_pod_name

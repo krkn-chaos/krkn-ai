@@ -431,19 +431,42 @@ class TestPodNetworkScenario:
         scenario = PodNetworkScenario(cluster_components=cluster)
         assert scenario.name == "pod-network-chaos"
         assert scenario.namespace.value == "test-ns"
-        assert len(scenario.parameters) == 11
 
         # Check wait duration constraint
         assert scenario.wait_duration.value >= 2 * scenario.test_duration.value
 
         # Make sure target selection is set correctly (either pod_name or label_selector)
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "namespace" in param_names
+        assert "image" in param_names
+        assert "instance-count" in param_names
+        assert "traffic-type" in param_names
+        assert "wait-duration" in param_names
+        assert "test-duration" in param_names
+
         if scenario.pod_name.value:
             assert scenario.pod_name.value in ["test-pod-1", "test-pod-2"]
-            assert scenario.label_selector.value == ""
-            assert scenario.exclude_label.value == ""
+            assert "pod-name" in param_names
+            assert "label-selector" not in param_names
+            assert "exclude-label" not in param_names
         else:
             assert "=" in scenario.label_selector.value
-            assert scenario.pod_name.value == ""
+            assert "label-selector" in param_names
+            assert "pod-name" not in param_names
+            if scenario.exclude_label.value:
+                assert "exclude-label" in param_names
+            else:
+                assert "exclude-label" not in param_names
+
+        if scenario.ingress_ports.value:
+            assert "ingress-ports" in param_names
+        else:
+            assert "ingress-ports" not in param_names
+
+        if scenario.egress_ports.value:
+            assert "egress-ports" in param_names
+        else:
+            assert "egress-ports" not in param_names
 
     def test_pod_network_scenario_raises_error_when_no_pods(self):
         """Test that PodNetworkScenario raises error when no pods exist in cluster"""

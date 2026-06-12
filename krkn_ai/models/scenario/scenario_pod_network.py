@@ -41,19 +41,23 @@ class PodNetworkScenario(Scenario):
 
     @property
     def parameters(self):
-        return [
-            self.namespace,
-            self.image,
-            self.label_selector,
-            self.exclude_label,
-            self.pod_name,
-            self.instance_count,
-            self.traffic_type,
-            self.ingress_ports,
-            self.egress_ports,
-            self.wait_duration,
-            self.test_duration,
-        ]
+        params = [self.namespace, self.image]
+        if self.label_selector.value:
+            params.append(self.label_selector)
+            if self.exclude_label.value:
+                params.append(self.exclude_label)
+        elif self.pod_name.value:
+            params.append(self.pod_name)
+
+        params.extend([self.instance_count, self.traffic_type])
+
+        if self.ingress_ports.value:
+            params.append(self.ingress_ports)
+        if self.egress_ports.value:
+            params.append(self.egress_ports)
+
+        params.extend([self.wait_duration, self.test_duration])
+        return params
 
     def mutate(self):
         namespaces_with_pods = [
@@ -74,17 +78,20 @@ class PodNetworkScenario(Scenario):
             label_key = rng.choice(list(selected_pod.labels.keys()))
             label_value = selected_pod.labels[label_key]
             self.label_selector.value = f"{label_key}={label_value}"
-            self.pod_name.value = ""
+            self.pod_name.clear()
 
             # Check if there are other pods to potentially exclude
             other_labels = set()
             for p in pods:
                 if p.name != selected_pod.name:
                     for k, v in p.labels.items():
-                        other_labels.add(f"{k}={v}")
+                        # Do not exclude labels that selected_pod also carries
+                        if k not in selected_pod.labels or selected_pod.labels[k] != v:
+                            other_labels.add(f"{k}={v}")
 
             if other_labels and rng.choice([True, False]):
-                self.exclude_label.value = rng.choice(list(other_labels))
+                # Sort the list conversion of the set to guarantee deterministic RNG selection across processes
+                self.exclude_label.value = rng.choice(sorted(list(other_labels)))
             else:
                 self.exclude_label.value = ""
         else:

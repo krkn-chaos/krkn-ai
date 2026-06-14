@@ -1,3 +1,4 @@
+import logging
 import os
 import argparse
 import time
@@ -34,6 +35,8 @@ from krkn_ai.dashboard.tabs.config import render_config
 from krkn_ai.dashboard.tabs.anomalies import render_anomalies
 from krkn_ai.dashboard.report_generator import generate_html_report
 
+logger = logging.getLogger(__name__)
+
 
 def get_monitor_config():
     """Retrieve monitor config from command line arguments."""
@@ -57,8 +60,8 @@ def is_execution_running(output_dir: str) -> bool:
             status = data.get("status")
             if status in [STATUS_STARTED, STATUS_IN_PROGRESS]:
                 return True
-    except Exception:
-        pass
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not read results.json: %s", e)
     return False
 
 
@@ -71,7 +74,8 @@ def get_run_status(output_dir: str) -> Optional[str]:
         with open(results_file, "r") as f:
             data = json.load(f)
             return data.get("status")
-    except Exception:
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not read results.json: %s", e)
         return None
 
 

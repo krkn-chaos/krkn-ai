@@ -61,7 +61,7 @@ def is_execution_running(output_dir: str) -> bool:
             if status in [STATUS_STARTED, STATUS_IN_PROGRESS]:
                 return True
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Could not read results.json: %s", e)
+        logger.warning("Could not read %s: %s", results_file, e)
     return False
 
 
@@ -75,7 +75,7 @@ def get_run_status(output_dir: str) -> Optional[str]:
             data = json.load(f)
             return data.get("status")
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Could not read results.json: %s", e)
+        logger.warning("Could not read %s: %s", results_file, e)
         return None
 
 

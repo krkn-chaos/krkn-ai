@@ -23,17 +23,20 @@ def make_client():
 def test_index_run_summary_returns_true_on_success():
     client = make_client()
     summary = {
+        "run_id": "test-uuid-123",
         "status": "completed",
-        "completed_generations": 3,
-        "best_fitness_score": 0.91,
-        "average_fitness_score": 0.75,
-        "duration_seconds": 120.0,
-        "total_scenarios_evaluated": 15,
-        "unique_scenarios": 12,
+        "seed": 42,
         "start_time": "2026-01-01T00:00:00",
         "end_time": "2026-01-01T00:02:00",
-        "seed": 42,
+        "duration_seconds": 120.0,
         "fitness_progression": [0.5, 0.7, 0.91],
+        "summary": {
+            "generations_completed": 3,
+            "total_scenarios_executed": 15,
+            "unique_scenarios": 12,
+            "best_fitness_score": 0.91,
+            "average_fitness_score": 0.75,
+        },
     }
     result = client.index_run_summary(summary, "test-uuid-123")
     assert result is True
@@ -42,7 +45,7 @@ def test_index_run_summary_returns_true_on_success():
 
 def test_index_run_summary_uses_correct_index():
     client = make_client()
-    summary = {"best_fitness_score": 0.9}
+    summary = {"summary": {"best_fitness_score": 0.9}}
     client.index_run_summary(summary, "test-uuid")
     call_kwargs = client.client.upload_data_to_elasticsearch.call_args
     assert call_kwargs.kwargs["index"] == "krkn-ai-summary"
@@ -62,3 +65,27 @@ def test_index_run_summary_skips_when_disabled():
         client = ElasticSearchClient(config)
         result = client.index_run_summary({}, "test-uuid")
         assert result is False
+
+
+def test_index_run_summary_fields_mapped_correctly():
+    """Verify nested summary fields are extracted and mapped correctly."""
+    client = make_client()
+    summary = {
+        "run_id": "abc",
+        "status": "completed",
+        "duration_seconds": 60.0,
+        "summary": {
+            "generations_completed": 5,
+            "best_fitness_score": 0.88,
+            "average_fitness_score": 0.65,
+            "total_scenarios_executed": 20,
+            "unique_scenarios": 18,
+        },
+        "fitness_progression": [],
+    }
+    client.index_run_summary(summary, "abc")
+    call_kwargs = client.client.upload_data_to_elasticsearch.call_args
+    indexed = call_kwargs.kwargs["item"]
+    assert indexed["generations_completed"] == 5
+    assert indexed["best_fitness_score"] == 0.88
+    assert indexed["total_scenarios_executed"] == 20

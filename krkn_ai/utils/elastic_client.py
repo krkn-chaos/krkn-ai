@@ -175,18 +175,20 @@ class ElasticSearchClient:
 
         INDEX_NAME = f"{self.config.index}-summary"
 
+        nested = summary.get("summary", {})
         summary_data = {
             "run_uuid": run_uuid,
+            "run_id": summary.get("run_id"),
             "status": summary.get("status"),
-            "completed_generations": summary.get("completed_generations"),
-            "total_scenarios_evaluated": summary.get("total_scenarios_evaluated"),
-            "unique_scenarios": summary.get("unique_scenarios"),
-            "best_fitness_score": summary.get("best_fitness_score"),
-            "average_fitness_score": summary.get("average_fitness_score"),
-            "duration_seconds": summary.get("duration_seconds"),
+            "seed": summary.get("seed"),
             "start_time": summary.get("start_time"),
             "end_time": summary.get("end_time"),
-            "seed": summary.get("seed"),
+            "duration_seconds": summary.get("duration_seconds"),
+            "generations_completed": nested.get("generations_completed"),
+            "total_scenarios_executed": nested.get("total_scenarios_executed"),
+            "unique_scenarios": nested.get("unique_scenarios"),
+            "best_fitness_score": nested.get("best_fitness_score"),
+            "average_fitness_score": nested.get("average_fitness_score"),
             "fitness_progression": summary.get("fitness_progression"),
         }
 

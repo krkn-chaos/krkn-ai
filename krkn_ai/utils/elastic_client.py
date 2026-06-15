@@ -155,3 +155,42 @@ class ElasticSearchClient:
             item=result_data, index=INDEX_NAME
         )
         return self.__handle_index_status(status)
+
+    def index_run_summary(self, summary: dict, run_uuid: str) -> bool:
+        """
+        Index the run summary into krkn-ai "summary" index in Elasticsearch.
+
+        Args:
+            summary: Run summary dict from JSONSummaryReporter.generate_summary()
+            run_uuid: Unique identifier for the entire Krkn-AI run
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.config.enable or self.client is None:
+            logger.debug(
+                "Elasticsearch indexing is disabled. Skipping indexing of run summary."
+            )
+            return False
+
+        INDEX_NAME = f"{self.config.index}-summary"
+
+        summary_data = {
+            "run_uuid": run_uuid,
+            "status": summary.get("status"),
+            "completed_generations": summary.get("completed_generations"),
+            "total_scenarios_evaluated": summary.get("total_scenarios_evaluated"),
+            "unique_scenarios": summary.get("unique_scenarios"),
+            "best_fitness_score": summary.get("best_fitness_score"),
+            "average_fitness_score": summary.get("average_fitness_score"),
+            "duration_seconds": summary.get("duration_seconds"),
+            "start_time": summary.get("start_time"),
+            "end_time": summary.get("end_time"),
+            "seed": summary.get("seed"),
+            "fitness_progression": summary.get("fitness_progression"),
+        }
+
+        status = self.client.upload_data_to_elasticsearch(
+            item=summary_data, index=INDEX_NAME
+        )
+        return self.__handle_index_status(status)

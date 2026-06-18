@@ -54,17 +54,12 @@ minikube start
 
 **macOS:**
 
-The recommended driver on macOS is [vfkit](https://github.com/crc-org/vfkit), a lightweight hypervisor that avoids Docker driver limitations (port forwarding, multi-node support).
+The recommended driver on macOS is [vfkit](https://github.com/crc-org/vfkit), a lightweight hypervisor that avoids Docker driver limitations (port forwarding, multi-node support). See the [minikube vfkit driver docs](https://minikube.sigs.k8s.io/docs/drivers/vfkit/) for more details.
 
 ```bash
 brew install vfkit
 minikube start --driver=vfkit
 ```
-
-> **Note (macOS + Docker driver):** If you prefer the Docker driver, `kicbase:v0.0.50` has a broken arm64 entrypoint. Use `--base-image=kicbase/stable:v0.0.49` as a workaround:
-> ```bash
-> minikube start --driver=docker --base-image=kicbase/stable:v0.0.49
-> ```
 
 # Switch to minikube cluster context
 kubectl config use-context minikube

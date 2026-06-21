@@ -1,10 +1,23 @@
 """Tests for utils/fs.py"""
 
+from unittest.mock import patch
+
 import pytest
 import yaml
 from pydantic import ValidationError
 
-from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.fs import (
+    read_config_from_file,
+    save_discovery,
+    merge_components,
+    _render_components_block,
+)
+from krkn_ai.models.cluster_components import (
+    ClusterComponents,
+    Namespace,
+    Pod,
+    Node,
+)
 
 
 class TestParamParsing:
@@ -136,3 +149,213 @@ class TestReadConfigValidation:
             f.write("just a string")
         with pytest.raises(ValueError, match="must be a mapping"):
             read_config_from_file(config_file)
+
+
+KUBECONFIG = "/tmp/kubeconfig"
+
+
+class TestMergeComponents:
+    def test_new_namespace_is_appended(self):
+        existing = ClusterComponents(namespaces=[Namespace(name="a")])
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="a"), Namespace(name="b")]
+        )
+        merged = merge_components(existing, discovered)
+        assert [n.name for n in merged.namespaces] == ["a", "b"]
+
+    def test_new_pod_added_to_existing_namespace(self):
+        existing = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1")])]
+        )
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1"), Pod(name="p2")])]
+        )
+        merged = merge_components(existing, discovered)
+        assert [p.name for p in merged.namespaces[0].pods] == ["p1", "p2"]
+
+    def test_duplicate_names_not_doubled(self):
+        existing = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1")])]
+        )
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1")])]
+        )
+        merged = merge_components(existing, discovered)
+        assert len(merged.namespaces) == 1
+        assert len(merged.namespaces[0].pods) == 1
+
+    def test_existing_disabled_flag_survives(self):
+        existing = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1", disabled=True)])]
+        )
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="a", pods=[Pod(name="p1")])]
+        )
+        merged = merge_components(existing, discovered)
+        assert merged.namespaces[0].pods[0].disabled is True
+
+    def test_nodes_union_by_name(self):
+        existing = ClusterComponents(nodes=[Node(name="n1")])
+        discovered = ClusterComponents(nodes=[Node(name="n1"), Node(name="n2")])
+        merged = merge_components(existing, discovered)
+        assert [n.name for n in merged.nodes] == ["n1", "n2"]
+
+
+def _write_existing(
+    path,
+    components,
+    prefix="baseline:\n  duration: 300\n\n",
+    suffix="\n\nadaptive_mutation: true\n",
+):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(prefix + _render_components_block(components) + suffix)
+
+
+class TestSaveDiscovery:
+    def test_skip_writes_when_file_absent(self, tmp_path):
+        """Skip strategy creates file if it doesn't exist."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "skip", components, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "shop" in names
+
+    def test_skip_leaves_existing_file_unchanged(self, tmp_path):
+        """Skip strategy does nothing if file already exists."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w") as f:
+            f.write("original: true\n")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "skip", components, KUBECONFIG)
+        assert open(path).read() == "original: true\n"
+
+    def test_overwrite_replaces_file(self, tmp_path):
+        """Overwrite strategy replaces entire file with fresh discovery."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w") as f:
+            f.write("original: true\n")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "overwrite", components, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        assert "original" not in data
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "shop" in names
+
+    def test_merge_preserves_edits_and_adds_new(self, tmp_path):
+        """Merge preserves user edits and adds new discovered components."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        existing = ClusterComponents(
+            namespaces=[Namespace(name="shop", pods=[Pod(name="redis", disabled=True)])]
+        )
+        _write_existing(path, existing)
+        discovered = ClusterComponents(
+            namespaces=[
+                Namespace(name="shop", pods=[Pod(name="redis"), Pod(name="cart")]),
+                Namespace(name="pay", pods=[Pod(name="ledger")]),
+            ]
+        )
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        assert data["baseline"]["duration"] == 300
+        assert data["adaptive_mutation"] is True
+        shop = next(
+            n for n in data["cluster_components"]["namespaces"] if n["name"] == "shop"
+        )
+        redis = next(p for p in shop["pods"] if p["name"] == "redis")
+        assert redis["disabled"] is True
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "pay" in names
+
+    def test_merge_safe_to_repeat(self, tmp_path):
+        """Running merge twice produces the same result."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        existing = ClusterComponents(
+            namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])]
+        )
+        _write_existing(path, existing)
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])]
+        )
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        first = open(path).read()
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        assert open(path).read() == first
+
+    def test_merge_preserves_top_level_comment(self, tmp_path):
+        """Merge preserves comments in the rest of the file."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        existing = ClusterComponents(namespaces=[Namespace(name="shop")])
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                _render_components_block(existing)
+                + "\n# keep me\nadaptive_mutation: true\n"
+            )
+        discovered = ClusterComponents(
+            namespaces=[Namespace(name="shop"), Namespace(name="pay")]
+        )
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        text = open(path).read()
+        assert "# keep me" in text
+        names = [
+            n["name"] for n in yaml.safe_load(text)["cluster_components"]["namespaces"]
+        ]
+        assert "pay" in names
+
+    def test_merge_appends_when_no_components_block(self, tmp_path):
+        """Merge appends components block if file has no cluster_components section."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w") as f:
+            f.write("baseline:\n  duration: 42\n")
+        discovered = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        assert data["baseline"]["duration"] == 42
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "shop" in names
+
+    def test_merge_leaves_file_unchanged_on_malformed_yaml(self, tmp_path):
+        """Merge leaves file unchanged if cluster_components block is malformed."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        broken = (
+            "cluster_components:\n  namespaces:\n  - name: shop\n"
+            "    labels: {app: cart\n"
+        )
+        with open(path, "w") as f:
+            f.write(broken)
+        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+        assert open(path).read() == broken
+
+    def test_skip_and_overwrite_emit_warnings(self, tmp_path):
+        """Skip and overwrite both warn the user about the existing file."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w") as f:
+            f.write("original: true\n")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+
+        with patch("krkn_ai.utils.fs.logger") as mock_logger:
+            save_discovery(path, "skip", components, KUBECONFIG)
+            assert mock_logger.warning.called
+
+        with patch("krkn_ai.utils.fs.logger") as mock_logger:
+            save_discovery(path, "overwrite", components, KUBECONFIG)
+            assert mock_logger.warning.called
+
+    def test_merge_writes_fresh_when_file_absent(self, tmp_path):
+        """Merge on a missing file falls back to a fresh write."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "merge", components, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "shop" in names
+
+    def test_strategy_is_case_insensitive(self, tmp_path):
+        """Strategy matching ignores case (e.g. SKIP behaves like skip)."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w") as f:
+            f.write("original: true\n")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "SKIP", components, KUBECONFIG)
+        assert open(path).read() == "original: true\n"

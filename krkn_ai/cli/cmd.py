@@ -20,8 +20,7 @@ from krkn_ai.models.custom_errors import (
     PrometheusConnectionError,
     UniqueScenariosError,
 )
-from krkn_ai.utils.fs import read_config_from_file
-from krkn_ai.templates.generator import create_krkn_ai_template
+from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.cluster_manager import ClusterManager
 
 
@@ -246,6 +245,12 @@ def monitor(ctx, output: str, port: int):
     default=None,
     required=False,
 )
+@click.option(
+    "--save-strategy",
+    type=click.Choice(["skip", "overwrite", "merge"], case_sensitive=False),
+    default="skip",
+    help="How to save: skip, overwrite (replace), or merge (add new).",
+)
 @click.pass_context
 def discover(
     ctx,
@@ -256,6 +261,7 @@ def discover(
     node_label: str = ".*",
     verbose: int = 0,
     skip_pod_name: str = None,
+    save_strategy: str = "skip",
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
@@ -283,13 +289,4 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
-    cluster_components_data = cluster_components.model_dump(
-        mode="json", warnings="none", exclude_defaults=True
-    )
-
-    template = create_krkn_ai_template(kubeconfig, cluster_components_data)
-
-    with open(output, "w") as f:
-        f.write(template)
-
-    logger.info("Saved component configuration to %s", output)
+    save_discovery(output, save_strategy, cluster_components, kubeconfig)

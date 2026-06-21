@@ -304,13 +304,12 @@ class TestDiscoverCommand:
 
         try:
             with patch("krkn_ai.cli.cmd.ClusterManager") as mock_cluster_manager_class:
-                with patch("krkn_ai.cli.cmd.create_krkn_ai_template") as mock_template:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
                     mock_manager = Mock()
                     mock_manager.discover_components.return_value = (
                         mock_cluster_components
                     )
                     mock_cluster_manager_class.return_value = mock_manager
-                    mock_template.return_value = "generated_template_content"
 
                     output_file = os.path.join(temp_output_dir, "output.yaml")
                     result = runner.invoke(
@@ -327,10 +326,7 @@ class TestDiscoverCommand:
                     assert result.exit_code == 0
                     mock_cluster_manager_class.assert_called_once_with(kubeconfig_path)
                     mock_manager.discover_components.assert_called_once()
-                    mock_template.assert_called_once()
-                    assert os.path.exists(output_file)
-                    with open(output_file, "r") as f:
-                        assert f.read() == "generated_template_content"
+                    mock_save.assert_called_once()
         finally:
             os.unlink(kubeconfig_path)
 
@@ -357,3 +353,85 @@ class TestDiscoverCommand:
                 assert result.exit_code == 1
                 mock_logger.error.assert_called_once()
                 assert "Kubeconfig file not found" in str(mock_logger.error.call_args)
+
+    def test_discover_defaults_to_skip_strategy(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Without the flag, discover passes the skip strategy through."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    mock_manager_class.return_value.discover_components.return_value = (
+                        mock_cluster_components
+                    )
+                    output_file = os.path.join(temp_output_dir, "output.yaml")
+                    result = runner.invoke(
+                        main,
+                        ["discover", "-k", kubeconfig_path, "-o", output_file],
+                    )
+
+                    assert result.exit_code == 0
+                    mock_save.assert_called_once()
+                    output_arg, strategy_arg = mock_save.call_args.args[:2]
+                    assert output_arg == output_file
+                    assert strategy_arg == "skip"
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_verify_chosen_strategy(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Verify the chosen --save-strategy is used."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    mock_manager_class.return_value.discover_components.return_value = (
+                        mock_cluster_components
+                    )
+                    output_file = os.path.join(temp_output_dir, "output.yaml")
+                    result = runner.invoke(
+                        main,
+                        [
+                            "discover",
+                            "-k",
+                            kubeconfig_path,
+                            "-o",
+                            output_file,
+                            "--save-strategy",
+                            "merge",
+                        ],
+                    )
+
+                    assert result.exit_code == 0
+                    assert mock_save.call_args.args[1] == "merge"
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_rejects_invalid_strategy(self):
+        """An unknown --save-strategy value is rejected by click."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            result = runner.invoke(
+                main,
+                ["discover", "-k", kubeconfig_path, "--save-strategy", "bogus"],
+            )
+            assert result.exit_code != 0
+        finally:
+            os.unlink(kubeconfig_path)

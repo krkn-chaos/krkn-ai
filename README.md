@@ -75,6 +75,20 @@ krkn_ai discover \
   --skip-pod-name "nginx-proxy.*"
 ```
 
+By default `discover` won't overwrite an existing output file. Control this with `--save-strategy`:
+
+| Strategy         | Behavior                                              |
+|------------------|-------------------------------------------------------|
+| `skip` (default) | Keep the existing file, do nothing.                   |
+| `overwrite`      | Replace the file with a fresh config.                 |
+| `merge`          | Keep your edits, add newly discovered components.     |
+
+```bash
+krkn_ai discover -k ./tmp/kubeconfig.yaml -o ./tmp/krkn-ai.yaml --save-strategy merge
+```
+
+`merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components.
+
 Key config options:
 
 ```yaml
@@ -121,7 +135,7 @@ krkn_ai run \
 
 | Command | Key Options |
 |---------|-------------|
-| `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `--skip-pod-name` |
+| `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `--skip-pod-name`, `--save-strategy` |
 | `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
 | `monitor` | `-o` results dir, `-p` port |
 

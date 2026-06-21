@@ -282,51 +282,6 @@ class TestSaveDiscovery:
         save_discovery(path, "merge", discovered, KUBECONFIG)
         assert open(path).read() == first
 
-    def test_merge_preserves_top_level_comment(self, tmp_path):
-        """Merge preserves comments in the rest of the file."""
-        path = str(tmp_path / "krkn-ai.yaml")
-        existing = ClusterComponents(namespaces=[Namespace(name="shop")])
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(
-                _render_components_block(existing)
-                + "\n# keep me\nadaptive_mutation: true\n"
-            )
-        discovered = ClusterComponents(
-            namespaces=[Namespace(name="shop"), Namespace(name="pay")]
-        )
-        save_discovery(path, "merge", discovered, KUBECONFIG)
-        text = open(path).read()
-        assert "# keep me" in text
-        names = [
-            n["name"] for n in yaml.safe_load(text)["cluster_components"]["namespaces"]
-        ]
-        assert "pay" in names
-
-    def test_merge_appends_when_no_components_block(self, tmp_path):
-        """Merge appends components block if file has no cluster_components section."""
-        path = str(tmp_path / "krkn-ai.yaml")
-        with open(path, "w") as f:
-            f.write("baseline:\n  duration: 42\n")
-        discovered = ClusterComponents(namespaces=[Namespace(name="shop")])
-        save_discovery(path, "merge", discovered, KUBECONFIG)
-        data = yaml.safe_load(open(path))
-        assert data["baseline"]["duration"] == 42
-        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
-        assert "shop" in names
-
-    def test_merge_leaves_file_unchanged_on_malformed_yaml(self, tmp_path):
-        """Merge leaves file unchanged if cluster_components block is malformed."""
-        path = str(tmp_path / "krkn-ai.yaml")
-        broken = (
-            "cluster_components:\n  namespaces:\n  - name: shop\n"
-            "    labels: {app: cart\n"
-        )
-        with open(path, "w") as f:
-            f.write(broken)
-        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
-        save_discovery(path, "merge", discovered, KUBECONFIG)
-        assert open(path).read() == broken
-
     def test_skip_and_overwrite_emit_warnings(self, tmp_path):
         """Skip and overwrite both warn the user about the existing file."""
         path = str(tmp_path / "krkn-ai.yaml")

@@ -128,6 +128,8 @@ uv run krkn_ai discover -k ./kubeconfig.yaml \
 
 This generates `krkn-ai.yaml` containing cluster component details and boilerplate test configuration. Review and modify the file as needed—add health check endpoints, adjust the fitness function, and enable desired scenarios.
 
+> **Tip:** Re-running `discover` won't overwrite your file by default. Use `--save-strategy merge` to add new components while keeping edits, or `overwrite` to regenerate.
+
 > **Note:** Some scenarios may not work on Minikube due to limited node access or permissions.
 
 ### Start Krkn-AI Tests

@@ -249,7 +249,7 @@ def monitor(ctx, output: str, port: int):
     "--save-strategy",
     type=click.Choice(["skip", "overwrite", "merge"], case_sensitive=False),
     default="skip",
-    help="How to save: skip, overwrite (replace), or merge (add new).",
+    help="How to save: skip, overwrite (replace), or merge (add new). Note: merge does not preserve comments inside cluster_components.",
 )
 @click.pass_context
 def discover(

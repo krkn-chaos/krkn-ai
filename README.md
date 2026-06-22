@@ -87,7 +87,7 @@ By default `discover` won't overwrite an existing output file. Control this with
 krkn_ai discover -k ./tmp/kubeconfig.yaml -o ./tmp/krkn-ai.yaml --save-strategy merge
 ```
 
-`merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components.
+`merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components. Note: comments inside `cluster_components` are not preserved after a merge.
 
 Key config options:
 

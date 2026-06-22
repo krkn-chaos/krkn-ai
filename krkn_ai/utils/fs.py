@@ -124,41 +124,6 @@ def save_data_to_file(data: Union[Dict, List], file_path: str):
         raise ValueError(f"Unsupported format: {format}")
 
 
-def _indent_block(text: str) -> str:
-    """Indent text by 2 spaces for YAML nesting."""
-    lines = []
-    for line in text.split("\n"):
-        if line.strip():
-            lines.append("  " + line)
-        else:
-            lines.append("")
-    return "\n".join(lines)
-
-
-def _render_components_block(components: ClusterComponents) -> str:
-    """Convert components to YAML block."""
-    data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
-    body = yaml.dump(
-        data, default_flow_style=False, indent=2, allow_unicode=True, sort_keys=False
-    ).strip()
-    return "cluster_components:\n" + _indent_block(body)
-
-
-def _cluster_components_block(text: str) -> str:
-    """Extract cluster_components block from file."""
-    out, capturing = [], False
-    for line in text.splitlines():
-        if line.startswith("cluster_components:"):
-            capturing = True
-            out.append(line)
-            continue
-        if capturing:
-            if line and not line[0].isspace():
-                break
-            out.append(line)
-    return "\n".join(out).rstrip()
-
-
 def _union_by_name(existing: list, discovered: list) -> list:
     """Union two lists by name, keep existing items."""
     by_name = {item.name: item for item in existing}
@@ -186,47 +151,22 @@ def merge_components(
     return ClusterComponents(namespaces=list(namespaces.values()), nodes=nodes)
 
 
-def _build_merged_config(output: str, discovered: ClusterComponents) -> str:
-    """Build file content with merged components block."""
-    with open(output, "r", encoding="utf-8") as f:
-        existing_text = f.read()
-
-    existing_block = _cluster_components_block(existing_text)
-    if not existing_block:
-        logger.warning(
-            "No cluster_components section found in %s; appending discovered components.",
-            output,
-        )
-        return (
-            existing_text.rstrip("\n")
-            + "\n\n"
-            + _render_components_block(discovered)
-            + "\n"
-        )
-
+def _build_merged_config(
+    output: str, discovered: ClusterComponents, kubeconfig: str
+) -> Union[str, None]:
+    """Merge discovered components into the existing file; returns None if unreadable."""
     try:
-        block_data = yaml.safe_load(existing_block) or {}
-    except yaml.YAMLError as e:
+        config = read_config_from_file(output)
+    except (yaml.YAMLError, ValueError, ValidationError) as e:
         logger.warning(
-            "Could not parse cluster_components in %s (%s); leaving file unchanged.",
+            "Could not read existing config %s (%s); leaving file unchanged.",
             output,
             e,
         )
-        return existing_text
-
-    try:
-        existing = ClusterComponents.model_validate(
-            block_data.get("cluster_components", {}) or {}
-        )
-    except ValidationError as e:
-        logger.warning(
-            "Invalid cluster_components in %s (%s); leaving file unchanged.",
-            output,
-            e,
-        )
-        return existing_text
-    merged = merge_components(existing, discovered)
-    return existing_text.replace(existing_block, _render_components_block(merged))
+        return None
+    merged = merge_components(config.cluster_components, discovered)
+    data = merged.model_dump(mode="json", warnings="none", exclude_defaults=True)
+    return create_krkn_ai_template(kubeconfig, data)
 
 
 def _write_fresh(output: str, components: ClusterComponents, kubeconfig: str):
@@ -257,7 +197,9 @@ def save_discovery(
         return
 
     if exists and strategy == "merge":
-        text = _build_merged_config(output, components)
+        text = _build_merged_config(output, components, kubeconfig)
+        if text is None:
+            return
         with open(output, "w", encoding="utf-8") as f:
             f.write(text)
         logger.info("Merged discovered components into %s", output)

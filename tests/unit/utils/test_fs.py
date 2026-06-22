@@ -10,8 +10,8 @@ from krkn_ai.utils.fs import (
     read_config_from_file,
     save_discovery,
     merge_components,
-    _render_components_block,
 )
+from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -201,14 +201,11 @@ class TestMergeComponents:
         assert [n.name for n in merged.nodes] == ["n1", "n2"]
 
 
-def _write_existing(
-    path,
-    components,
-    prefix="baseline:\n  duration: 300\n\n",
-    suffix="\n\nadaptive_mutation: true\n",
-):
+def _write_existing(path, components):
+    """Write a valid config file via the krkn-ai template."""
+    data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
     with open(path, "w", encoding="utf-8") as f:
-        f.write(prefix + _render_components_block(components) + suffix)
+        f.write(create_krkn_ai_template(KUBECONFIG, data))
 
 
 class TestSaveDiscovery:
@@ -242,8 +239,8 @@ class TestSaveDiscovery:
         names = [n["name"] for n in data["cluster_components"]["namespaces"]]
         assert "shop" in names
 
-    def test_merge_preserves_edits_and_adds_new(self, tmp_path):
-        """Merge preserves user edits and adds new discovered components."""
+    def test_merge_preserves_component_edits_and_adds_new(self, tmp_path):
+        """Preserves per-component edits and adds new components on merge."""
         path = str(tmp_path / "krkn-ai.yaml")
         existing = ClusterComponents(
             namespaces=[Namespace(name="shop", pods=[Pod(name="redis", disabled=True)])]
@@ -257,8 +254,6 @@ class TestSaveDiscovery:
         )
         save_discovery(path, "merge", discovered, KUBECONFIG)
         data = yaml.safe_load(open(path))
-        assert data["baseline"]["duration"] == 300
-        assert data["adaptive_mutation"] is True
         shop = next(
             n for n in data["cluster_components"]["namespaces"] if n["name"] == "shop"
         )
@@ -281,6 +276,19 @@ class TestSaveDiscovery:
         first = open(path).read()
         save_discovery(path, "merge", discovered, KUBECONFIG)
         assert open(path).read() == first
+
+    def test_merge_leaves_invalid_file_unchanged(self, tmp_path):
+        """Invalid existing file is left unchanged on merge."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("not: [a, valid, krkn-ai, config\n")  # malformed YAML
+        original = open(path).read()
+        discovered = ClusterComponents(namespaces=[Namespace(name="shop")])
+
+        with patch("krkn_ai.utils.fs.logger") as mock_logger:
+            save_discovery(path, "merge", discovered, KUBECONFIG)
+            assert mock_logger.warning.called
+        assert open(path).read() == original
 
     def test_skip_and_overwrite_emit_warnings(self, tmp_path):
         """Skip and overwrite both warn the user about the existing file."""
@@ -314,3 +322,25 @@ class TestSaveDiscovery:
         components = ClusterComponents(namespaces=[Namespace(name="shop")])
         save_discovery(path, "SKIP", components, KUBECONFIG)
         assert open(path).read() == "original: true\n"
+
+    def test_merge_leaves_invalid_config_unchanged(self, tmp_path):
+        """Valid YAML with wrong schema is left unchanged on merge."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("some_field: value\n")  # valid YAML, not a valid krkn-ai config
+        original = open(path).read()
+        discovered = ClusterComponents(namespaces=[Namespace(name="shop")])
+
+        with patch("krkn_ai.utils.fs.logger") as mock_logger:
+            save_discovery(path, "merge", discovered, KUBECONFIG)
+            assert mock_logger.warning.called
+        assert open(path).read() == original
+
+    def test_overwrite_writes_when_file_absent(self, tmp_path):
+        """Overwrite strategy creates a fresh file when none exists."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(path, "overwrite", components, KUBECONFIG)
+        data = yaml.safe_load(open(path))
+        names = [n["name"] for n in data["cluster_components"]["namespaces"]]
+        assert "shop" in names

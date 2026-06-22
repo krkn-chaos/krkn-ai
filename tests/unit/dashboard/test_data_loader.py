@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pytest
 import pandas as pd
@@ -199,3 +200,53 @@ def test_load_logs_exception():
     ):
         logs = load_logs("/tmp")
         assert logs == []
+
+
+def test_load_detailed_scenarios_data_uses_configured_result_fmt():
+    with (
+        patch(
+            "krkn_ai.dashboard.data_loader.load_config_yaml",
+            return_value={"output": {"result_name_fmt": "gen_%g_%c_%s.yaml"}},
+        ),
+        patch("glob.glob", return_value=[]) as mock_glob,
+    ):
+        load_detailed_scenarios_data("/tmp")
+        called_pattern = mock_glob.call_args[0][0]
+        assert called_pattern.endswith(os.path.join("generation_*", "gen_*_*_*.yaml"))
+
+
+def test_load_logs_uses_configured_log_fmt_for_scenario_id():
+    log_content = """
+2026-03-17 11:58:12,164 [INFO] some message
+
+container-scenarios ran for 3m12s
+"""
+    with (
+        patch("os.path.isdir", return_value=True),
+        patch(
+            "krkn_ai.dashboard.data_loader.load_config_yaml",
+            return_value={"output": {"log_name_fmt": "run_%g_%s.log"}},
+        ),
+        patch("glob.glob", return_value=["/tmp/logs/run_0_7.log"]),
+        patch("builtins.open", mock_open(read_data=log_content)),
+    ):
+        logs = load_logs("/tmp")
+        assert len(logs) == 1
+        assert logs[0]["scenario_id"] == 7
+
+
+def test_load_logs_falls_back_to_default_fmt_when_no_config():
+    log_content = """
+2026-03-17 11:58:12,164 [INFO] some message
+
+container-scenarios ran for 3m12s
+"""
+    with (
+        patch("os.path.isdir", return_value=True),
+        patch("krkn_ai.dashboard.data_loader.load_config_yaml", return_value=None),
+        patch("glob.glob", return_value=["/tmp/logs/scenario_9.log"]),
+        patch("builtins.open", mock_open(read_data=log_content)),
+    ):
+        logs = load_logs("/tmp")
+        assert len(logs) == 1
+        assert logs[0]["scenario_id"] == 9

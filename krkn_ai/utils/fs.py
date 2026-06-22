@@ -4,6 +4,8 @@ import yaml
 from collections.abc import Sequence
 from typing import Union, List, Dict
 
+from pydantic import ValidationError
+
 from krkn_ai.models.config import ConfigFile, ParameterValue
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.templates.generator import create_krkn_ai_template
@@ -212,9 +214,17 @@ def _build_merged_config(output: str, discovered: ClusterComponents) -> str:
         )
         return existing_text
 
-    existing = ClusterComponents.model_validate(
-        block_data.get("cluster_components", {}) or {}
-    )
+    try:
+        existing = ClusterComponents.model_validate(
+            block_data.get("cluster_components", {}) or {}
+        )
+    except ValidationError as e:
+        logger.warning(
+            "Invalid cluster_components in %s (%s); leaving file unchanged.",
+            output,
+            e,
+        )
+        return existing_text
     merged = merge_components(existing, discovered)
     return existing_text.replace(existing_block, _render_components_block(merged))
 

@@ -195,6 +195,19 @@ class OutputConfig(BaseModel):
     graph_name_fmt: str = "scenario_%s.png"
     log_name_fmt: str = "scenario_%s.log"
 
+    @field_validator("result_name_fmt", "graph_name_fmt", "log_name_fmt", mode="after")
+    @classmethod
+    def requires_scenario_id_placeholder(cls, value: str, info) -> str:
+        if "%s" not in value:
+            field_name = info.field_name
+            raise ValueError(
+                f"{field_name} must include the %s (scenario ID) placeholder "
+                f"so every scenario produces a uniquely named file. "
+                f"Got: '{value}'. Please check the '{field_name}' parameter "
+                f"in your krkn-ai config file."
+            )
+        return value
+
 
 class ElasticConfig(BaseModel):
     """

@@ -239,6 +239,26 @@ class TestOutputConfig:
         assert "%g" in config.result_name_fmt
         assert "%s" in config.result_name_fmt
 
+    @pytest.mark.parametrize(
+        "field_name",
+        ["result_name_fmt", "graph_name_fmt", "log_name_fmt"],
+    )
+    def test_output_config_rejects_fmt_without_scenario_id(self, field_name):
+        """Format strings without %s must be rejected so scenarios don't collide on filenames"""
+        with pytest.raises(ValidationError, match="%s"):
+            OutputConfig(**{field_name: "gen_%g_scenario.yaml"})
+
+    def test_output_config_accepts_fmt_with_scenario_id(self):
+        """Format strings containing %s are accepted regardless of other placeholders"""
+        config = OutputConfig(
+            result_name_fmt="gen_%g_%s.yaml",
+            graph_name_fmt="%s.png",
+            log_name_fmt="%c_%s.log",
+        )
+        assert config.result_name_fmt == "gen_%g_%s.yaml"
+        assert config.graph_name_fmt == "%s.png"
+        assert config.log_name_fmt == "%c_%s.log"
+
 
 class TestStoppingCriteria:
     """Test StoppingCriteria model"""

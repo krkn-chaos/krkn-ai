@@ -506,6 +506,50 @@ class TestCalculateRangeFitness:
             assert "10m" in call_str
             assert score == 15.5
 
+    def test_calculate_range_fitness_rounds_window_up_to_cover_full_run(
+        self, minimal_config, temp_output_dir
+    ):
+        """Range window must cover the whole test, not floor to whole minutes.
+
+        A 1m59s run must query a 2m window. Flooring to 1m would drop the
+        first ~59s of data and skew the fitness score.
+        """
+        minimal_config.fitness_function = FitnessFunction(
+            query="max_over_time(kube_pod_container_status_restarts_total{$range$})",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[1000, "15.5"]]}
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+            end = datetime.datetime(
+                2024, 1, 1, 12, 1, 59
+            )  # 1m59s -> must round up to 2m
+
+            runner.calculate_range_fitness(
+                start,
+                end,
+                "max_over_time(kube_pod_container_status_restarts_total{$range$})",
+            )
+
+            call_str = str(mock_prom_client.process_prom_query_in_range.call_args)
+            assert "2m" in call_str
+            assert "1m" not in call_str
+
     def test_calculate_range_fitness_multiple_series_raises_error(
         self, minimal_config, temp_output_dir
     ):

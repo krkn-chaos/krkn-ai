@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import datetime
 import tempfile
 import time
@@ -533,7 +534,7 @@ class KrknRunner:
 
         # Calculate number of minutes between test run
         if "$range$" in query:
-            time_dt_mins = int((end - start).total_seconds() / 60)
+            time_dt_mins = math.ceil((end - start).total_seconds() / 60)
             if time_dt_mins == 0:
                 time_dt_mins = 1
             query = query.replace("$range$", f"{time_dt_mins}m")

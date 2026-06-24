@@ -35,6 +35,7 @@ class JSONSummaryReporter:
         completed_generations: int = 0,
         seed: Optional[int] = None,
         scenario_mutation_rate: Optional[float] = None,
+        all_evaluated_results: Optional[List[CommandRunResult]] = None,
     ):
         """
         Initialize the JSON summary reporter.
@@ -44,12 +45,19 @@ class JSONSummaryReporter:
             config: Configuration used for this run.
             seen_population: Map of scenarios to their execution results.
             best_of_generation: List of best results per generation.
+            baseline_result: Result from the baseline run (optional).
             start_time: When the run started.
             end_time: When the run ended.
             completed_generations: Number of generations completed.
             seed: Random seed used for the run (if any).
             scenario_mutation_rate: Scenario mutation rate to write in the
                 summary.
+            all_evaluated_results: Every ``CommandRunResult`` returned by
+                ``calculate_fitness()``, including cache-hit copies with their
+                corrected ``generation_id``.  When provided, this list is used
+                to compute per-generation average fitness scores accurately.
+                Falls back to ``list(seen_population.values())`` when omitted
+                for backward compatibility.
         """
         self.run_uuid = run_uuid
         self.config = config
@@ -64,6 +72,13 @@ class JSONSummaryReporter:
             config.scenario_mutation_rate
             if scenario_mutation_rate is None
             else scenario_mutation_rate
+        )
+        # Fall back to seen_population values for backward compatibility when
+        # all_evaluated_results is not provided (e.g., in older tests/callers).
+        self.all_evaluated_results: List[CommandRunResult] = (
+            all_evaluated_results
+            if all_evaluated_results is not None
+            else list(seen_population.values())
         )
         self.status = STATUS_COMPLETED
 
@@ -143,13 +158,20 @@ class JSONSummaryReporter:
         return results_summary
 
     def _build_fitness_progression(self) -> List[Dict[str, Any]]:
-        """Build fitness progression data from best_of_generation."""
+        """Build fitness progression data from best_of_generation.
+
+        Uses ``all_evaluated_results`` (which includes cache-hit results with
+        their corrected ``generation_id``) rather than ``seen_population`` so
+        that scenarios repeated across generations are attributed to the right
+        generation when computing per-generation averages.
+        """
         fitness_progression = []
         for i, result in enumerate(self.best_of_generation):
-            # Calculate average fitness for this generation from seen_population
+            # Calculate average fitness for this generation from all evaluated results,
+            # including cache-hit scenarios that carry the correct generation_id.
             gen_fitness_scores = [
                 r.fitness_result.fitness_score
-                for r in self.seen_population.values()
+                for r in self.all_evaluated_results
                 if r.generation_id == i
             ]
             gen_average = 0.0

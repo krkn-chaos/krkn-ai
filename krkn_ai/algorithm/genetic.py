@@ -83,6 +83,9 @@ class GeneticAlgorithm:
         self.seen_population: Dict[
             BaseScenario, CommandRunResult
         ] = {}  # Map between scenario and its result
+        self.all_evaluated_results: List[
+            CommandRunResult
+        ] = []  # All results incl. cache hits, for per-gen stats
         self.best_of_generation: List[BaseScenario] = []
 
         self.health_check_reporter = HealthCheckReporter(
@@ -544,6 +547,8 @@ class GeneticAlgorithm:
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
+            # Track cache-hit result so per-generation average stats are correct
+            self.all_evaluated_results.append(result)
             return result
 
         # This is a new scenario - track it for exploration limit
@@ -553,6 +558,8 @@ class GeneticAlgorithm:
 
         # Add scenario to seen population
         self.seen_population[scenario] = scenario_result
+        # Track every evaluated result (fresh run) for per-generation stats
+        self.all_evaluated_results.append(scenario_result)
 
         # Save scenario result
         self.save_scenario_result(scenario_result)
@@ -782,6 +789,7 @@ class GeneticAlgorithm:
             completed_generations=self.completed_generations,
             seed=self.seed,
             scenario_mutation_rate=self.current_scenario_mutation_rate,
+            all_evaluated_results=self.all_evaluated_results,
         )
         summary_reporter.save(self.output_dir)
 

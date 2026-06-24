@@ -256,6 +256,76 @@ class TestCalculatePointFitness:
             assert score == 5.0  # 10 - 5
             assert mock_prom_client.process_prom_query_in_range.call_count == 2
 
+    @pytest.mark.parametrize("bad_value", ["NaN", "+Inf", "-Inf"])
+    def test_calculate_point_fitness_coerces_non_finite(
+        self, bad_value, minimal_config, temp_output_dir
+    ):
+        """Non-finite PromQL values must be coerced to a finite floor (0.0)
+        so they cannot crash roulette selection or corrupt ranking."""
+        minimal_config.fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.side_effect = [
+            [{"values": [[1000, "5"]]}],  # start
+            [{"values": [[2000, bad_value]]}],  # end -> 5 - non-finite
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            score = runner.calculate_point_fitness(
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                datetime.datetime(2024, 1, 1, 12, 5, 0),
+                "sum(kube_pod_container_status_restarts_total)",
+            )
+
+            assert score == 0.0
+
+    @pytest.mark.parametrize("bad_value", ["NaN", "+Inf", "-Inf"])
+    def test_calculate_range_fitness_coerces_non_finite(
+        self, bad_value, minimal_config, temp_output_dir
+    ):
+        """Non-finite PromQL values in range mode are coerced to 0.0."""
+        minimal_config.fitness_function = FitnessFunction(
+            query="max_over_time(foo[$range$])",
+            type=FitnessFunctionType.range,
+        )
+
+        mock_prom_client = Mock()
+        mock_prom_client.process_prom_query_in_range.return_value = [
+            {"values": [[2000, bad_value]]}
+        ]
+
+        with patch(
+            "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client",
+            return_value=mock_prom_client,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.prom_client = mock_prom_client
+
+            score = runner.calculate_range_fitness(
+                datetime.datetime(2024, 1, 1, 12, 0, 0),
+                datetime.datetime(2024, 1, 1, 12, 5, 0),
+                "max_over_time(foo[$range$])",
+            )
+
+            assert score == 0.0
+
     def test_calculate_point_fitness_empty_values_raises_error(
         self, minimal_config, temp_output_dir
     ):

@@ -4,6 +4,8 @@ AppContext and CommandRunResult model tests
 
 import datetime
 
+import pytest
+
 from krkn_ai.models.app import (
     CommandRunResult,
     FitnessResult,
@@ -157,3 +159,45 @@ class TestFitnessResult:
         assert fitness.health_check_response_time_score == 2.0
         assert fitness.krkn_failure_score == 0.5
         assert fitness.fitness_score == 15.0
+
+
+class TestFitnessResultNonFiniteInvariant:
+    """A fitness score must always be finite. PromQL can emit NaN/±Inf, which
+    otherwise crashes roulette selection and corrupts sorted() ranking."""
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_coerced_on_construction(self, bad):
+        assert FitnessResult(fitness_score=bad).fitness_score == 0.0
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_coerced_on_assignment(self, bad):
+        # validate_assignment must catch the post-construction aggregate reassignment
+        result = FitnessResult()
+        result.fitness_score = bad
+        assert result.fitness_score == 0.0
+
+    def test_all_score_fields_coerced(self):
+        result = FitnessResult(
+            health_check_failure_score=float("nan"),
+            health_check_response_time_score=float("inf"),
+            krkn_failure_score=float("-inf"),
+            fitness_score=float("nan"),
+        )
+        assert result.health_check_failure_score == 0.0
+        assert result.health_check_response_time_score == 0.0
+        assert result.krkn_failure_score == 0.0
+        assert result.fitness_score == 0.0
+
+    def test_per_item_scores_coerced(self):
+        item = FitnessScoreResult(
+            id=1, fitness_score=float("nan"), weighted_score=float("inf")
+        )
+        assert item.fitness_score == 0.0
+        assert item.weighted_score == 0.0
+
+    def test_finite_values_preserved(self):
+        # Includes the -1.0 misconfiguration sentinel, which must pass through.
+        result = FitnessResult(fitness_score=-1.0)
+        assert result.fitness_score == -1.0
+        result.fitness_score = 7.5
+        assert result.fitness_score == 7.5

@@ -406,14 +406,22 @@ class KrknRunner:
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
-        # Retry to calculate fitness function if it fails
-        # Case when data isn't available in prometheus for latest time range
+        # Retry to calculate fitness function if it fails.
+        # Case when data isn't available in prometheus for latest time range.
+        # For point fitness, each retry advances `current_end` by `retry_delay`
+        # so the next attempt's query lands at a later timestamp, picking up
+        # scrapes that arrived during the wall-clock sleep. Prometheus does
+        # not backfill, so re-querying the same instant would hit the same gap.
+        # For range fitness the window stays pinned to the original
+        # [start, end] because advancing `end` would stretch the user's
+        # `$range$` substitution and bias the measurement.
         retries = 3  # Number of retries to calculate fitness function
         retry_delay = 10  # in seconds
+        current_end = end
         for retry in range(retries):
             try:
                 if fitness_type == FitnessFunctionType.point:
-                    return self.calculate_point_fitness(start, end, query)
+                    return self.calculate_point_fitness(start, current_end, query)
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
             except FitnessFunctionConfigurationError:
@@ -424,6 +432,8 @@ class KrknRunner:
                     f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
                 )
                 time.sleep(retry_delay)
+                if fitness_type == FitnessFunctionType.point:
+                    current_end = current_end + datetime.timedelta(seconds=retry_delay)
         raise FitnessFunctionCalculationError(
             f"Fitness function calculation failed after {retries} retries"
         )

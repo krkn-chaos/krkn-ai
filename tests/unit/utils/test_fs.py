@@ -262,6 +262,33 @@ class TestSaveDiscovery:
         names = [n["name"] for n in data["cluster_components"]["namespaces"]]
         assert "pay" in names
 
+    def test_merge_preserves_non_component_edits(self, tmp_path):
+        """Merge keeps non-component edits."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        existing = ClusterComponents(namespaces=[Namespace(name="shop")])
+        _write_existing(path, existing)
+        # edit a few non-component fields
+        doc = yaml.safe_load(open(path))
+        doc["generations"] = 50
+        doc["population_size"] = 30
+        doc["fitness_function"]["query"] = "sum(my_custom_metric)"
+        doc["scenario"]["pvc-scenarios"]["enable"] = True
+        with open(path, "w") as f:
+            yaml.safe_dump(doc, f)
+
+        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+
+        result = yaml.safe_load(open(path))
+        # edits survived
+        assert result["generations"] == 50
+        assert result["population_size"] == 30
+        assert result["fitness_function"]["query"] == "sum(my_custom_metric)"
+        assert result["scenario"]["pvc-scenarios"]["enable"] is True
+        # new component added
+        names = [n["name"] for n in result["cluster_components"]["namespaces"]]
+        assert "pay" in names and "shop" in names
+
     def test_merge_safe_to_repeat(self, tmp_path):
         """Running merge twice produces the same result."""
         path = str(tmp_path / "krkn-ai.yaml")

@@ -154,9 +154,10 @@ def merge_components(
 def _build_merged_config(
     output: str, discovered: ClusterComponents, kubeconfig: str
 ) -> Union[str, None]:
-    """Merge discovered components into the existing file; returns None if unreadable."""
+    """Merge discovered components into the existing config, keeping the user's
+    edits."""
     try:
-        config = read_config_from_file(output)
+        config = read_config_from_file(output, kubeconfig=kubeconfig)
     except (yaml.YAMLError, ValueError, ValidationError) as e:
         logger.warning(
             "Could not read existing config %s (%s); leaving file unchanged.",
@@ -165,8 +166,17 @@ def _build_merged_config(
         )
         return None
     merged = merge_components(config.cluster_components, discovered)
-    data = merged.model_dump(mode="json", warnings="none", exclude_defaults=True)
-    return create_krkn_ai_template(kubeconfig, data)
+    config.cluster_components = merged
+    data = config.model_dump(
+        mode="json", by_alias=True, warnings="none", exclude_none=True
+    )
+    # dump components like a fresh write
+    data["cluster_components"] = merged.model_dump(
+        mode="json", warnings="none", exclude_defaults=True
+    )
+    return yaml.dump(
+        data, default_flow_style=False, sort_keys=False, allow_unicode=True
+    )
 
 
 def _write_fresh(output: str, components: ClusterComponents, kubeconfig: str):

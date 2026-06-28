@@ -22,6 +22,7 @@ from krkn_ai.models.custom_errors import (
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.models.scenario.factory import ScenarioFactory
 
 
 @click.group(context_settings={"show_default": True})
@@ -289,4 +290,21 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
-    save_discovery(output, save_strategy, cluster_components, kubeconfig)
+    # Only the fresh-write paths (new file, or overwrite) consume the
+    # recommendation; skip/merge of an existing file discard it. Gate here so a
+    # routine re-run doesn't pay for recommend_enabled_scenarios, which
+    # instantiates every scenario and, when PVCs exist, makes a live API call
+    # (df in a pod) to read usage. Mirrors save_discovery's own branch.
+    will_write_fresh = (not os.path.exists(output)) or save_strategy.lower() == "overwrite"
+    recommended = (
+        ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
+        if will_write_fresh
+        else None
+    )
+    save_discovery(
+        output,
+        save_strategy,
+        cluster_components,
+        kubeconfig,
+        dynamic={"scenarios": recommended},
+    )

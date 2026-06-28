@@ -8,9 +8,30 @@ environment = jinja2.Environment()
 # Add enumerate to the template environment so it's available in templates
 environment.globals["enumerate"] = enumerate
 
+# Source of truth for the default scenario enables. The krkn-ai.yaml.j2 template
+# only fixes the key names and order; the values come from here (rendered via
+# {{ scenario_enables[...] }}). Values are YAML literal strings ("true"/"false")
+# on purpose: Jinja renders a Python bool as "True"/"False", which would change
+# the output.
+STATIC_SCENARIO_ENABLES = {
+    "pod-scenarios": "true",
+    "application-outages": "true",
+    "container-scenarios": "true",
+    "node-cpu-hog": "false",
+    "node-memory-hog": "false",
+    "node-io-hog": "false",
+    "time-scenarios": "false",
+    "network-scenarios": "false",
+    "dns-outage": "true",
+    "syn-flood": "false",
+    "pvc-scenarios": "false",
+    "kubevirt-scenarios": "false",
+    "storage-throttle": "false",
+}
+
 
 def create_krkn_ai_template(
-    kubeconfig_file_path: str, cluster_component_data: dict
+    kubeconfig_file_path: str, cluster_component_data: dict, dynamic: dict = None
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
@@ -36,7 +57,19 @@ def create_krkn_ai_template(
 
     cluster_components_indented = "\n".join(indented_lines)
 
+    # Scenario enables: fall back to the static defaults (byte-identical output)
+    # when discovery did not determine them.
+    scenarios = dynamic.get("scenarios") if dynamic else None
+    if scenarios is None:
+        scenario_enables = STATIC_SCENARIO_ENABLES
+    else:
+        scenario_enables = {
+            key: ("true" if key in scenarios else "false")
+            for key in STATIC_SCENARIO_ENABLES
+        }
+
     return template.render(
         kubeconfig_file_path=kubeconfig_file_path,
         cluster_components=cluster_components_indented,
+        scenario_enables=scenario_enables,
     )

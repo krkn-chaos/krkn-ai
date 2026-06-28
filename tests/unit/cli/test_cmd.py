@@ -419,6 +419,71 @@ class TestDiscoverCommand:
         finally:
             os.unlink(kubeconfig_path)
 
+    def test_discover_threads_recommended_scenarios(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """discover computes recommended scenarios and threads them as dynamic."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    with patch(
+                        "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                        return_value={"pod-scenarios", "pvc-scenarios"},
+                    ) as mock_rec:
+                        mock_manager_class.return_value.discover_components.return_value = (
+                            mock_cluster_components
+                        )
+                        output_file = os.path.join(temp_output_dir, "output.yaml")
+                        result = runner.invoke(
+                            main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                        )
+
+                        assert result.exit_code == 0
+                        mock_rec.assert_called_once()
+                        assert mock_save.call_args.kwargs["dynamic"] == {
+                            "scenarios": {"pod-scenarios", "pvc-scenarios"}
+                        }
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_threads_none_when_no_recommendation(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """When recommendation falls back (None), dynamic still carries None."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    with patch(
+                        "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                        return_value=None,
+                    ):
+                        mock_manager_class.return_value.discover_components.return_value = (
+                            mock_cluster_components
+                        )
+                        output_file = os.path.join(temp_output_dir, "output.yaml")
+                        result = runner.invoke(
+                            main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                        )
+
+                        assert result.exit_code == 0
+                        assert mock_save.call_args.kwargs["dynamic"] == {
+                            "scenarios": None
+                        }
+        finally:
+            os.unlink(kubeconfig_path)
+
     def test_discover_rejects_invalid_strategy(self):
         """An unknown --save-strategy value is rejected by click."""
         runner = CliRunner()

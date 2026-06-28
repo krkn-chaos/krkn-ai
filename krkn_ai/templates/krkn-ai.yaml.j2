@@ -65,31 +65,31 @@ fitness_function:
 
 scenario:
   pod-scenarios:
-    enable: true
+    enable: {{ scenario_enables['pod-scenarios'] }}
   application-outages:
-    enable: true
+    enable: {{ scenario_enables['application-outages'] }}
   container-scenarios:
-    enable: true
+    enable: {{ scenario_enables['container-scenarios'] }}
   node-cpu-hog:
-    enable: false
+    enable: {{ scenario_enables['node-cpu-hog'] }}
   node-memory-hog:
-    enable: false
+    enable: {{ scenario_enables['node-memory-hog'] }}
   node-io-hog:
-    enable: false
+    enable: {{ scenario_enables['node-io-hog'] }}
   time-scenarios:
-    enable: false
+    enable: {{ scenario_enables['time-scenarios'] }}
   network-scenarios:
-    enable: false
+    enable: {{ scenario_enables['network-scenarios'] }}
   dns-outage:
-    enable: true
+    enable: {{ scenario_enables['dns-outage'] }}
   syn-flood:
-    enable: false
+    enable: {{ scenario_enables['syn-flood'] }}
   pvc-scenarios:
-    enable: false
+    enable: {{ scenario_enables['pvc-scenarios'] }}
   kubevirt-scenarios:
-    enable: false
+    enable: {{ scenario_enables['kubevirt-scenarios'] }}
   storage-throttle:
-    enable: false
+    enable: {{ scenario_enables['storage-throttle'] }}
 
 cluster_components:
 {{ cluster_components }}

@@ -166,7 +166,6 @@ def _build_merged_config(
         )
         return None
     merged = merge_components(config.cluster_components, discovered)
-    config.cluster_components = merged
     data = config.model_dump(
         mode="json", by_alias=True, warnings="none", exclude_none=True
     )
@@ -179,10 +178,15 @@ def _build_merged_config(
     )
 
 
-def _write_fresh(output: str, components: ClusterComponents, kubeconfig: str):
+def _write_fresh(
+    output: str,
+    components: ClusterComponents,
+    kubeconfig: str,
+    dynamic: dict = None,
+):
     """Write fresh config from discovered components."""
     data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
-    template = create_krkn_ai_template(kubeconfig, data)
+    template = create_krkn_ai_template(kubeconfig, data, dynamic)
     with open(output, "w", encoding="utf-8") as f:
         f.write(template)
     logger.info("Saved component configuration to %s", output)
@@ -193,8 +197,14 @@ def save_discovery(
     strategy: str,
     components: ClusterComponents,
     kubeconfig: str,
+    dynamic: dict = None,
 ):
-    """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new)."""
+    """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new).
+
+    ``dynamic`` carries discovery-derived values (e.g. recommended scenarios)
+    and is applied only to fresh writes. The merge-of-an-existing-file path
+    preserves the user's edits and ignores it.
+    """
     strategy = strategy.lower()
     exists = os.path.exists(output)
 
@@ -218,4 +228,4 @@ def save_discovery(
     if exists and strategy == "overwrite":
         logger.warning("Overwriting existing %s", output)
 
-    _write_fresh(output, components, kubeconfig)
+    _write_fresh(output, components, kubeconfig, dynamic)

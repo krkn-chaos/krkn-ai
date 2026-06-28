@@ -1,6 +1,8 @@
-from typing import List, Tuple
+import contextlib
+import logging
+from typing import List, Optional, Set, Tuple
 from krkn_ai.models.cluster_components import ClusterComponents
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
 from krkn_ai.models.custom_errors import (
     MissingScenarioError,
     ScenarioInitError,
@@ -27,6 +29,20 @@ from krkn_ai.models.scenario.scenario_kubevirt import KubevirtDisruptionScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
 
 logger = get_logger(__name__)
+
+
+@contextlib.contextmanager
+def _suppressed_factory_warnings():
+    """Temporarily raise this module's log level so the per-scenario validation
+    warnings (one per scenario that fails to initialize) stay quiet during
+    discover-time recommendation. The run path keeps its warnings."""
+    previous = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
+
 
 scenario_specs = [
     ("pod_scenarios", PodScenario),
@@ -128,3 +144,34 @@ class ScenarioFactory:
     @staticmethod
     def create_dummy_scenario():
         return DummyScenario(cluster_components=ClusterComponents())
+
+    @staticmethod
+    def recommend_enabled_scenarios(
+        cluster_components: ClusterComponents, kubeconfig: str
+    ) -> Optional[Set[str]]:
+        """Recommend which scenarios to enable for a discovered cluster.
+
+        Builds a temporary config with every scenario enabled and reuses
+        ``generate_valid_scenarios`` to keep only the ones that can initialize
+        against the discovered components. Returns the set of template keys
+        (hyphenated, e.g. ``"pod-scenarios"``) that are valid, or ``None`` to
+        signal that the caller should fall back to the static defaults (no
+        scenarios validated, or recommendation failed). Never raises.
+        """
+        aliases = [name.replace("_", "-") for name, _ in scenario_specs]
+        try:
+            config = ConfigFile(
+                kubeconfig_file_path=kubeconfig,
+                fitness_function=FitnessFunction(query="placeholder"),
+                scenario=ScenarioConfig(**{a: {"enable": True} for a in aliases}),
+                cluster_components=cluster_components,
+            )
+            with _suppressed_factory_warnings():
+                valid = ScenarioFactory.generate_valid_scenarios(config)
+        except MissingScenarioError:
+            return None
+        except Exception as error:
+            # Recommendation must never break discovery; fall back to static.
+            logger.debug("Scenario recommendation failed: %s", error)
+            return None
+        return {name.replace("_", "-") for name, _ in valid}

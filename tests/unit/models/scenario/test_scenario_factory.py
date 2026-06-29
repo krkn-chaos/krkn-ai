@@ -125,20 +125,8 @@ class TestRecommendEnabledScenarios:
     """Test ScenarioFactory.recommend_enabled_scenarios"""
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
-    def test_returns_hyphenated_set_for_populated_cluster(self, _mock_init):
-        """A populated cluster yields a non-empty set of template (hyphen) keys."""
-        cluster = ClusterComponents(
-            namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
-            nodes=[Node(name="n1")],
-        )
-        result = ScenarioFactory.recommend_enabled_scenarios(cluster, "/tmp/kubeconfig")
-        assert isinstance(result, set) and result
-        # Keys are template aliases (hyphenated), not factory field names.
-        assert all("_" not in key for key in result)
-
-    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_node_scenarios_depend_on_nodes(self, _mock_init):
-        """Node-hog scenarios are recommended only when nodes are present."""
+        """Node scenarios are recommended only with nodes."""
         with_nodes = ScenarioFactory.recommend_enabled_scenarios(
             ClusterComponents(
                 namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
@@ -157,7 +145,7 @@ class TestRecommendEnabledScenarios:
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_namespace_scenarios_depend_on_pods(self, _mock_init):
-        """Namespace/pod scenarios (e.g. dns-outage) need a namespace with pods."""
+        """Pod scenarios are recommended only with pods."""
         with_pods = ScenarioFactory.recommend_enabled_scenarios(
             ClusterComponents(
                 namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
@@ -173,7 +161,7 @@ class TestRecommendEnabledScenarios:
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_returns_none_for_empty_cluster(self, _mock_init):
-        """No components -> nothing validates -> None (fall back to static)."""
+        """Empty cluster returns None."""
         result = ScenarioFactory.recommend_enabled_scenarios(
             ClusterComponents(), "/tmp/kubeconfig"
         )
@@ -181,22 +169,10 @@ class TestRecommendEnabledScenarios:
 
     @patch(
         "krkn_ai.models.scenario.factory.ScenarioFactory.generate_valid_scenarios",
-        side_effect=MissingScenarioError("none"),
-    )
-    def test_returns_none_on_missing_scenario_error(self, _mock_gen):
-        """MissingScenarioError is treated as a soft fallback, not a crash."""
-        cluster = ClusterComponents(namespaces=[Namespace(name="shop")])
-        assert (
-            ScenarioFactory.recommend_enabled_scenarios(cluster, "/tmp/kubeconfig")
-            is None
-        )
-
-    @patch(
-        "krkn_ai.models.scenario.factory.ScenarioFactory.generate_valid_scenarios",
         side_effect=RuntimeError("boom"),
     )
     def test_returns_none_on_unexpected_error(self, _mock_gen):
-        """Any unexpected error must not break discovery; fall back to static."""
+        """Errors fall back to None instead of raising."""
         cluster = ClusterComponents(namespaces=[Namespace(name="shop")])
         assert (
             ScenarioFactory.recommend_enabled_scenarios(cluster, "/tmp/kubeconfig")

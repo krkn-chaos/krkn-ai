@@ -8,11 +8,7 @@ environment = jinja2.Environment()
 # Add enumerate to the template environment so it's available in templates
 environment.globals["enumerate"] = enumerate
 
-# Source of truth for the default scenario enables. The krkn-ai.yaml.j2 template
-# only fixes the key names and order; the values come from here (rendered via
-# {{ scenario_enables[...] }}). Values are YAML literal strings ("true"/"false")
-# on purpose: Jinja renders a Python bool as "True"/"False", which would change
-# the output.
+# default enables copied from static template
 STATIC_SCENARIO_ENABLES = {
     "pod-scenarios": "true",
     "application-outages": "true",
@@ -57,8 +53,7 @@ def create_krkn_ai_template(
 
     cluster_components_indented = "\n".join(indented_lines)
 
-    # Scenario enables: fall back to the static defaults (byte-identical output)
-    # when discovery did not determine them.
+    # Scenario enables: fall back to the static defaults
     scenarios = dynamic.get("scenarios") if dynamic else None
     if scenarios is None:
         scenario_enables = STATIC_SCENARIO_ENABLES

@@ -33,9 +33,7 @@ logger = get_logger(__name__)
 
 @contextlib.contextmanager
 def _suppressed_factory_warnings():
-    """Temporarily raise this module's log level so the per-scenario validation
-    warnings (one per scenario that fails to initialize) stay quiet during
-    discover-time recommendation. The run path keeps its warnings."""
+    # suppress warnings for discover
     previous = logger.level
     logger.setLevel(logging.ERROR)
     try:
@@ -149,15 +147,7 @@ class ScenarioFactory:
     def recommend_enabled_scenarios(
         cluster_components: ClusterComponents, kubeconfig: str
     ) -> Optional[Set[str]]:
-        """Recommend which scenarios to enable for a discovered cluster.
-
-        Builds a temporary config with every scenario enabled and reuses
-        ``generate_valid_scenarios`` to keep only the ones that can initialize
-        against the discovered components. Returns the set of template keys
-        (hyphenated, e.g. ``"pod-scenarios"``) that are valid, or ``None`` to
-        signal that the caller should fall back to the static defaults (no
-        scenarios validated, or recommendation failed). Never raises.
-        """
+        # Recommend which scenarios to enable for a discovered cluster
         aliases = [name.replace("_", "-") for name, _ in scenario_specs]
         try:
             config = ConfigFile(

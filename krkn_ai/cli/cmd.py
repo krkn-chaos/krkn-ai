@@ -290,15 +290,10 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
-    # Only the fresh-write paths (new file, or overwrite) consume the
-    # recommendation; skip/merge of an existing file discard it. Gate here so a
-    # routine re-run doesn't pay for recommend_enabled_scenarios, which
-    # instantiates every scenario and, when PVCs exist, makes a live API call
-    # (df in a pod) to read usage. Mirrors save_discovery's own branch.
-    will_write_fresh = (not os.path.exists(output)) or save_strategy.lower() == "overwrite"
+    # recommend calls only for overwrite and if no file exists for other strategies
     recommended = (
         ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
-        if will_write_fresh
+        if not os.path.exists(output) or save_strategy.lower() == "overwrite"
         else None
     )
     save_discovery(

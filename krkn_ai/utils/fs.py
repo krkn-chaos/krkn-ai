@@ -199,12 +199,7 @@ def save_discovery(
     kubeconfig: str,
     dynamic: dict = None,
 ):
-    """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new).
-
-    ``dynamic`` carries discovery-derived values (e.g. recommended scenarios)
-    and is applied only to fresh writes. The merge-of-an-existing-file path
-    preserves the user's edits and ignores it.
-    """
+    """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new)."""
     strategy = strategy.lower()
     exists = os.path.exists(output)
 

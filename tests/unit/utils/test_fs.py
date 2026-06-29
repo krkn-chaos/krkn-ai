@@ -289,6 +289,25 @@ class TestSaveDiscovery:
         names = [n["name"] for n in result["cluster_components"]["namespaces"]]
         assert "pay" in names and "shop" in names
 
+    def test_merge_keeps_secrets_and_parameters(self, tmp_path):
+        """Merge keeps elastic.password and parameters."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        _write_existing(path, ClusterComponents(namespaces=[Namespace(name="shop")]))
+        doc = yaml.safe_load(open(path))
+        doc["elastic"] = {"enable": True, "server": "https://es", "password": "s3cret"}
+        doc["parameters"] = {"TOKEN": {"value": "abc", "is_private": False}}
+        with open(path, "w") as f:
+            yaml.safe_dump(doc, f)
+
+        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+
+        result = yaml.safe_load(open(path))
+        assert result["elastic"]["password"] == "s3cret"  # not dropped
+        assert result["parameters"]["TOKEN"]["value"] == "abc"  # not collapsed
+        names = [n["name"] for n in result["cluster_components"]["namespaces"]]
+        assert "pay" in names and "shop" in names
+
     def test_merge_safe_to_repeat(self, tmp_path):
         """Running merge twice produces the same result."""
         path = str(tmp_path / "krkn-ai.yaml")

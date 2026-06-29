@@ -165,16 +165,15 @@ def _build_merged_config(
             e,
         )
         return None
+    # edit the raw file so user fields aren't dropped on a model dump
+    with open(output, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
     merged = merge_components(config.cluster_components, discovered)
-    data = config.model_dump(
-        mode="json", by_alias=True, warnings="none", exclude_none=True
-    )
-    # dump components like a fresh write
-    data["cluster_components"] = merged.model_dump(
+    raw["cluster_components"] = merged.model_dump(
         mode="json", warnings="none", exclude_defaults=True
     )
-    return yaml.dump(
-        data, default_flow_style=False, sort_keys=False, allow_unicode=True
+    return yaml.safe_dump(
+        raw, default_flow_style=False, sort_keys=False, allow_unicode=True
     )
 
 

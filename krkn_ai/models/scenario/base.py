@@ -77,4 +77,6 @@ class CompositeScenario(BaseScenario):
         return self.name == other.name and hash(other) == hash(self)
 
     def __hash__(self):
-        return hash(tuple([self.scenario_a, self.scenario_b]))
+        # `dependency` changes the execution graph, so it is part of identity.
+        # __eq__ derives from this hash, so including it here fixes both. See #380.
+        return hash((self.scenario_a, self.scenario_b, self.dependency))

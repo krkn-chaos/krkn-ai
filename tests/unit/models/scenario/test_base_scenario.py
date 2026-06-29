@@ -126,8 +126,8 @@ class TestCompositeScenario:
         assert composite1 == composite1
         assert composite1 != "not-a-composite"
 
-        # Test hash: different dependencies but same scenarios should have same hash
-        assert hash(composite1) == hash(composite2)
+        # Different dependency changes the execution graph, so identity must differ (#380)
+        assert hash(composite1) != hash(composite2)
         # Different scenario order should have different hash
         assert hash(composite1) != hash(composite3)
 

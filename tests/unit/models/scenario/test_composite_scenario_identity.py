@@ -17,8 +17,18 @@ def _pair():
     cluster = ClusterComponents(namespaces=[], nodes=[])
     a = DummyScenario(cluster_components=cluster)
     b = DummyScenario(cluster_components=cluster)
-    none = CompositeScenario(name="composite", scenario_a=a, scenario_b=b, dependency=CompositeDependency.NONE)
-    a_on_b = CompositeScenario(name="composite", scenario_a=a, scenario_b=b, dependency=CompositeDependency.A_ON_B)
+    none = CompositeScenario(
+        name="composite",
+        scenario_a=a,
+        scenario_b=b,
+        dependency=CompositeDependency.NONE,
+    )
+    a_on_b = CompositeScenario(
+        name="composite",
+        scenario_a=a,
+        scenario_b=b,
+        dependency=CompositeDependency.A_ON_B,
+    )
     return none, a_on_b
 
 
@@ -42,7 +52,17 @@ def test_same_dependency_still_collides():
     cluster = ClusterComponents(namespaces=[], nodes=[])
     a = DummyScenario(cluster_components=cluster)
     b = DummyScenario(cluster_components=cluster)
-    c1 = CompositeScenario(name="composite", scenario_a=a, scenario_b=b, dependency=CompositeDependency.NONE)
-    c2 = CompositeScenario(name="composite", scenario_a=a, scenario_b=b, dependency=CompositeDependency.NONE)
+    c1 = CompositeScenario(
+        name="composite",
+        scenario_a=a,
+        scenario_b=b,
+        dependency=CompositeDependency.NONE,
+    )
+    c2 = CompositeScenario(
+        name="composite",
+        scenario_a=a,
+        scenario_b=b,
+        dependency=CompositeDependency.NONE,
+    )
     assert c1 == c2
     assert hash(c1) == hash(c2)

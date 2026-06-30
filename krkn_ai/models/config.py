@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_serializer,
@@ -76,6 +77,8 @@ class BaselineConfig(BaseModel):
 
 
 class ScenarioConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
     )

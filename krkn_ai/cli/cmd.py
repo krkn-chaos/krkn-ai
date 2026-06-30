@@ -290,8 +290,7 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
-    # recommend calls only for overwrite and if no file exists for other strategies
-    recommended = (
+    scenario_enables = (
         ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
         if not os.path.exists(output) or save_strategy.lower() == "overwrite"
         else None
@@ -301,5 +300,5 @@ def discover(
         save_strategy,
         cluster_components,
         kubeconfig,
-        dynamic={"scenarios": recommended},
+        scenario_enables=scenario_enables,
     )

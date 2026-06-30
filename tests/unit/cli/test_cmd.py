@@ -458,7 +458,7 @@ class TestDiscoverCommand:
                 patch("krkn_ai.cli.cmd.save_discovery"),
                 patch(
                     "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
-                    return_value={"pod-scenarios"},
+                    return_value={"pod_scenarios": True, "pvc_scenarios": False},
                 ) as mock_rec,
             ):
                 mock_manager_class.return_value.discover_components.return_value = (
@@ -497,7 +497,10 @@ class TestDiscoverCommand:
                 patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
                 patch(
                     "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
-                    return_value={"pvc-scenarios"},
+                    return_value={
+                        "pvc_scenarios": True,
+                        "pod_scenarios": False,
+                    },
                 ),
             ):
                 mock_manager_class.return_value.discover_components.return_value = (

@@ -64,32 +64,10 @@ fitness_function:
 
 
 scenario:
-  pod-scenarios:
-    enable: {{ scenario_enables['pod-scenarios'] }}
-  application-outages:
-    enable: {{ scenario_enables['application-outages'] }}
-  container-scenarios:
-    enable: {{ scenario_enables['container-scenarios'] }}
-  node-cpu-hog:
-    enable: {{ scenario_enables['node-cpu-hog'] }}
-  node-memory-hog:
-    enable: {{ scenario_enables['node-memory-hog'] }}
-  node-io-hog:
-    enable: {{ scenario_enables['node-io-hog'] }}
-  time-scenarios:
-    enable: {{ scenario_enables['time-scenarios'] }}
-  network-scenarios:
-    enable: {{ scenario_enables['network-scenarios'] }}
-  dns-outage:
-    enable: {{ scenario_enables['dns-outage'] }}
-  syn-flood:
-    enable: {{ scenario_enables['syn-flood'] }}
-  pvc-scenarios:
-    enable: {{ scenario_enables['pvc-scenarios'] }}
-  kubevirt-scenarios:
-    enable: {{ scenario_enables['kubevirt-scenarios'] }}
-  storage-throttle:
-    enable: {{ scenario_enables['storage-throttle'] }}
+{%- for name, enabled in scenario_enables.items() %}
+  {{ name | replace("_", "-") }}:
+    enable: {{ "true" if enabled else "false" }}
+{%- endfor %}
 
 cluster_components:
 {{ cluster_components }}

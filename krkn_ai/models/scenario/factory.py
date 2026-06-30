@@ -1,6 +1,6 @@
 import contextlib
 import logging
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Tuple
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
 from krkn_ai.models.custom_errors import (
@@ -146,22 +146,27 @@ class ScenarioFactory:
     @staticmethod
     def recommend_enabled_scenarios(
         cluster_components: ClusterComponents, kubeconfig: str
-    ) -> Optional[Set[str]]:
-        # Recommend which scenarios to enable for a discovered cluster
-        aliases = [name.replace("_", "-") for name, _ in scenario_specs]
+    ) -> Dict[str, bool]:
+        names = [name for name, _ in scenario_specs]
+        all_disabled = {n: False for n in names}
         try:
             config = ConfigFile(
                 kubeconfig_file_path=kubeconfig,
                 fitness_function=FitnessFunction(query="placeholder"),
-                scenario=ScenarioConfig(**{a: {"enable": True} for a in aliases}),
+                scenario=ScenarioConfig(**{n: {"enable": True} for n in names}),
                 cluster_components=cluster_components,
             )
             with _suppressed_factory_warnings():
                 valid = ScenarioFactory.generate_valid_scenarios(config)
         except MissingScenarioError:
-            return None
+            logger.warning(
+                "No valid scenarios found for this cluster. "
+                "All scenarios disabled. "
+                "Check your cluster components or re-run discover."
+            )
+            return all_disabled
         except Exception as error:
-            # Recommendation must never break discovery; fall back to static.
             logger.debug("Scenario recommendation failed: %s", error)
-            return None
-        return {name.replace("_", "-") for name, _ in valid}
+            return all_disabled
+        valid_names = {name for name, _ in valid}
+        return {n: n in valid_names for n in names}

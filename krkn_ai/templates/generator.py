@@ -3,31 +3,18 @@ import os
 import jinja2
 import yaml
 
+from krkn_ai.models.scenario.factory import scenario_specs
+
 environment = jinja2.Environment()
 
 # Add enumerate to the template environment so it's available in templates
 environment.globals["enumerate"] = enumerate
 
-# default enables copied from static template
-STATIC_SCENARIO_ENABLES = {
-    "pod-scenarios": "true",
-    "application-outages": "true",
-    "container-scenarios": "true",
-    "node-cpu-hog": "false",
-    "node-memory-hog": "false",
-    "node-io-hog": "false",
-    "time-scenarios": "false",
-    "network-scenarios": "false",
-    "dns-outage": "true",
-    "syn-flood": "false",
-    "pvc-scenarios": "false",
-    "kubevirt-scenarios": "false",
-    "storage-throttle": "false",
-}
-
 
 def create_krkn_ai_template(
-    kubeconfig_file_path: str, cluster_component_data: dict, dynamic: dict = None
+    kubeconfig_file_path: str,
+    cluster_component_data: dict,
+    scenario_enables: dict = None,
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
@@ -53,15 +40,8 @@ def create_krkn_ai_template(
 
     cluster_components_indented = "\n".join(indented_lines)
 
-    # Scenario enables: fall back to the static defaults
-    scenarios = dynamic.get("scenarios") if dynamic else None
-    if scenarios is None:
-        scenario_enables = STATIC_SCENARIO_ENABLES
-    else:
-        scenario_enables = {
-            key: ("true" if key in scenarios else "false")
-            for key in STATIC_SCENARIO_ENABLES
-        }
+    if scenario_enables is None:
+        scenario_enables = {name: False for name, _ in scenario_specs}
 
     return template.render(
         kubeconfig_file_path=kubeconfig_file_path,

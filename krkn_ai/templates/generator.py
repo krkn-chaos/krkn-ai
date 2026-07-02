@@ -3,6 +3,8 @@ import os
 import jinja2
 import yaml
 
+from krkn_ai.models.scenario.factory import scenario_specs
+
 environment = jinja2.Environment()
 
 # Add enumerate to the template environment so it's available in templates
@@ -10,7 +12,9 @@ environment.globals["enumerate"] = enumerate
 
 
 def create_krkn_ai_template(
-    kubeconfig_file_path: str, cluster_component_data: dict
+    kubeconfig_file_path: str,
+    cluster_component_data: dict,
+    scenario_enables: dict = None,
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
@@ -36,7 +40,11 @@ def create_krkn_ai_template(
 
     cluster_components_indented = "\n".join(indented_lines)
 
+    if scenario_enables is None:
+        scenario_enables = {name: False for name, _ in scenario_specs}
+
     return template.render(
         kubeconfig_file_path=kubeconfig_file_path,
         cluster_components=cluster_components_indented,
+        scenario_enables=scenario_enables,
     )

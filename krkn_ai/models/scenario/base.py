@@ -34,6 +34,9 @@ class Scenario(BaseScenario):
         super().__init__(**data)
         self._cluster_components = cluster_components
 
+    def scenario_wait_duration(self, config_wait_duration: int) -> int:
+        return config_wait_duration
+
     def __str__(self):
         param_value = ", ".join([str(x.value) for x in self.parameters])
         return f"{self.name}({param_value})"
@@ -74,4 +77,6 @@ class CompositeScenario(BaseScenario):
         return self.name == other.name and hash(other) == hash(self)
 
     def __hash__(self):
+        # `dependency` changes the execution graph, so it is part of identity.
+        # __eq__ derives from this hash, so including it here fixes both. See #380.
         return hash((self.scenario_a, self.scenario_b, self.dependency))

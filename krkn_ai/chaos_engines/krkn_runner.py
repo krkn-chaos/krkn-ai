@@ -3,7 +3,6 @@ import json
 import datetime
 import tempfile
 import time
-from typing import Optional, Tuple
 
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -13,7 +12,10 @@ from krkn_ai.models.app import (
     KrknRunnerType,
 )
 from krkn_ai.models.config import ConfigFile, FitnessFunctionType
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+    FitnessFunctionConfigurationError,
+)
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -26,6 +28,7 @@ from krkn_ai.utils.fs import env_is_truthy
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
+from krkn_ai.utils.telemetry_parser import extract_telemetry_from_log
 
 logger = get_logger(__name__)
 
@@ -128,9 +131,7 @@ class KrknRunner:
                     # Use the return-code from the shell command for composite scenario
                     pass
                 else:
-                    returncode, run_uuid = self.__extract_returncode_from_run(
-                        log, returncode
-                    )
+                    returncode, run_uuid = extract_telemetry_from_log(log, returncode)
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
@@ -226,7 +227,9 @@ class KrknRunner:
                 env_list += f' -e {parameter.get_name(return_krknhub_name=True)}="{parameter.get_value()}" '
 
             command = PODMAN_TEMPLATE.format(
-                wait_duration=self.config.wait_duration,
+                wait_duration=scenario.scenario_wait_duration(
+                    self.config.wait_duration
+                ),
                 env_list=env_list,
                 kubeconfig=self.config.kubeconfig_file_path,
                 image=scenario.krknhub_image,
@@ -241,7 +244,9 @@ class KrknRunner:
                 env_list += f'--{param_name} "{parameter.get_value()}" '
 
             command = KRKNCTL_TEMPLATE.format(
-                wait_duration=self.config.wait_duration,
+                wait_duration=scenario.scenario_wait_duration(
+                    self.config.wait_duration
+                ),
                 env_list=env_list,
                 kubeconfig=self.config.kubeconfig_file_path,
                 name=scenario.krknctl_name,
@@ -411,6 +416,8 @@ class KrknRunner:
                     return self.calculate_point_fitness(start, end, query)
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
+            except FitnessFunctionConfigurationError:
+                raise
             except Exception as error:
                 logger.error(f"Fitness function calculation failed: {error}")
                 logger.info(
@@ -474,10 +481,11 @@ class KrknRunner:
             context: Description of where this is called from (for error messages)
 
         Returns:
-            The metric value as a string
+            The Prometheus value as a string
 
         Raises:
-            FitnessFunctionCalculationError: If Prometheus returns no data
+            FitnessFunctionCalculationError: If Prometheus returns no data or
+                more than one series
         """
         result = self.prom_client.process_prom_query_in_range(
             query,
@@ -485,20 +493,33 @@ class KrknRunner:
             end_time=timestamp,
             granularity=100,
         )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' at {timestamp} "
-                f"during {context}. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return series["values"][-1][1]
-        raise FitnessFunctionCalculationError(
+        no_data_error = (
             f"Prometheus returned no data for query '{query}' at {timestamp} "
             f"during {context}. This may indicate the metric does not exist "
             f"in the requested time range or Prometheus has not yet scraped data."
         )
+        return self._extract_single_prometheus_value(
+            result,
+            query,
+            context,
+            no_data_error,
+        )
+
+    def _extract_single_prometheus_value(
+        self, result, query: str, context: str, no_data_error: str
+    ) -> str:
+        series_list = result or []
+        if len(series_list) > 1:
+            raise FitnessFunctionConfigurationError(
+                f"Prometheus returned {len(series_list)} series for query "
+                f"'{query}' during {context}. Fitness queries must return exactly "
+                "one series. Use sum(), max(), avg(), or another PromQL aggregate "
+                "before using this query as a fitness function."
+            )
+
+        if not series_list or not series_list[0].get("values"):
+            raise FitnessFunctionCalculationError(no_data_error)
+        return series_list[0]["values"][-1][1]
 
     def calculate_range_fitness(self, start, end, query):
         """
@@ -527,86 +548,17 @@ class KrknRunner:
             end_time=end,
             granularity=100,
         )
-        if not result:
-            raise FitnessFunctionCalculationError(
-                f"Prometheus returned no data for query '{query}' in range "
-                f"[{start}, {end}]. This may indicate the metric does not exist "
-                f"in the requested time range or Prometheus has not yet scraped data."
-            )
-        for series in result:
-            if series.get("values"):
-                return float(series["values"][-1][1])
-        raise FitnessFunctionCalculationError(
+        no_data_error = (
             f"Prometheus returned no data for query '{query}' in range "
             f"[{start}, {end}]. This may indicate the metric does not exist "
             f"in the requested time range or Prometheus has not yet scraped data."
         )
 
-    def __extract_returncode_from_run(
-        self, log: str, default_returncode: int
-    ) -> Tuple[int, Optional[str]]:
-        """
-        Try to extracts Krkn return code and uuid from the run log. If extraction fails, return default_returncode.
-        """
-        try:
-            # TODO: Look into if we can save telemetry data to file from Krkn itself.
-            # Hacky way to extract return code from log
-            # Find the line with "Chaos data:" and extract JSON from next lines
-            lines = log.split("\n")
-            chaos_data_idx = -1
-
-            for i, line in enumerate(lines):
-                if "Chaos data:" in line:
-                    chaos_data_idx = i + 1
-                    break
-
-            if chaos_data_idx == -1:
-                logger.warning("Could not find 'Chaos data:' in log")
-                return default_returncode, None
-
-            # Extract JSON by counting braces
-            json_lines = []
-            brace_count = 0
-            started = False
-
-            for i in range(chaos_data_idx, len(lines)):
-                line = lines[i]
-
-                # Count opening and closing braces
-                for char in line:
-                    if char == "{":
-                        brace_count += 1
-                        started = True
-                    elif char == "}":
-                        brace_count -= 1
-
-                if started:
-                    json_lines.append(line)
-
-                # When braces are balanced, we've found the complete JSON
-                if started and brace_count == 0:
-                    break
-
-            if not json_lines:
-                logger.warning("Could not extract JSON content from log")
-                return default_returncode, None
-
-            # Join all JSON lines into a single string
-            json_str = "\n".join(json_lines)
-            chaos_data = json.loads(json_str)
-
-            # Extract exit_status from first scenario
-            scenarios = chaos_data.get("telemetry", {}).get("scenarios", [])
-            if scenarios and len(scenarios) > 0:
-                exit_status = scenarios[0].get("exit_status", default_returncode)
-                run_uuid = chaos_data.get("telemetry", {}).get("run_uuid", None)
-                logger.debug("Extracted exit_status: %s", exit_status)
-                logger.debug("Extracted run_uuid: %s", run_uuid)
-                return exit_status, run_uuid
-
-            logger.warning("No exit_status found in telemetry data")
-            return default_returncode, None
-
-        except Exception as e:
-            logger.error("Failed to extract return code from run log: %s", e)
-            return default_returncode, None
+        return float(
+            self._extract_single_prometheus_value(
+                result,
+                query,
+                f"range fitness [{start}, {end}]",
+                no_data_error,
+            )
+        )

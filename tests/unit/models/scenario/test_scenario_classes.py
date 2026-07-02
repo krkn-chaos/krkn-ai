@@ -16,6 +16,7 @@ from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
+from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -324,3 +325,93 @@ class TestPVCScenario:
 
         with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
             PVCScenario(cluster_components=cluster)
+
+
+class TestStorageThrottleScenario:
+    """Test StorageThrottleScenario class"""
+
+    def test_storage_throttle_scenario_initialization_with_pvcs(self):
+        """Test that StorageThrottleScenario initializes when PVCs exist"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        assert scenario.name == "storage-throttle"
+        assert scenario.namespace.value == "test-ns"
+        assert scenario.pvc_name.value == "test-pvc"
+        assert scenario.pod_name.value == ""
+        assert scenario.throttle_type.value in ["iops", "bandwidth", "both"]
+
+    def test_storage_throttle_scenario_initialization_with_pods_only(self):
+        """Test that StorageThrottleScenario falls back to pods when no PVCs exist"""
+        pod = Pod(
+            name="test-pod",
+            labels={"app": "web"},
+            containers=[Container(name="c1")],
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        assert scenario.name == "storage-throttle"
+        assert scenario.namespace.value == "test-ns"
+        assert scenario.pod_name.value == "test-pod"
+        assert scenario.pvc_name.value == ""
+
+    def test_storage_throttle_scenario_raises_error_when_no_pvcs_or_pods(self):
+        """Test that StorageThrottleScenario raises error when no PVCs or pods exist"""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
+            StorageThrottleScenario(cluster_components=cluster)
+
+    def test_storage_throttle_scenario_raises_error_empty_namespace(self):
+        """Test that StorageThrottleScenario raises error when namespace has no PVCs or pods"""
+        namespace = Namespace(name="test-ns")
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No PVCs or pods found"):
+            StorageThrottleScenario(cluster_components=cluster)
+
+    def test_storage_throttle_scenario_conditional_parameters_iops(self):
+        """Test that parameters list includes IOPS params when throttle_type is iops"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "iops"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-iops" in param_names
+        assert "write-iops" in param_names
+        assert "read-bps" not in param_names
+        assert "write-bps" not in param_names
+
+    def test_storage_throttle_scenario_conditional_parameters_bandwidth(self):
+        """Test that parameters list includes BPS params when throttle_type is bandwidth"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "bandwidth"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-bps" in param_names
+        assert "write-bps" in param_names
+        assert "read-iops" not in param_names
+        assert "write-iops" not in param_names
+
+    def test_storage_throttle_scenario_conditional_parameters_both(self):
+        """Test that parameters list includes all throttle params when type is both"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "both"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-iops" in param_names
+        assert "write-iops" in param_names
+        assert "read-bps" in param_names
+        assert "write-bps" in param_names

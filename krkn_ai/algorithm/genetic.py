@@ -785,7 +785,10 @@ class GeneticAlgorithm:
         )
         summary_reporter.save(self.output_dir)
 
-        # TODO: Send run summary to Elasticsearch
+        if self.elastic_client is not None:
+            self.elastic_client.index_run_summary(
+                summary_reporter.generate_summary(), self.run_uuid
+            )
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")

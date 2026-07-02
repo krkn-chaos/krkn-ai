@@ -1,6 +1,10 @@
 import os
+import sys
 import uuid
 import json
+from contextlib import nullcontext
+from kubernetes.client.rest import ApiException
+from urllib3.exceptions import MaxRetryError
 from krkn_ai.constants import STATUS_STARTED, STATUS_FAILED
 
 import click
@@ -16,9 +20,9 @@ from krkn_ai.models.custom_errors import (
     PrometheusConnectionError,
     UniqueScenariosError,
 )
-from krkn_ai.utils.fs import read_config_from_file
-from krkn_ai.templates.generator import create_krkn_ai_template
+from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.models.scenario.factory import ScenarioFactory
 
 
 @click.group(context_settings={"show_default": True})
@@ -31,10 +35,10 @@ def main():
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file. Setting this will override value in config file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option("--config", "-c", help="Path to krkn-ai config file.")
-@click.option("--output", "-o", help="Directory to save results.")
+@click.option("--output", "-o", help="Directory to save results.", default="./")
 @click.option(
     "--format",
     "-f",
@@ -54,7 +58,6 @@ def main():
     "-p",
     multiple=True,
     help="Additional parameters for config file in key=value format.",
-    default=[],
 )
 @click.option(
     "--seed",
@@ -84,7 +87,7 @@ def run(
     output: str = "./",
     format: str = "yaml",
     runner_type: str = None,
-    param: list[str] = None,
+    param: tuple[str, ...] = (),
     seed: int = None,
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
@@ -110,7 +113,7 @@ def run(
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
         exit(1)
-    except ValidationError as err:
+    except (ValueError, ValidationError) as err:
         logger.error("Unable to parse config file: %s", err)
         exit(1)
 
@@ -126,52 +129,61 @@ def run(
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
 
-    streamlit_process = None
-    if monitoring:
-        logger.info("Starting live monitoring dashboard...")
-        streamlit_process = DashboardManager.start(
-            new_output_path, port, background=True
-        )
+    dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
 
-    run_success = False
-    try:
-        os.makedirs(new_output_path, exist_ok=True)
-        with open(os.path.join(new_output_path, "results.json"), "w") as f:
-            json.dump({"status": STATUS_STARTED}, f)
-
-        genetic = GeneticAlgorithm(
-            run_uuid=run_uuid,
-            config=parsed_config,
-            output_dir=new_output_path,
-            format=format,
-            runner_type=enum_runner_type,
-        )
-        genetic.simulate()
-
-        genetic.save()
-        run_success = True
-    except (MissingScenarioError, PrometheusConnectionError, UniqueScenariosError) as e:
-        logger.error("%s", e)
-        exit(1)
-    except FitnessFunctionCalculationError as e:
-        logger.error("Unable to calculate fitness function score: %s", e)
-        exit(1)
-    except Exception as e:
-        logger.exception("Something went wrong: %s", e)
-        exit(1)
-    finally:
-        if not run_success:
-            try:
-                with open(os.path.join(new_output_path, "results.json"), "w") as f:
-                    json.dump({"status": STATUS_FAILED}, f)
-            except Exception:
-                pass
-
-        if streamlit_process:
-            logger.info(
-                "Run finished. Monitoring dashboard will remain running. Terminate manually when done."
+    with dashboard:
+        if (
+            monitoring
+            and isinstance(dashboard, DashboardManager)
+            and not dashboard.is_running
+        ):
+            logger.warning(
+                "Dashboard did not start. Continuing run without monitoring."
             )
-        logger.info("Check run.log file in '%s' for more details.", new_output_path)
+
+        run_success = False
+        try:
+            os.makedirs(new_output_path, exist_ok=True)
+            with open(os.path.join(new_output_path, "results.json"), "w") as f:
+                json.dump({"status": STATUS_STARTED}, f)
+
+            genetic = GeneticAlgorithm(
+                run_uuid=run_uuid,
+                config=parsed_config,
+                output_dir=new_output_path,
+                format=format,
+                runner_type=enum_runner_type,
+            )
+            genetic.simulate()
+
+            genetic.save()
+            run_success = True
+        except (
+            MissingScenarioError,
+            PrometheusConnectionError,
+            UniqueScenariosError,
+        ) as e:
+            logger.error("%s", e)
+            exit(1)
+        except FitnessFunctionCalculationError as e:
+            logger.error("Unable to calculate fitness function score: %s", e)
+            exit(1)
+        except Exception as e:
+            logger.exception("Something went wrong: %s", e)
+            exit(1)
+        finally:
+            if not run_success:
+                try:
+                    with open(os.path.join(new_output_path, "results.json"), "w") as f:
+                        json.dump({"status": STATUS_FAILED}, f)
+                except Exception:
+                    pass
+            logger.info("Check run.log file in '%s' for more details.", new_output_path)
+            if monitoring:
+                logger.info(
+                    "To inspect results interactively, run: krkn-ai monitor -o %s",
+                    output,
+                )
 
 
 @main.command(help="Monitor results from previous completed runs")
@@ -187,7 +199,14 @@ def monitor(ctx, output: str, port: int):
         output,
     )
 
-    DashboardManager.start(output, port, background=False)
+    with DashboardManager(output, port) as dashboard:
+        if not dashboard.is_running:
+            logger.error("Unable to start dashboard monitor.")
+            sys.exit(1)
+        try:
+            dashboard.wait()
+        except KeyboardInterrupt:
+            logger.info("Monitoring dashboard stopped.")
 
 
 @main.command(help="Discover components for Krkn-AI tests")
@@ -195,7 +214,7 @@ def monitor(ctx, output: str, port: int):
     "--kubeconfig",
     "-k",
     help="Path to cluster kubeconfig file.",
-    default=os.getenv("KUBECONFIG", None),
+    envvar="KUBECONFIG",
 )
 @click.option(
     "--output", "-o", help="Path to save config file.", default="./krkn-ai.yaml"
@@ -227,16 +246,23 @@ def monitor(ctx, output: str, port: int):
     default=None,
     required=False,
 )
+@click.option(
+    "--save-strategy",
+    type=click.Choice(["skip", "overwrite", "merge"], case_sensitive=False),
+    default="skip",
+    help="How to save: skip, overwrite (replace), or merge (add new components, keep your edits). Note: merge does not preserve comments.",
+)
 @click.pass_context
 def discover(
     ctx,
     kubeconfig: str,
-    output: str = "./",
-    namespace: str = "*",
+    output: str = "./krkn-ai.yaml",
+    namespace: str = ".*",
     pod_label: str = ".*",
     node_label: str = ".*",
     verbose: int = 0,
     skip_pod_name: str = None,
+    save_strategy: str = "skip",
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
@@ -245,22 +271,34 @@ def discover(
         logger.error("Kubeconfig file not found.")
         exit(1)
 
-    cluster_manager = ClusterManager(kubeconfig)
+    try:
+        cluster_manager = ClusterManager(kubeconfig)
 
-    cluster_components = cluster_manager.discover_components(
-        namespace_pattern=namespace,
-        pod_label_pattern=pod_label,
-        node_label_pattern=node_label,
-        skip_pod_name=skip_pod_name,
+        cluster_components = cluster_manager.discover_components(
+            namespace_pattern=namespace,
+            pod_label_pattern=pod_label,
+            node_label_pattern=node_label,
+            skip_pod_name=skip_pod_name,
+        )
+    except ApiException as e:
+        logger.error("Kubernetes API error: %s", e)
+        sys.exit(1)
+    except MaxRetryError as e:
+        logger.error("Failed to connect to Kubernetes cluster: %s", e)
+        sys.exit(1)
+    except Exception as e:
+        logger.error("An unexpected error occurred during discovery: %s", e)
+        sys.exit(1)
+
+    scenario_enables = (
+        ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
+        if not os.path.exists(output) or save_strategy.lower() == "overwrite"
+        else None
     )
-
-    cluster_components_data = cluster_components.model_dump(
-        mode="json", warnings="none", exclude_defaults=True
+    save_discovery(
+        output,
+        save_strategy,
+        cluster_components,
+        kubeconfig,
+        scenario_enables=scenario_enables,
     )
-
-    template = create_krkn_ai_template(kubeconfig, cluster_components_data)
-
-    with open(output, "w") as f:
-        f.write(template)
-
-    logger.info("Saved component configuration to %s", output)

@@ -270,13 +270,15 @@ class NetworkScenarioNetworkParamsParameter(BaseParameter):
 
     def mutate(self):
         self.value.latency = rng.randint(1, 1000)
-        self.value.loss = round(rng.uniform(0.01, 0.1), 2)
         self.value.bandwidth = rng.randint(100, 1000)
 
     def get_value(self):
+        # TODO: Add support for loss once https://github.com/krkn-chaos/krkn-hub/pull/349 is merged
+        # loss is excluded: krknctl regex requires unquoted numeric values which
+        # YAML parses as float, but krkn's arcaflow model requires Dict[str, str]
         return (
             "{"
-            + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit"
+            + f"latency: {self.value.latency}ms,bandwidth: {self.value.bandwidth}mbit"
             + "}"
         )
 
@@ -537,3 +539,77 @@ class KillCountParameter(BaseParameter):
     krknhub_name: str = "KILL_COUNT"
     krknctl_name: str = "kill-count"
     value: int = 1
+
+
+# Storage Throttle Scenario Parameters
+class StorageThrottleTypeParameter(BaseParameter):
+    krknhub_name: str = "THROTTLE_TYPE"
+    krknctl_name: str = "throttle-type"
+    value: str = "bandwidth"
+
+    def mutate(self):
+        self.value = rng.choice(["iops", "bandwidth", "both"])
+
+
+class ReadIOPSParameter(BaseParameter):
+    krknhub_name: str = "READ_IOPS"
+    krknctl_name: str = "read-iops"
+    value: int = 100
+
+    def mutate(self):
+        self.value = rng.randint(10, 500)
+
+
+class WriteIOPSParameter(BaseParameter):
+    krknhub_name: str = "WRITE_IOPS"
+    krknctl_name: str = "write-iops"
+    value: int = 50
+
+    def mutate(self):
+        self.value = rng.randint(10, 500)
+
+
+class ReadBPSParameter(BaseParameter):
+    krknhub_name: str = "READ_BPS"
+    krknctl_name: str = "read-bps"
+    value: int = 1048576  # 1Mi in bytes (1024 * 1024)
+
+    def get_value(self):
+        if self.value < 1024:
+            return f"{self.value}"
+        elif self.value < 1024 * 1024:
+            return f"{self.value // 1024}Ki"
+        else:
+            return f"{self.value // (1024 * 1024)}Mi"
+
+    def mutate(self):
+        self.value = rng.randint(256 * 1024, 10 * 1024 * 1024)
+
+
+class WriteBPSParameter(BaseParameter):
+    krknhub_name: str = "WRITE_BPS"
+    krknctl_name: str = "write-bps"
+    value: int = 524288  # 512Ki in bytes (512 * 1024)
+
+    def get_value(self):
+        if self.value < 1024:
+            return f"{self.value}"
+        elif self.value < 1024 * 1024:
+            return f"{self.value // 1024}Ki"
+        else:
+            return f"{self.value // (1024 * 1024)}Mi"
+
+    def mutate(self):
+        self.value = rng.randint(128 * 1024, 5 * 1024 * 1024)
+
+
+class MountPathParameter(BaseParameter):
+    krknhub_name: str = "MOUNT_PATH"
+    krknctl_name: str = "mount-path"
+    value: str = ""
+
+
+class StorageThrottleImageParameter(BaseParameter):
+    krknhub_name: str = "IMAGE"
+    krknctl_name: str = "image"
+    value: str = "quay.io/krkn-chaos/krkn:tools"

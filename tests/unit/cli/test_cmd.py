@@ -5,6 +5,9 @@ CLI command tests
 import os
 import tempfile
 from unittest.mock import Mock, patch
+
+import pytest
+import yaml
 from click.testing import CliRunner
 from pydantic import ValidationError
 
@@ -64,6 +67,49 @@ class TestRunCommand:
                     mock_read.assert_called_once_with(
                         config_path, (), override_kubeconfig
                     )
+                    mock_ga.simulate.assert_called_once()
+                    mock_ga.save.assert_called_once()
+        finally:
+            os.unlink(config_path)
+
+    def test_run_uses_default_output_when_flag_is_omitted(self, minimal_config):
+        """Test command uses default output directory when --output is omitted"""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            import yaml
+
+            config_dict = {
+                "kubeconfig_file_path": minimal_config.kubeconfig_file_path,
+                "generations": minimal_config.generations,
+                "population_size": minimal_config.population_size,
+                "fitness_function": {
+                    "query": minimal_config.fitness_function.query,
+                    "type": minimal_config.fitness_function.type.value,
+                },
+                "scenario": {"pod_scenarios": {"enable": True}},
+            }
+            yaml.dump(config_dict, f)
+            config_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_read.return_value = minimal_config
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+
+                    with runner.isolated_filesystem():
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                            ],
+                        )
+
+                    assert result.exit_code == 0, result.exception
                     mock_ga.simulate.assert_called_once()
                     mock_ga.save.assert_called_once()
         finally:
@@ -261,13 +307,12 @@ class TestDiscoverCommand:
 
         try:
             with patch("krkn_ai.cli.cmd.ClusterManager") as mock_cluster_manager_class:
-                with patch("krkn_ai.cli.cmd.create_krkn_ai_template") as mock_template:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
                     mock_manager = Mock()
                     mock_manager.discover_components.return_value = (
                         mock_cluster_components
                     )
                     mock_cluster_manager_class.return_value = mock_manager
-                    mock_template.return_value = "generated_template_content"
 
                     output_file = os.path.join(temp_output_dir, "output.yaml")
                     result = runner.invoke(
@@ -284,10 +329,7 @@ class TestDiscoverCommand:
                     assert result.exit_code == 0
                     mock_cluster_manager_class.assert_called_once_with(kubeconfig_path)
                     mock_manager.discover_components.assert_called_once()
-                    mock_template.assert_called_once()
-                    assert os.path.exists(output_file)
-                    with open(output_file, "r") as f:
-                        assert f.read() == "generated_template_content"
+                    mock_save.assert_called_once()
         finally:
             os.unlink(kubeconfig_path)
 
@@ -314,3 +356,181 @@ class TestDiscoverCommand:
                 assert result.exit_code == 1
                 mock_logger.error.assert_called_once()
                 assert "Kubeconfig file not found" in str(mock_logger.error.call_args)
+
+    def test_discover_defaults_to_skip_strategy(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Without the flag, discover passes the skip strategy through."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    mock_manager_class.return_value.discover_components.return_value = (
+                        mock_cluster_components
+                    )
+                    output_file = os.path.join(temp_output_dir, "output.yaml")
+                    result = runner.invoke(
+                        main,
+                        ["discover", "-k", kubeconfig_path, "-o", output_file],
+                    )
+
+                    assert result.exit_code == 0
+                    mock_save.assert_called_once()
+                    output_arg, strategy_arg = mock_save.call_args.args[:2]
+                    assert output_arg == output_file
+                    assert strategy_arg == "skip"
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_verify_chosen_strategy(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Verify the chosen --save-strategy is used."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class:
+                with patch("krkn_ai.cli.cmd.save_discovery") as mock_save:
+                    mock_manager_class.return_value.discover_components.return_value = (
+                        mock_cluster_components
+                    )
+                    output_file = os.path.join(temp_output_dir, "output.yaml")
+                    result = runner.invoke(
+                        main,
+                        [
+                            "discover",
+                            "-k",
+                            kubeconfig_path,
+                            "-o",
+                            output_file,
+                            "--save-strategy",
+                            "merge",
+                        ],
+                    )
+
+                    assert result.exit_code == 0
+                    assert mock_save.call_args.args[1] == "merge"
+        finally:
+            os.unlink(kubeconfig_path)
+
+    @pytest.mark.parametrize(
+        "strategy, file_exists, expect_recommend_calls",
+        [
+            ("skip", False, 1),  # new file
+            ("skip", True, 0),  # existing
+            ("overwrite", False, 1),  # no file
+            ("overwrite", True, 1),  # always writes fresh
+            ("merge", False, 1),  # nothing to merge
+            ("merge", True, 0),  # merge preserves existing
+        ],
+    )
+    def test_discover_recommends_only_on_fresh_write(
+        self,
+        strategy,
+        file_exists,
+        expect_recommend_calls,
+        mock_cluster_components,
+        temp_output_dir,
+    ):
+        """recommend runs only when discover writes a fresh config."""
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        if file_exists:
+            with open(output_file, "w") as f:
+                f.write("existing: true\n")
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch("krkn_ai.cli.cmd.save_discovery"),
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={"pod_scenarios": True, "pvc_scenarios": False},
+                ) as mock_rec,
+            ):
+                mock_manager_class.return_value.discover_components.return_value = (
+                    mock_cluster_components
+                )
+                result = runner.invoke(
+                    main,
+                    [
+                        "discover",
+                        "-k",
+                        kubeconfig_path,
+                        "-o",
+                        output_file,
+                        "--save-strategy",
+                        strategy,
+                    ],
+                )
+                assert result.exit_code == 0
+                assert mock_rec.call_count == expect_recommend_calls
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_writes_recommended_scenarios_to_file(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Fresh discover writes the recommended scenarios to the output file."""
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={
+                        "pvc_scenarios": True,
+                        "pod_scenarios": False,
+                    },
+                ),
+            ):
+                mock_manager_class.return_value.discover_components.return_value = (
+                    mock_cluster_components
+                )
+                result = runner.invoke(
+                    main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                )
+
+                assert result.exit_code == 0
+                data = yaml.safe_load(open(output_file))
+                # recommended scenario enabled; an unrecommended one stays off
+                assert data["scenario"]["pvc-scenarios"]["enable"] is True
+                assert data["scenario"]["pod-scenarios"]["enable"] is False
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_rejects_invalid_strategy(self):
+        """An unknown --save-strategy value is rejected by click."""
+        runner = CliRunner()
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            result = runner.invoke(
+                main,
+                ["discover", "-k", kubeconfig_path, "--save-strategy", "bogus"],
+            )
+            assert result.exit_code != 0
+        finally:
+            os.unlink(kubeconfig_path)

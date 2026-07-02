@@ -8,6 +8,9 @@ LABEL org.opencontainers.image.title="Krkn-AI" \
 
 WORKDIR /app
 
+# Avoid slow mirror timeouts during dnf installs
+RUN printf "timeout=30\nretries=3\n" >> /etc/dnf/dnf.conf
+
 # Install system dependencies including podman, python, and required tools
 # hadolint ignore=DL3041
 RUN dnf install -y \
@@ -55,15 +58,17 @@ RUN wget -q https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSI
 # Create virtual environment with uv
 RUN uv venv /app/.venv --python python3.12
 
-# Copy requirements and install Python dependencies into venv
-COPY requirements.txt .
-RUN uv pip install --no-cache -r requirements.txt
+# Copy dependency metadata first (layer cache — only invalidates when deps change)
+COPY pyproject.toml uv.lock ./
 
-# Copy the project files
+# Install dependencies only (cached until pyproject.toml/uv.lock change)
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Copy project source
 COPY . .
 
-# Install krkn-ai in editable mode into venv
-RUN uv pip install . --no-deps
+# Install the project itself (deps already in place, fast)
+RUN uv sync --frozen --no-dev --no-editable
 
 # Copy entrypoint script and setup directories
 COPY containers/entrypoint.sh /entrypoint.sh

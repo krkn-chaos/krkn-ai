@@ -1,4 +1,10 @@
+from pydantic import BaseModel
 from krkn_ai.utils.rng import RNG
+
+
+class DummyPydanticModel(BaseModel):
+    value: int
+    nested: list[int] = [1, 2, 3]
 
 
 class TestRNG:
@@ -55,6 +61,38 @@ class TestRNG:
         choice2 = rng.choice(items)
         assert choice == choice2
 
+    def test_choice_pydantic_compatibility(self):
+        """Test choice() works with Pydantic models (prevents NumPy array conversion failure)."""
+        rng = RNG(42)
+        models = [
+            DummyPydanticModel(value=1),
+            DummyPydanticModel(value=2),
+            DummyPydanticModel(value=3),
+        ]
+        choice = rng.choice(models)
+        assert choice in models
+
+    def test_choice_numpy_array_compatibility(self):
+        """Test choice() works with numpy arrays (both 1D and object arrays)."""
+        import numpy as np
+
+        rng = RNG(42)
+        arr = np.array([10, 20, 30])
+        choice = rng.choice(arr)
+        assert choice in [10, 20, 30]
+
+    def test_choice_empty_sequence_raises_value_error(self):
+        """Test choice() raises ValueError when passed an empty sequence or empty numpy array."""
+        import numpy as np
+
+        rng = RNG(42)
+        import pytest
+
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choice([])
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choice(np.array([]))
+
     def test_choices(self):
         """Test choices() picks multiple elements with weights."""
         rng = RNG(42)
@@ -72,16 +110,111 @@ class TestRNG:
         choices2 = rng.choices(items, weights, k=5)
         assert choices == choices2
 
-    def test_randint(self):
-        """Test randint() returns an integer within range."""
+    def test_choices_pydantic_compatibility(self):
+        """Test choices() works with Pydantic models (prevents NumPy array conversion failure)."""
+        rng = RNG(42)
+        models = [
+            DummyPydanticModel(value=1),
+            DummyPydanticModel(value=2),
+            DummyPydanticModel(value=3),
+        ]
+        weights = [0.1, 0.8, 0.1]
+        choices = rng.choices(models, weights, k=5)
+        assert len(choices) == 5
+        assert all(c in models for c in choices)
+
+    def test_choices_numpy_array_compatibility(self):
+        """Test choices() works with numpy arrays."""
+        import numpy as np
+
+        rng = RNG(42)
+        arr = np.array([10, 20, 30])
+        weights = [0.2, 0.6, 0.2]
+        choices = rng.choices(arr, weights, k=5)
+        assert len(choices) == 5
+        assert all(c in [10, 20, 30] for c in choices)
+
+    def test_choices_empty_sequence_raises_value_error(self):
+        """Test choices() raises ValueError when passed an empty sequence or empty numpy array."""
+        import numpy as np
+
+        rng = RNG(42)
+        import pytest
+
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choices([], [1.0], k=2)
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choices(np.array([]), [], k=2)
+
+    def test_randint_returns_int_in_inclusive_range(self):
+        """Test randint() returns an integer within [low, high] inclusive."""
         rng = RNG(42)
         low, high = 1, 10
         val = rng.randint(low, high)
         assert isinstance(val, int)
-        assert low <= val < high
+        assert low <= val <= high  # both bounds inclusive
 
-        # Test low == high case
+    def test_randint_equal_bounds(self):
+        """Test randint() with equal low and high returns that value."""
+        rng = RNG(42)
         assert rng.randint(5, 5) == 5
+        assert rng.randint(0, 0) == 0
+
+    def test_randint_upper_bound_is_reachable(self):
+        """Verify the upper bound can actually be produced (catches the numpy off-by-one bug).
+
+        numpy.integers(low, high) is exclusive of high.  Our wrapper must add 1
+        so that callers using rng.randint(a, b) get an inclusive [a, b] range.
+        Over 10 000 draws, the upper bound *must* appear at least once.
+        """
+        rng = RNG(seed=0)
+        results = {rng.randint(1, 3) for _ in range(10_000)}
+        assert 3 in results, (
+            "Upper bound 3 was never produced by randint(1, 3) — "
+            "likely caused by numpy.integers exclusive-high off-by-one bug."
+        )
+        assert 1 in results, "Lower bound 1 was never produced by randint(1, 3)."
+        assert results == {1, 2, 3}
+
+    def test_randint_covers_full_range(self):
+        """Verify every integer in [low, high] is reachable over many draws."""
+        rng = RNG(seed=99)
+        low, high = 1, 10
+        results = {rng.randint(low, high) for _ in range(50_000)}
+        assert results == set(range(low, high + 1)), (
+            f"Not all values in [{low}, {high}] were produced. Missing: "
+            f"{set(range(low, high + 1)) - results}"
+        )
+
+    def test_randint_disruption_count_inclusive(self):
+        """Regression test: scenario_container uses rng.randint(1, len(containers)).
+
+        With 2 containers, disruption_count must be able to equal 2 (all containers).
+        Previously broken because randint(1, 2) with numpy exclusive upper bound
+        could only produce 1, silently making the multi-container branch in
+        ContainerScenario.mutate() unreachable.
+        """
+        rng = RNG(seed=7)
+        results = {rng.randint(1, 2) for _ in range(10_000)}
+        assert 2 in results, (
+            "randint(1, 2) never produced 2 — disruption_count could never "
+            "equal the number of containers in a 2-container pod."
+        )
+        assert results == {1, 2}
+
+    def test_sample(self):
+        """Test sample() returns unique elements."""
+        rng = RNG(42)
+        items = [1, 2, 3, 4, 5]
+        sampled = rng.sample(items, k=3)
+        assert len(sampled) == 3
+        assert len(set(sampled)) == 3
+        assert all(x in items for x in sampled)
+
+        # Reproducibility check
+        rng.set_seed(42)
+        sampled2 = rng.sample(items, k=3)
+        assert sampled == sampled2
 
     def test_uniform(self):
         """Test uniform() returns a float within range."""

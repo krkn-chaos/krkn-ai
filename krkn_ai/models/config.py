@@ -1,10 +1,30 @@
 import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 import krkn_ai.constants as const
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.utils import id_generator
+
+
+class ParameterValue(BaseModel):
+    value: str
+    is_private: bool = False
+
+    @model_serializer
+    def serialize(self) -> str:
+        return "***" if self.is_private else self.value
+
+    @classmethod
+    def from_cli(cls, key: str, raw: str) -> "ParameterValue":
+        return cls(value=raw, is_private=key.startswith("__"))
 
 
 class PodScenarioConfig(BaseModel):
@@ -47,12 +67,18 @@ class KubevirtScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class StorageThrottleScenarioConfig(BaseModel):
+    enable: bool = False
+
+
 class BaselineConfig(BaseModel):
     enable: bool = True
     duration: int = 60 * 2  # 2 minutes
 
 
 class ScenarioConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
     )
@@ -87,11 +113,19 @@ class ScenarioConfig(BaseModel):
     kubevirt_scenarios: Optional[KubevirtScenarioConfig] = Field(
         alias="kubevirt-scenarios", default=None
     )
+    storage_throttle: Optional[StorageThrottleScenarioConfig] = Field(
+        alias="storage-throttle", default=None
+    )
 
 
 class FitnessFunctionType(str, Enum):
     point = "point"
     range = "range"
+
+
+class SelectionStrategy(str, Enum):
+    roulette = "roulette"
+    tournament = "tournament"
 
 
 auto_id = id_generator()
@@ -140,11 +174,14 @@ class HealthCheckApplicationConfig(BaseModel):
     status_code: int = 200  # Expected status code
     timeout: int = 4  # in seconds
     interval: int = 2  # in seconds
+    headers: Optional[Dict[str, str]] = None
 
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
+    stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
     applications: List[HealthCheckApplicationConfig] = []
+    headers: Optional[Dict[str, str]] = None
 
 
 class OutputConfig(BaseModel):
@@ -160,6 +197,19 @@ class OutputConfig(BaseModel):
     result_name_fmt: str = "scenario_%s.yaml"
     graph_name_fmt: str = "scenario_%s.png"
     log_name_fmt: str = "scenario_%s.log"
+
+    @field_validator("result_name_fmt", "graph_name_fmt", "log_name_fmt", mode="after")
+    @classmethod
+    def requires_scenario_id_placeholder(cls, value: str, info) -> str:
+        if "%s" not in value:
+            field_name = info.field_name
+            raise ValueError(
+                f"{field_name} must include the %s (scenario ID) placeholder "
+                f"so every scenario produces a uniquely named file. "
+                f"Got: '{value}'. Please check the '{field_name}' parameter "
+                f"in your krkn-ai config file."
+            )
+        return value
 
 
 class ElasticConfig(BaseModel):
@@ -235,7 +285,7 @@ class StoppingCriteria(BaseModel):
 
 class ConfigFile(BaseModel):
     kubeconfig_file_path: str  # Path to kubeconfig
-    parameters: Dict[str, str] = {}
+    parameters: Dict[str, ParameterValue] = {}
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
 
@@ -263,6 +313,9 @@ class ConfigFile(BaseModel):
     composition_rate: float = (
         0  # How often a crossover would lead to composition (0.0-1.0)
     )
+
+    selection_strategy: SelectionStrategy = SelectionStrategy.roulette
+    tournament_size: int = 3
 
     population_injection_rate: float = (
         const.POPULATION_INJECTION_RATE

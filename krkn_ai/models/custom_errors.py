@@ -30,6 +30,14 @@ class FitnessFunctionCalculationError(Exception):
     pass
 
 
+class FitnessFunctionConfigurationError(FitnessFunctionCalculationError):
+    """
+    Exception raised when a fitness query returns an invalid result.
+    """
+
+    pass
+
+
 class ScenarioParameterInitError(Exception):
     """
     Exception raised when there is an error initializing a scenario parameter.

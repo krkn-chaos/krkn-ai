@@ -15,6 +15,11 @@ from krkn_ai.models.scenario.parameters import (
 )
 
 
+_INGRESS_WAIT_DURATION = (
+    30  # krkn requires >= 1 for ingress; 300s is krkn's own default
+)
+
+
 class NetworkScenario(Scenario):
     name: str = "network-chaos"
     krknctl_name: str = "network-chaos"
@@ -47,18 +52,28 @@ class NetworkScenario(Scenario):
 
     @property
     def parameters(self):
-        return [
+        common = [
             self.traffic_type,
             self.image,
             self.duration,
             self.label_selector,
             self.execution,
-            self.node_name,
-            self.network_params,
-            self.egress_params,
-            # self.interfaces,
-            self.target_node_interface,
         ]
+        if self.traffic_type.value == "ingress":
+            return common + [
+                self.network_params,
+                self.target_node_interface,
+            ]
+        # egress
+        return common + [
+            self.node_name,
+            self.egress_params,
+        ]
+
+    def scenario_wait_duration(self, config_wait_duration: int) -> int:
+        if self.traffic_type.value == "ingress":
+            return max(config_wait_duration, _INGRESS_WAIT_DURATION)
+        return config_wait_duration
 
     def mutate(self):
         # Get nodes with interfaces
@@ -71,18 +86,20 @@ class NetworkScenario(Scenario):
                 "No nodes found with interfaces in cluster components"
             )
 
-        # TODO: Add support for ingress traffic type
+        # TODO: ingress verification broken on ROSA/OVNKubernetes — krkn's debug pod
+        # returns `ip` help text instead of interface list; re-enable once fixed upstream
+        # https://github.com/krkn-chaos/krkn/issues/1380
         self.traffic_type.value = "egress"
         self.execution.mutate()
-
-        if self.traffic_type.value == "ingress":
-            self.network_params.mutate()
-        elif self.traffic_type.value == "egress":
-            self.egress_params.mutate()
 
         node = rng.choice(nodes)
         self.node_name.value = node.name
         self.interfaces.value = f"[{rng.choice(node.interfaces)}]"
-        self.target_node_interface.value = (
-            "{" + f"{node.name}: [{rng.choice(node.interfaces)}]" + " }"
-        )
+
+        if self.traffic_type.value == "ingress":
+            self.network_params.mutate()
+            self.target_node_interface.value = (
+                "{" + f"{node.name}: [{rng.choice(node.interfaces)}]" + "}"
+            )
+        elif self.traffic_type.value == "egress":
+            self.egress_params.mutate()

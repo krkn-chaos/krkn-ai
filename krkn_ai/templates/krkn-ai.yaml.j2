@@ -13,6 +13,11 @@ population_size: 2
 composition_rate: 0
 population_injection_rate: 0
 
+selection_strategy: "roulette"
+
+# selection_strategy: "tournament"
+# tournament_size: 3
+
 wait_duration: 120
 
 output:
@@ -33,6 +38,7 @@ elastic:
 
 
 fitness_function:
+  # Use an aggregate query that returns one Prometheus series.
   query: 'sum(kube_pod_container_status_restarts_total)'
   type: point
   include_krkn_failure: true
@@ -41,6 +47,7 @@ fitness_function:
 
 # health_checks:
 #   stop_watcher_on_failure: false
+#   stop_timeout: 5
 #   applications:
 #   - name: cart
 #     url: "$HOST/cart/add/1/Watson/1"
@@ -57,30 +64,10 @@ fitness_function:
 
 
 scenario:
-  pod-scenarios:
-    enable: true
-  application-outages:
-    enable: true
-  container-scenarios:
-    enable: true
-  node-cpu-hog:
-    enable: false
-  node-memory-hog:
-    enable: false
-  node-io-hog:
-    enable: false
-  time-scenarios:
-    enable: false
-  network-scenarios:
-    enable: false
-  dns-outage:
-    enable: true
-  syn-flood:
-    enable: false
-  pvc-scenarios:
-    enable: false
-  kubevirt-scenarios:
-    enable: false
+{%- for name, enabled in scenario_enables.items() %}
+  {{ name | replace("_", "-") }}:
+    enable: {{ "true" if enabled else "false" }}
+{%- endfor %}
 
 cluster_components:
 {{ cluster_components }}

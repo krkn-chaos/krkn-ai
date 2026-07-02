@@ -483,3 +483,79 @@ class TestClusterManager:
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
         assert interfaces == []
+
+    def test_list_nodes_fetches_interfaces_for_all_nodes(self, cluster_manager):
+        """All nodes get interfaces populated even when fetched concurrently"""
+
+        def make_node(name):
+            node = Mock()
+            node.metadata.name = name
+            node.metadata.labels = {"kubernetes.io/hostname": name}
+            node.spec.taints = None
+            node.spec.unschedulable = False
+            ready = Mock()
+            ready.type = "Ready"
+            ready.status = "True"
+            node.status.conditions = [ready]
+            node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+            return node
+
+        cluster_manager.core_api.list_node.return_value.items = [
+            make_node("node-a"),
+            make_node("node-b"),
+            make_node("node-c"),
+        ]
+        cluster_manager.custom_obj_api.list_cluster_custom_object.side_effect = (
+            Exception("no metrics")
+        )
+
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell",
+            return_value=("eth0\n", 0),
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert len(nodes) == 3
+        assert all(n.interfaces == ["eth0"] for n in nodes)
+
+    def test_list_nodes_one_interface_timeout_does_not_block_others(
+        self, cluster_manager
+    ):
+        """A failed interface lookup on one node leaves others unaffected"""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        def make_node(name):
+            node = Mock()
+            node.metadata.name = name
+            node.metadata.labels = {"kubernetes.io/hostname": name}
+            node.spec.taints = None
+            node.spec.unschedulable = False
+            ready = Mock()
+            ready.type = "Ready"
+            ready.status = "True"
+            node.status.conditions = [ready]
+            node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+            return node
+
+        cluster_manager.core_api.list_node.return_value.items = [
+            make_node("good-node"),
+            make_node("bad-node"),
+        ]
+        cluster_manager.custom_obj_api.list_cluster_custom_object.side_effect = (
+            Exception("no metrics")
+        )
+
+        def fake_run_shell(cmd, **kwargs):
+            if "bad-node" in cmd:
+                raise ShellCommandTimeoutError("timed out")
+            return ("eth0\n", 0)
+
+        with patch(
+            "krkn_ai.utils.cluster_manager.run_shell", side_effect=fake_run_shell
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert len(nodes) == 2
+        by_name = {n.name: n for n in nodes}
+        assert by_name["good-node"].interfaces == ["eth0"]
+        assert by_name["bad-node"].interfaces == []

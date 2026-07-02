@@ -2,8 +2,10 @@
 Tests for GeneticAlgorithm.adapt_mutation_rate method
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
+import yaml
 
 from krkn_ai.models.config import AdaptiveMutation
 from krkn_ai.models.app import FitnessResult
@@ -24,11 +26,13 @@ class TestAdaptMutationRateEarlyReturns:
         genetic_algorithm.config.adaptive_mutation.enable = False
         genetic_algorithm.stagnant_generations = 10
         original_rate = genetic_algorithm.config.scenario_mutation_rate
+        original_current_rate = genetic_algorithm.current_scenario_mutation_rate
 
         genetic_algorithm.adapt_mutation_rate()
 
         assert genetic_algorithm.stagnant_generations == 10
         assert genetic_algorithm.config.scenario_mutation_rate == original_rate
+        assert genetic_algorithm.current_scenario_mutation_rate == original_current_rate
 
     @pytest.mark.parametrize("generations", [[], [make_generation_result(10.0)]])
     def test_returns_early_with_insufficient_generations(
@@ -39,11 +43,13 @@ class TestAdaptMutationRateEarlyReturns:
         genetic_algorithm.best_of_generation = generations
         genetic_algorithm.stagnant_generations = 5
         original_rate = genetic_algorithm.config.scenario_mutation_rate
+        original_current_rate = genetic_algorithm.current_scenario_mutation_rate
 
         genetic_algorithm.adapt_mutation_rate()
 
         assert genetic_algorithm.stagnant_generations == 5
         assert genetic_algorithm.config.scenario_mutation_rate == original_rate
+        assert genetic_algorithm.current_scenario_mutation_rate == original_current_rate
 
 
 class TestAdaptMutationRateStagnantTracking:
@@ -89,11 +95,13 @@ class TestAdaptMutationRateUpdate:
         ]
         genetic_algorithm.stagnant_generations = 3  # Will become 4, still < 5
         original_rate = genetic_algorithm.config.scenario_mutation_rate
+        original_current_rate = genetic_algorithm.current_scenario_mutation_rate
 
         genetic_algorithm.adapt_mutation_rate()
 
         assert genetic_algorithm.stagnant_generations == 4
         assert genetic_algorithm.config.scenario_mutation_rate == original_rate
+        assert genetic_algorithm.current_scenario_mutation_rate == original_current_rate
 
     def test_increases_rate_when_stagnating(self, genetic_algorithm):
         """Should multiply rate by 1.2 when stagnating"""
@@ -101,6 +109,7 @@ class TestAdaptMutationRateUpdate:
             enable=True, threshold=0.5, generations=5, min=0.05, max=0.9
         )
         genetic_algorithm.config.scenario_mutation_rate = 0.3
+        genetic_algorithm.current_scenario_mutation_rate = 0.3
         genetic_algorithm.best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(10.1),
@@ -109,5 +118,60 @@ class TestAdaptMutationRateUpdate:
 
         genetic_algorithm.adapt_mutation_rate()
 
-        assert genetic_algorithm.config.scenario_mutation_rate == pytest.approx(0.36)
+        assert genetic_algorithm.config.scenario_mutation_rate == pytest.approx(0.3)
+        assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.36)
         assert genetic_algorithm.stagnant_generations == 0
+
+    def test_clamps_current_rate_only(self, genetic_algorithm):
+        """Should clamp the current rate while preserving the configured rate"""
+        genetic_algorithm.config.adaptive_mutation = AdaptiveMutation(
+            enable=True, threshold=0.5, generations=1, min=0.05, max=0.35
+        )
+        genetic_algorithm.config.scenario_mutation_rate = 0.3
+        genetic_algorithm.current_scenario_mutation_rate = 0.3
+        genetic_algorithm.best_of_generation = [
+            make_generation_result(10.0),
+            make_generation_result(10.1),
+        ]
+
+        genetic_algorithm.adapt_mutation_rate()
+
+        assert genetic_algorithm.config.scenario_mutation_rate == pytest.approx(0.3)
+        assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.35)
+
+    def test_raises_when_min_exceeds_max(self, genetic_algorithm):
+        """Should reject invalid adaptive mutation bounds"""
+        genetic_algorithm.config.adaptive_mutation = AdaptiveMutation(
+            enable=True, threshold=0.5, generations=1, min=0.8, max=0.2
+        )
+        genetic_algorithm.current_scenario_mutation_rate = 0.3
+        genetic_algorithm.best_of_generation = [
+            make_generation_result(10.0),
+            make_generation_result(10.1),
+        ]
+
+        with pytest.raises(ValueError, match="Invalid adaptive mutation configuration"):
+            genetic_algorithm.adapt_mutation_rate()
+
+        assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.3)
+
+    def test_save_config_uses_original_rate_after_adaptation(self, genetic_algorithm):
+        """Saving config after adaptive mutation should keep the configured rate"""
+        genetic_algorithm.config.adaptive_mutation = AdaptiveMutation(
+            enable=True, threshold=0.5, generations=1, min=0.05, max=0.9
+        )
+        original_rate = genetic_algorithm.config.scenario_mutation_rate
+        genetic_algorithm.best_of_generation = [
+            make_generation_result(10.0),
+            make_generation_result(10.1),
+        ]
+
+        genetic_algorithm.adapt_mutation_rate()
+        genetic_algorithm.save_config()
+
+        config_path = f"{genetic_algorithm.output_dir}/krkn-ai.yaml"
+        with open(config_path, encoding="utf-8") as f:
+            saved_config = yaml.safe_load(f)
+
+        assert genetic_algorithm.current_scenario_mutation_rate != original_rate
+        assert saved_config["scenario_mutation_rate"] == original_rate

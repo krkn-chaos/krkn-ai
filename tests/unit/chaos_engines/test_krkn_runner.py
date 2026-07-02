@@ -269,12 +269,13 @@ Chaos data:
                 f.write(log2_content)
 
             # Extract return codes
-            returncode, run_uuid = runner._KrknRunner__extract_returncode_from_graph_run(log_dir, 0)
+            returncode, run_uuid = (
+                runner._KrknRunner__extract_returncode_from_graph_run(log_dir, 0)
+            )
 
             # Should return worst (highest) return code
             assert returncode == 2
             assert run_uuid == "test-uuid-123"
-
 
 
 class TestCalculatePointFitness:

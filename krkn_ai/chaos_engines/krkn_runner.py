@@ -43,7 +43,9 @@ KRKNCTL_TEMPLATE = "krknctl run {name} --telemetry-prometheus-backup False --wai
 
 KRKNCTL_ES_TEMPLATE = ' --enable-es True --es-server "{server}" --es-port "{port}" --es-username "{username}" --es-password "{password}" --es-verify-certs "{verify_certs}" '
 
-KRKNCTL_GRAPH_RUN_TEMPLATE = "krknctl graph run {path} --kubeconfig {kubeconfig} --log-dir {log_dir}"
+KRKNCTL_GRAPH_RUN_TEMPLATE = (
+    "krknctl graph run {path} --kubeconfig {kubeconfig} --log-dir {log_dir}"
+)
 
 KRKN_HUB_FAILURE_SCORE = 5
 
@@ -131,7 +133,9 @@ class KrknRunner:
                 # Composite scenarios need special handling since logs are in separate files
                 if isinstance(scenario, CompositeScenario):
                     graph_log_dir = os.path.join(self.output_dir, "graph_logs")
-                    returncode, run_uuid = self.__extract_returncode_from_graph_run(graph_log_dir, returncode)
+                    returncode, run_uuid = self.__extract_returncode_from_graph_run(
+                        graph_log_dir, returncode
+                    )
                 else:
                     returncode, run_uuid = extract_telemetry_from_log(log, returncode)
                 logger.info("Krkn scenario return code: %d", returncode)
@@ -313,7 +317,7 @@ class KrknRunner:
         command = KRKNCTL_GRAPH_RUN_TEMPLATE.format(
             path=json_file,
             kubeconfig=self.config.kubeconfig_file_path,
-            log_dir=graph_log_directory
+            log_dir=graph_log_directory,
         )
         return command
 
@@ -639,7 +643,9 @@ class KrknRunner:
             logger.error("Failed to extract return code from run log: %s", e)
             return default_returncode, None
 
-    def __extract_returncode_from_graph_run(self, log_dir: str, default_returncode: int) -> Tuple[int, Optional[str]]:
+    def __extract_returncode_from_graph_run(
+        self, log_dir: str, default_returncode: int
+    ) -> Tuple[int, Optional[str]]:
         """
         Extract return codes from graph run by parsing individual node log files.
         krknctl graph run creates separate log files for each graph node execution.
@@ -651,7 +657,7 @@ class KrknRunner:
                 logger.warning("Graph log directory does not exist: %s", log_dir)
                 return default_returncode, None
 
-            log_files = [f for f in os.listdir(log_dir) if f.endswith('.log')]
+            log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
             if not log_files:
                 logger.warning("No log files found in graph log directory")
                 return default_returncode, None
@@ -665,11 +671,13 @@ class KrknRunner:
             for log_file in log_files:
                 log_path = os.path.join(log_dir, log_file)
                 try:
-                    with open(log_path, 'r') as f:
+                    with open(log_path, "r") as f:
                         node_log = f.read()
 
                     # Extract return code from this node's log
-                    node_returncode, node_uuid = self.__extract_returncode_from_run(node_log, 0)
+                    node_returncode, node_uuid = self.__extract_returncode_from_run(
+                        node_log, 0
+                    )
 
                     # Track the worst return code seen
                     # Prioritize misconfiguration (1) over SLO failures (2)
@@ -691,7 +699,11 @@ class KrknRunner:
                     logger.warning("Failed to parse log file %s: %s", log_file, e)
                     continue
 
-            logger.info("Graph run worst exit status: %d (from %d nodes)", worst_returncode, len(log_files))
+            logger.info(
+                "Graph run worst exit status: %d (from %d nodes)",
+                worst_returncode,
+                len(log_files),
+            )
             return worst_returncode, run_uuid
 
         except Exception as e:

@@ -354,6 +354,20 @@ class PodNameParameter(BaseParameter):
             )
         return self.value
 
+    def get_state(self) -> dict:
+        return {
+            "value": self.value,
+            "_namespace": self._namespace,
+            "_owner_kind": self._owner_kind,
+            "_owner_name": self._owner_name,
+        }
+
+    def set_state(self, state: dict):
+        self.value = state["value"]
+        self._namespace = state.get("_namespace", "")
+        self._owner_kind = state.get("_owner_kind")
+        self._owner_name = state.get("_owner_name")
+
 
 class IngressParameter(BaseParameter):
     krknhub_name: str = "INGRESS"

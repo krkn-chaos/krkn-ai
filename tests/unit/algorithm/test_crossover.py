@@ -79,3 +79,49 @@ class TestCrossover:
         assert child1.scenario_b == simple_scenario_c
         # child2 should be the original scenario_b
         assert child2 == original_composite_b
+
+    def test_crossover_pod_name_metadata(self, genetic_algorithm):
+        """Test that crossover correctly swaps PodNameParameter private attributes along with value"""
+        from krkn_ai.models.scenario.base import Scenario
+        from krkn_ai.models.scenario.parameters import PodNameParameter
+
+        class TestPodNameScenario(Scenario):
+            name: str = "test-pod-name-scenario"
+            krknctl_name: str = "test-pod-name"
+            krknhub_image: str = "test"
+            pod_name: PodNameParameter = PodNameParameter()
+
+            @property
+            def parameters(self):
+                return [self.pod_name]
+
+        scenario_a = TestPodNameScenario(cluster_components=ClusterComponents())
+        scenario_b = TestPodNameScenario(cluster_components=ClusterComponents())
+
+        # Set distinct values and private attributes on scenario_a
+        scenario_a.pod_name.value = "pod-a"
+        scenario_a.pod_name._namespace = "ns-a"
+        scenario_a.pod_name._owner_kind = "ReplicaSet"
+        scenario_a.pod_name._owner_name = "owner-a"
+
+        # Set distinct values and private attributes on scenario_b
+        scenario_b.pod_name.value = "pod-b"
+        scenario_b.pod_name._namespace = "ns-b"
+        scenario_b.pod_name._owner_kind = "StatefulSet"
+        scenario_b.pod_name._owner_name = "owner-b"
+
+        # Force crossover to happen
+        genetic_algorithm.config.crossover_rate = 1.0
+
+        child1, child2 = genetic_algorithm.crossover(scenario_a, scenario_b)
+
+        # Assert states have been swapped correctly
+        assert child1.pod_name.value == "pod-b"
+        assert child1.pod_name._namespace == "ns-b"
+        assert child1.pod_name._owner_kind == "StatefulSet"
+        assert child1.pod_name._owner_name == "owner-b"
+
+        assert child2.pod_name.value == "pod-a"
+        assert child2.pod_name._namespace == "ns-a"
+        assert child2.pod_name._owner_kind == "ReplicaSet"
+        assert child2.pod_name._owner_name == "owner-a"

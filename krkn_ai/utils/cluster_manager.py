@@ -1,5 +1,6 @@
 import re
 import concurrent.futures
+import threading
 from typing import Dict, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
@@ -31,6 +32,8 @@ class ClusterManager:
         self.api_client = self.krkn_k8s.api_client
         self.core_api = self.krkn_k8s.cli
         self.custom_obj_api = self.krkn_k8s.custom_object_client
+        self._can_pull_debug_image: Optional[bool] = None
+        self._can_pull_debug_image_lock = threading.Lock()
         logger.debug("ClusterManager initialized with kubeconfig: %s", kubeconfig)
 
     def discover_components(
@@ -415,7 +418,54 @@ class ClusterManager:
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list
 
+    def can_pull_openshift_debug_image(self) -> bool:
+        """
+        Check whether the OpenShift debug image can be accessed.
+        This avoids waiting for long timeouts when `oc debug`
+        will eventually fail because the required image cannot
+        be pulled.
+        """
+        if self._can_pull_debug_image is not None:
+            return self._can_pull_debug_image
+
+        with self._can_pull_debug_image_lock:
+            if self._can_pull_debug_image is not None:
+                return self._can_pull_debug_image
+
+            try:
+                _, code = run_shell(
+                    "oc image info registry.redhat.io/rhel8/support-tools",
+                    do_not_log=True,
+                    timeout=5,
+                )
+                self._can_pull_debug_image = code == 0
+            except Exception:
+                self._can_pull_debug_image = False
+
+            if not self._can_pull_debug_image:
+                logger.warning(
+                    "Skipping node interface discovery. "
+                    "The OpenShift debug image "
+                    "'registry.redhat.io/rhel8/support-tools' "
+                    "is not accessible. "
+                    "This commonly indicates missing Red Hat registry "
+                    "credentials. Network chaos scenarios may not be available."
+                )
+
+            return self._can_pull_debug_image
+
     def list_node_interfaces(self, node: str) -> List[str]:
+        # TODO:
+        # Node interface discovery currently relies on OpenShift's
+        # `oc debug` workflow and the image
+        # `registry.redhat.io/rhel8/support-tools`.
+        # Investigate a Kubernetes-native mechanism for discovering
+        # node interfaces on Minikube, Kind and generic Kubernetes
+        # clusters without requiring Red Hat registry credentials.
+
+        if not self.can_pull_openshift_debug_image():
+            return []
+
         logger.debug("Listing node interfaces for node %s", node)
         try:
             log, code = run_shell(

@@ -1321,7 +1321,7 @@ def render_anomalies(
 
     # Legend & Detection Methods
     if mode == MODE_ZSCORE:
-        legend_md = """
+        legend_md = r"""
 ### Z-Score Detection — How It Works
 
 For each metric **x** across *N* non-baseline runs:
@@ -1360,7 +1360,7 @@ Upper fence = Q3 + 1.5 × IQR
 *Duration uses RMS deviation: `σ_rms = √[ Σ(dᵢ − baseline)² / N ]` when a baseline is available; falls back to population σ otherwise.*
 """
     else:
-        legend_md = """
+        legend_md = r"""
 ### % Deviation from Baseline — How It Works
 
 For each value **x** and its baseline reference **b**:

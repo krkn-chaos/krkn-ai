@@ -67,29 +67,17 @@ def read_config_from_file(
             if "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 
-        # Replace parameter in elastic configuration
-        if "elastic" in config and "server" in config["elastic"]:
-            config["elastic"]["enable"] = is_truthy(
-                preprocess_param_string(config["elastic"]["enable"], raw)
-            )
-            config["elastic"]["verify_certs"] = is_truthy(
-                preprocess_param_string(config["elastic"]["verify_certs"], raw)
-            )
-            config["elastic"]["server"] = preprocess_param_string(
-                config["elastic"]["server"], raw
-            )
-            config["elastic"]["port"] = preprocess_param_string(
-                config["elastic"]["port"], raw
-            )
-            config["elastic"]["username"] = preprocess_param_string(
-                config["elastic"]["username"], raw
-            )
-            config["elastic"]["password"] = preprocess_param_string(
-                config["elastic"]["password"], raw
-            )
-            config["elastic"]["index"] = preprocess_param_string(
-                config["elastic"]["index"], raw
-            )
+        # Replace parameters in elastic configuration without forcing optional keys.
+        if isinstance(config.get("elastic"), dict):
+            bool_fields = {"enable", "verify_certs"}
+            for key, value in config["elastic"].items():
+                if isinstance(value, str):
+                    value = preprocess_param_string(value, raw)
+                config["elastic"][key] = (
+                    is_truthy(value)
+                    if key in bool_fields and value is not None
+                    else value
+                )
 
         config["parameters"] = params
 

@@ -4,6 +4,7 @@ import yaml
 
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.models.scenario.factory import scenario_specs
+from krkn_ai.models.config import HealthCheckConfig
 
 KUBECONFIG = "/tmp/kubeconfig"
 DATA: dict = {"namespaces": []}
@@ -53,3 +54,33 @@ class TestScenarioRendering:
         assert "enable: true" in rendered
         assert "enable: True" not in rendered
         yaml.safe_load(rendered)  # does not raise
+
+
+def _health_checks(rendered: str):
+    """Return the health_checks mapping from rendered YAML (None if commented)."""
+    return yaml.safe_load(rendered).get("health_checks")
+
+
+class TestHealthCheckRendering:
+    def test_none_keeps_commented_example(self):
+        """health_checks=None leaves the block commented out."""
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA)
+        assert _health_checks(rendered) is None
+        assert "# health_checks:" in rendered
+
+    def test_empty_list_falls_back_identically(self):
+        """An empty recommendation renders the same as None."""
+        assert create_krkn_ai_template(
+            KUBECONFIG, DATA, None, []
+        ) == create_krkn_ai_template(KUBECONFIG, DATA)
+
+    def test_discovered_apps_render_live_block(self):
+        """Discovered endpoints render an active, valid health_checks block."""
+        apps = [
+            {"name": "cart", "url": "http://1.2.3.4:80/health"},
+            {"name": "user", "url": "https://1.2.3.4:443/user/ready"},
+        ]
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
+        block = _health_checks(rendered)
+        assert block["applications"] == apps
+        HealthCheckConfig(**block)

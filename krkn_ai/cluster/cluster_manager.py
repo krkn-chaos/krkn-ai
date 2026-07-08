@@ -223,6 +223,102 @@ class ClusterManager:
         )
         return service_list
 
+    def recommend_health_checks(
+        self, cluster_components: ClusterComponents
+    ) -> List[Dict[str, str]]:
+        """Suggest health-check URLs for LoadBalancer services."""
+        try:
+            recommendations: List[Dict[str, str]] = []
+            for namespace in cluster_components.get_active_components().namespaces:
+                services = self.core_api.list_namespaced_service(
+                    namespace=namespace.name
+                ).items
+                pods = self.core_api.list_namespaced_pod(
+                    namespace=namespace.name, field_selector="status.phase=Running"
+                ).items
+
+                for svc in services:
+                    if svc.spec.type != "LoadBalancer" or not svc.spec.ports:
+                        continue
+                    address = self._external_address(svc)
+                    if address is None:
+                        continue
+
+                    probe, container = self._backing_probe(svc, pods)
+                    port, scheme, path = self._endpoint_from_probe(
+                        svc, probe, container
+                    )
+                    recommendations.append(
+                        {
+                            "name": svc.metadata.name,
+                            "url": f"{scheme}://{address}:{port}{path}",
+                        }
+                    )
+            return recommendations
+        except Exception as error:
+            # Never let this break discovery.
+            logger.debug("Health check recommendation failed: %s", error)
+            return []
+
+    @staticmethod
+    def _external_address(svc) -> Optional[str]:
+        # The LoadBalancer's external IP or hostname.
+        if not svc.status or not svc.status.load_balancer:
+            return None
+        for entry in svc.status.load_balancer.ingress or []:
+            if entry.ip or entry.hostname:
+                return entry.ip or entry.hostname
+        return None
+
+    def _backing_probe(self, svc, pods):
+        # Find the first httpGet probe on the pods behind this service.
+        selector = svc.spec.selector or {}
+        if not selector:
+            return None, None
+        for pod in pods:
+            labels = pod.metadata.labels or {}
+            if not all(labels.get(key) == value for key, value in selector.items()):
+                continue
+            for container in pod.spec.containers:
+                for probe in (container.readiness_probe, container.liveness_probe):
+                    if probe and probe.http_get:
+                        return probe.http_get, container
+        return None, None
+
+    @staticmethod
+    def _endpoint_from_probe(svc, probe, container):
+        # Match the probe's port to a service port; else the first port at root.
+        port = svc.spec.ports[0].port
+        path = "/"
+        scheme = None
+        probe_port = (
+            ClusterManager._resolve_port(probe.port, container)
+            if probe is not None
+            else None
+        )
+        if probe_port is not None:
+            for svc_port in svc.spec.ports:
+                target = svc_port.target_port
+                target = svc_port.port if target is None else target
+                if ClusterManager._resolve_port(target, container) == probe_port:
+                    port = svc_port.port
+                    path = probe.path or "/"
+                    scheme = (probe.scheme or "HTTP").lower()
+                    break
+        if scheme is None:
+            scheme = "https" if port in (443, 8443) else "http"
+        return port, scheme, path
+
+    @staticmethod
+    def _resolve_port(value, container):
+        # Turn an int or named port into a port number.
+        if isinstance(value, int):
+            return value
+        for port in container.ports or []:
+            if port.name == value:
+                return port.container_port
+        return None
+
     def list_pvcs(self, namespace: Namespace) -> List[PVC]:
         """List all PVCs in the namespace"""
         try:

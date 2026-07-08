@@ -71,7 +71,16 @@ fitness_function:
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
-
+{% if health_check_apps %}
+health_checks:
+  stop_watcher_on_failure: false
+  stop_timeout: 5
+  applications:
+{%- for app in health_check_apps %}
+  - name: {{ app.name }}
+    url: "{{ app.url }}"
+{%- endfor %}
+{% else %}
 # health_checks:
 #   stop_watcher_on_failure: false
 #   stop_timeout: 5
@@ -88,7 +97,7 @@ fitness_function:
 #     url: "$HOST/user/uniqueid"
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
-
+{% endif %}
 
 scenario:
 {%- for name, enabled in scenario_enables.items() %}

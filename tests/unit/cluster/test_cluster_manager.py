@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from krkn_ai.cluster import ClusterManager
-from krkn_ai.models.cluster_components import Namespace
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace
 
 
 class TestClusterManager:
@@ -560,3 +560,210 @@ class TestClusterManager:
         by_name = {n.name: n for n in nodes}
         assert by_name["good-node"].interfaces == ["eth0"]
         assert by_name["bad-node"].interfaces == []
+
+
+def _http_get(path, port, scheme="HTTP"):
+    hg = Mock()
+    hg.path = path
+    hg.port = port
+    hg.scheme = scheme
+    return hg
+
+
+def _probe(http_get):
+    probe = Mock()
+    probe.http_get = http_get
+    return probe
+
+
+def _container(readiness=None, liveness=None, ports=None):
+    container = Mock()
+    container.readiness_probe = readiness
+    container.liveness_probe = liveness
+    container.ports = ports or []
+    return container
+
+
+def _container_port(name, container_port):
+    cp = Mock()
+    cp.name = name
+    cp.container_port = container_port
+    return cp
+
+
+def _pod(labels, containers):
+    pod = Mock()
+    pod.metadata.labels = labels
+    pod.spec.containers = containers
+    return pod
+
+
+def _svc_port(port, target_port=None):
+    sp = Mock()
+    sp.port = port
+    sp.target_port = target_port
+    return sp
+
+
+def _svc(
+    name,
+    svc_type="LoadBalancer",
+    ip="1.2.3.4",
+    hostname=None,
+    selector=None,
+    ports=None,
+):
+    svc = Mock()
+    svc.metadata.name = name
+    svc.spec.type = svc_type
+    svc.spec.selector = selector
+    svc.spec.ports = ports or []
+    if ip or hostname:
+        ingress = Mock(ip=ip, hostname=hostname)
+        svc.status.load_balancer.ingress = [ingress]
+    else:
+        svc.status.load_balancer.ingress = []
+    return svc
+
+
+class TestRecommendHealthChecks:
+    """Health-check endpoint discovery for LoadBalancer services."""
+
+    @pytest.fixture
+    def mock_krkn_k8s(self):
+        mock_k8s = Mock()
+        mock_k8s.cli = Mock()
+        return mock_k8s
+
+    @pytest.fixture
+    def cluster_manager(self, mock_krkn_k8s):
+        with patch(
+            "krkn_ai.cluster.cluster_manager.KrknKubernetes",
+            return_value=mock_krkn_k8s,
+        ):
+            return ClusterManager(kubeconfig="/tmp/test-kubeconfig")
+
+    def _components(self):
+        return ClusterComponents(namespaces=[Namespace(name="shop")])
+
+    def _set(self, cluster_manager, services, pods):
+        cluster_manager.core_api.list_namespaced_service.return_value.items = services
+        cluster_manager.core_api.list_namespaced_pod.return_value.items = pods
+
+    def test_stitches_service_port_and_probe_path(self, cluster_manager):
+        """URL uses the service port that maps to the probe's container port."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 8080)))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result == [{"name": "cart", "url": "http://1.2.3.4:80/health"}]
+
+    def test_falls_back_to_liveness_probe(self, cluster_manager):
+        """Liveness probe is used when there is no readiness probe."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(liveness=_probe(_http_get("/live", 8080)))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["url"] == "http://1.2.3.4:80/live"
+
+    def test_unmapped_probe_port_falls_back_to_root(self, cluster_manager):
+        """A probe port that no service port targets yields the root path."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 9090)))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["url"] == "http://1.2.3.4:80/"
+
+    def test_named_probe_port_resolved_via_container(self, cluster_manager):
+        """A named probe port is resolved through the container's ports."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [
+                _container(
+                    readiness=_probe(_http_get("/health", "web")),
+                    ports=[_container_port("web", 8080)],
+                )
+            ],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["url"] == "http://1.2.3.4:80/health"
+
+    def test_scheme_taken_from_probe(self, cluster_manager):
+        """Scheme comes from the probe, even on a non-standard port."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(9443, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 8080, scheme="HTTPS")))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["url"] == "https://1.2.3.4:9443/health"
+
+    def test_selectorless_service_uses_root_path(self, cluster_manager):
+        """A service without a selector cannot resolve a probe path."""
+        svc = _svc("cart", selector=None, ports=[_svc_port(80, 8080)])
+        self._set(cluster_manager, [svc], [])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result == [{"name": "cart", "url": "http://1.2.3.4:80/"}]
+
+    def test_pending_load_balancer_is_skipped(self, cluster_manager):
+        """A LoadBalancer without an external address is skipped."""
+        svc = _svc("cart", ip=None, hostname=None, ports=[_svc_port(80, 8080)])
+        self._set(cluster_manager, [svc], [])
+
+        assert cluster_manager.recommend_health_checks(self._components()) == []
+
+    def test_non_load_balancer_services_ignored(self, cluster_manager):
+        """ClusterIP services are not health-check candidates."""
+        svc = _svc("cart", svc_type="ClusterIP", ports=[_svc_port(80, 8080)])
+        self._set(cluster_manager, [svc], [])
+
+        assert cluster_manager.recommend_health_checks(self._components()) == []
+
+    def test_failure_returns_empty_list(self, cluster_manager):
+        """A cluster read error never breaks discovery."""
+        cluster_manager.core_api.list_namespaced_service.side_effect = RuntimeError(
+            "boom"
+        )
+
+        assert cluster_manager.recommend_health_checks(self._components()) == []
+
+    def test_same_name_across_namespaces_all_kept(self, cluster_manager):
+        """Distinct services sharing a name across namespaces are all kept."""
+        components = ClusterComponents(
+            namespaces=[Namespace(name="shop"), Namespace(name="store")]
+        )
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 8080)))],
+        )
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [svc]
+        cluster_manager.core_api.list_namespaced_pod.return_value.items = [pod]
+
+        result = cluster_manager.recommend_health_checks(components)
+
+        assert len(result) == 2

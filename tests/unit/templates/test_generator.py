@@ -84,3 +84,12 @@ class TestHealthCheckRendering:
         block = _health_checks(rendered)
         assert block["applications"] == apps
         HealthCheckConfig(**block)
+
+    def test_boolean_like_name_stays_a_string(self):
+        """A name like 'on' stays a string, not a bool."""
+        rendered = create_krkn_ai_template(
+            KUBECONFIG, DATA, None, [{"name": "on", "url": "http://x/y"}]
+        )
+        block = _health_checks(rendered)
+        assert block["applications"][0]["name"] == "on"
+        HealthCheckConfig(**block)

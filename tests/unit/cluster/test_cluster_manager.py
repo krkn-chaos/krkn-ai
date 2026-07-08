@@ -720,14 +720,30 @@ class TestRecommendHealthChecks:
 
         assert result[0]["url"] == "https://1.2.3.4:9443/health"
 
-    def test_selectorless_service_uses_root_path(self, cluster_manager):
-        """A service without a selector cannot resolve a probe path."""
+    def test_service_without_probe_is_skipped(self, cluster_manager):
+        """A service with no backing httpGet probe is not recommended."""
         svc = _svc("cart", selector=None, ports=[_svc_port(80, 8080)])
         self._set(cluster_manager, [svc], [])
 
+        assert cluster_manager.recommend_health_checks(self._components()) == []
+
+    def test_ipv6_address_is_bracketed(self, cluster_manager):
+        """An IPv6 external address is wrapped in brackets in the URL."""
+        svc = _svc(
+            "cart",
+            ip="2001:db8::1",
+            selector={"app": "cart"},
+            ports=[_svc_port(80, 8080)],
+        )
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 8080)))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
         result = cluster_manager.recommend_health_checks(self._components())
 
-        assert result == [{"name": "cart", "url": "http://1.2.3.4:80/"}]
+        assert result[0]["url"] == "http://[2001:db8::1]:80/health"
 
     def test_pending_load_balancer_is_skipped(self, cluster_manager):
         """A LoadBalancer without an external address is skipped."""

@@ -77,7 +77,7 @@ health_checks:
   stop_timeout: 5
   applications:
 {%- for app in health_check_apps %}
-  - name: {{ app.name }}
+  - name: "{{ app.name }}"
     url: "{{ app.url }}"
 {%- endfor %}
 {% else %}

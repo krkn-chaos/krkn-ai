@@ -1,4 +1,5 @@
 import re
+import ipaddress
 import concurrent.futures
 from typing import Dict, List, Optional, Union
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
@@ -245,13 +246,17 @@ class ClusterManager:
                         continue
 
                     probe, container = self._backing_probe(svc, pods)
+                    if probe is None:
+                        continue
+
                     port, scheme, path = self._endpoint_from_probe(
                         svc, probe, container
                     )
+                    host = self._format_host(address)
                     recommendations.append(
                         {
                             "name": svc.metadata.name,
-                            "url": f"{scheme}://{address}:{port}{path}",
+                            "url": f"{scheme}://{host}:{port}{path}",
                         }
                     )
             return recommendations
@@ -270,8 +275,19 @@ class ClusterManager:
                 return entry.ip or entry.hostname
         return None
 
+    @staticmethod
+    def _format_host(address: str) -> str:
+        # Wrap IPv6 literals in brackets so the URL stays valid.
+        try:
+            if isinstance(ipaddress.ip_address(address), ipaddress.IPv6Address):
+                return f"[{address}]"
+        except ValueError:
+            pass
+        return address
+
     def _backing_probe(self, svc, pods):
-        # Find the first httpGet probe on the pods behind this service.
+        # First httpGet probe behind the service, preferring readiness over
+        # liveness across all containers.
         selector = svc.spec.selector or {}
         if not selector:
             return None, None
@@ -279,8 +295,9 @@ class ClusterManager:
             labels = pod.metadata.labels or {}
             if not all(labels.get(key) == value for key, value in selector.items()):
                 continue
-            for container in pod.spec.containers:
-                for probe in (container.readiness_probe, container.liveness_probe):
+            for attr in ("readiness_probe", "liveness_probe"):
+                for container in pod.spec.containers:
+                    probe = getattr(container, attr)
                     if probe and probe.http_get:
                         return probe.http_get, container
         return None, None

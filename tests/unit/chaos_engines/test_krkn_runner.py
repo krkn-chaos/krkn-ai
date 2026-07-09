@@ -2,6 +2,7 @@
 KrknRunner core functionality tests
 """
 
+import json
 import os
 import datetime
 import pytest
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
+    ElasticConfig,
     FitnessFunction,
     FitnessFunctionType,
     HealthCheckConfig,
@@ -213,3 +215,92 @@ class TestKrknRunnerCommandGeneration:
             assert os.path.exists(graph_dir)
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
+
+
+class TestElasticsearchConfiguration:
+    """Test Elasticsearch settings reach both single and composite scenario runs"""
+
+    def _build_runner(self, config, output_dir):
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            return KrknRunner(
+                config=config,
+                output_dir=output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+
+    def _composite_scenario(self):
+        return CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+
+    def _load_graph_json(self, output_dir):
+        graph_dir = os.path.join(output_dir, "graphs")
+        json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
+        assert len(json_files) == 1
+        with open(os.path.join(graph_dir, json_files[0]), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_es_flags_injected_into_single_scenario_command(
+        self, minimal_config, temp_output_dir
+    ):
+        """A single-scenario command carries the {es_env_list} placeholder, so the
+        ES flags are substituted into it."""
+        minimal_config.elastic = ElasticConfig(
+            enable=True, server="https://es.example.com"
+        )
+        runner = self._build_runner(minimal_config, temp_output_dir)
+
+        command = "krknctl run test --kubeconfig /tmp/kubeconfig {es_env_list}"
+        result = runner.process_es_env_string(command, True)
+
+        assert "{es_env_list}" not in result
+        # Prove the ES flags were actually injected, not blanked with an empty string
+        assert "--enable-es True" in result
+        assert '--es-server "https://es.example.com"' in result
+
+    def test_graph_json_includes_es_env_when_elastic_enabled(
+        self, minimal_config, temp_output_dir
+    ):
+        """krknctl graph run accepts no ES flags, so every scenario node in the
+        graph JSON must carry the ES settings as krknhub env vars."""
+        minimal_config.kubeconfig_file_path = "/tmp/kubeconfig"
+        minimal_config.elastic = ElasticConfig(
+            enable=True,
+            server="https://es.example.com",
+            port=9200,
+            username="elastic",
+            password="secret",
+            verify_certs=False,
+        )
+        runner = self._build_runner(minimal_config, temp_output_dir)
+
+        runner.graph_command(self._composite_scenario())
+
+        graph = self._load_graph_json(temp_output_dir)
+        assert graph
+        for node in graph.values():
+            env = node["env"]
+            assert env["ENABLE_ES"] == "True"
+            assert env["ES_SERVER"] == "https://es.example.com"
+            assert env["ES_PORT"] == "9200"
+            assert env["ES_USERNAME"] == "elastic"
+            assert env["ES_PASSWORD"] == "secret"
+            assert env["ES_VERIFY_CERTS"] == "False"
+
+    def test_graph_json_omits_es_env_when_elastic_disabled(
+        self, minimal_config, temp_output_dir
+    ):
+        """No ES settings should leak into the graph JSON when ES is disabled."""
+        minimal_config.kubeconfig_file_path = "/tmp/kubeconfig"
+        minimal_config.elastic = ElasticConfig(enable=False)
+        runner = self._build_runner(minimal_config, temp_output_dir)
+
+        runner.graph_command(self._composite_scenario())
+
+        graph = self._load_graph_json(temp_output_dir)
+        assert graph
+        for node in graph.values():
+            assert "ENABLE_ES" not in node["env"]
+            assert "ES_SERVER" not in node["env"]

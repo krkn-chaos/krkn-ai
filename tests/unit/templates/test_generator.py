@@ -77,19 +77,58 @@ class TestHealthCheckRendering:
     def test_discovered_apps_render_live_block(self):
         """Discovered endpoints render an active, valid health_checks block."""
         apps = [
-            {"name": "cart", "url": "http://1.2.3.4:80/health"},
-            {"name": "user", "url": "https://1.2.3.4:443/user/ready"},
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "discovered_only": False,
+            },
+            {
+                "name": "user",
+                "url": "https://1.2.3.4:443/user/ready",
+                "discovered_only": False,
+            },
         ]
         rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
         block = _health_checks(rendered)
-        assert block["applications"] == apps
+        assert len(block["applications"]) == 2
         HealthCheckConfig(**block)
 
     def test_boolean_like_name_stays_a_string(self):
         """A name like 'on' stays a string, not a bool."""
         rendered = create_krkn_ai_template(
-            KUBECONFIG, DATA, None, [{"name": "on", "url": "http://x/y"}]
+            KUBECONFIG,
+            DATA,
+            None,
+            [{"name": "on", "url": "http://x/y", "discovered_only": False}],
         )
         block = _health_checks(rendered)
         assert block["applications"][0]["name"] == "on"
+        HealthCheckConfig(**block)
+
+    def test_discovered_only_entries_render_as_comments(self):
+        """Entries with discovered_only=True render the entire block commented."""
+        apps = [
+            {"name": "web", "url": "http://1.2.3.4:8080/", "discovered_only": True},
+        ]
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
+        assert "# health_checks:" in rendered
+        assert '#   - name: "web"' in rendered
+        assert '#     url: "http://1.2.3.4:8080/"' in rendered
+        assert _health_checks(rendered) is None
+
+    def test_mixed_active_and_discovered_only(self):
+        """Active entries render as YAML, discovered_only entries as comments."""
+        apps = [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "discovered_only": False,
+            },
+            {"name": "web", "url": "http://1.2.3.4:8080/", "discovered_only": True},
+        ]
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
+        block = _health_checks(rendered)
+        assert len(block["applications"]) == 1
+        assert block["applications"][0]["name"] == "cart"
+        assert '# - name: "web"' in rendered
         HealthCheckConfig(**block)

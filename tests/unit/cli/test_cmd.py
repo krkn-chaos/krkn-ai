@@ -585,7 +585,13 @@ class TestDiscoverCommand:
         """Fresh discover writes the recommended health checks to the output file."""
         runner = CliRunner()
         output_file = os.path.join(temp_output_dir, "output.yaml")
-        apps = [{"name": "cart", "url": "http://1.2.3.4:80/health"}]
+        apps = [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "discovered_only": False,
+            }
+        ]
 
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write("apiVersion: v1\nkind: Config")
@@ -608,7 +614,9 @@ class TestDiscoverCommand:
 
                 assert result.exit_code == 0
                 data = yaml.safe_load(open(output_file))
-                assert data["health_checks"]["applications"] == apps
+                assert data["health_checks"]["applications"] == [
+                    {"name": "cart", "url": "http://1.2.3.4:80/health"}
+                ]
         finally:
             os.unlink(kubeconfig_path)
 

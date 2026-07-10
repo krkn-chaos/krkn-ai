@@ -71,14 +71,30 @@ fitness_function:
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
-{% if health_check_apps %}
+{%- set active_apps = health_check_apps | default([]) | selectattr('discovered_only', 'equalto', false) | list -%}
+{%- set discovered_apps = health_check_apps | default([]) | selectattr('discovered_only') | list %}
+{% if active_apps %}
 health_checks:
   stop_watcher_on_failure: false
   stop_timeout: 5
   applications:
-{%- for app in health_check_apps %}
+{%- for app in active_apps %}
   - name: "{{ app.name }}"
     url: "{{ app.url }}"
+{%- endfor %}
+{%- for app in discovered_apps %}
+  # Discovered service — verify the URL and uncomment to enable:
+  # - name: "{{ app.name }}"
+  #   url: "{{ app.url }}"
+{%- endfor %}
+{% elif discovered_apps %}
+# health_checks:
+#   stop_watcher_on_failure: false
+#   stop_timeout: 5
+#   applications:
+{%- for app in discovered_apps %}
+#   - name: "{{ app.name }}"
+#     url: "{{ app.url }}"
 {%- endfor %}
 {% else %}
 # health_checks:

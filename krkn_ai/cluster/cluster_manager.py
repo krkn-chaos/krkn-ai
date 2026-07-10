@@ -226,10 +226,10 @@ class ClusterManager:
 
     def recommend_health_checks(
         self, cluster_components: ClusterComponents
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Union[str, bool]]]:
         """Suggest health-check URLs for LoadBalancer services."""
         try:
-            recommendations: List[Dict[str, str]] = []
+            recommendations: List[Dict[str, Union[str, bool]]] = []
             for namespace in cluster_components.get_active_components().namespaces:
                 services = self.core_api.list_namespaced_service(
                     namespace=namespace.name
@@ -246,9 +246,6 @@ class ClusterManager:
                         continue
 
                     probe, container = self._backing_probe(svc, pods)
-                    if probe is None:
-                        continue
-
                     port, scheme, path = self._endpoint_from_probe(
                         svc, probe, container
                     )
@@ -257,6 +254,7 @@ class ClusterManager:
                         {
                             "name": svc.metadata.name,
                             "url": f"{scheme}://{host}:{port}{path}",
+                            "discovered_only": probe is None,
                         }
                     )
             return recommendations

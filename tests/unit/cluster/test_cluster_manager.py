@@ -661,7 +661,13 @@ class TestRecommendHealthChecks:
 
         result = cluster_manager.recommend_health_checks(self._components())
 
-        assert result == [{"name": "cart", "url": "http://1.2.3.4:80/health"}]
+        assert result == [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "discovered_only": False,
+            }
+        ]
 
     def test_falls_back_to_liveness_probe(self, cluster_manager):
         """Liveness probe is used when there is no readiness probe."""
@@ -720,12 +726,52 @@ class TestRecommendHealthChecks:
 
         assert result[0]["url"] == "https://1.2.3.4:9443/health"
 
-    def test_service_without_probe_is_skipped(self, cluster_manager):
-        """A service with no backing httpGet probe is not recommended."""
+    def test_service_without_selector_generates_discovered_only(self, cluster_manager):
+        """A service with no selector still gets a discovered_only entry."""
         svc = _svc("cart", selector=None, ports=[_svc_port(80, 8080)])
         self._set(cluster_manager, [svc], [])
 
-        assert cluster_manager.recommend_health_checks(self._components()) == []
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result == [
+            {"name": "cart", "url": "http://1.2.3.4:80/", "discovered_only": True}
+        ]
+
+    def test_no_probe_generates_discovered_only_entry(self, cluster_manager):
+        """A LB with no httpGet probe still generates an entry marked discovered_only."""
+        svc = _svc("web", selector={"app": "web"}, ports=[_svc_port(8080, 8080)])
+        pod = _pod({"app": "web"}, [_container()])
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result == [
+            {"name": "web", "url": "http://1.2.3.4:8080/", "discovered_only": True}
+        ]
+
+    def test_no_probe_https_on_443(self, cluster_manager):
+        """A probe-less service on port 443 gets https scheme."""
+        svc = _svc("web", selector={"app": "web"}, ports=[_svc_port(443, 443)])
+        pod = _pod({"app": "web"}, [_container()])
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["url"] == "https://1.2.3.4:443/"
+        assert result[0]["discovered_only"] is True
+
+    def test_probe_entry_is_not_discovered_only(self, cluster_manager):
+        """A service with a real probe has discovered_only=False."""
+        svc = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/health", 8080)))],
+        )
+        self._set(cluster_manager, [svc], [pod])
+
+        result = cluster_manager.recommend_health_checks(self._components())
+
+        assert result[0]["discovered_only"] is False
 
     def test_ipv6_address_is_bracketed(self, cluster_manager):
         """An IPv6 external address is wrapped in brackets in the URL."""

@@ -126,9 +126,7 @@ class TestContainerScenario:
     def test_container_scenario_skips_pods_without_containers(self):
         """A labeled pod without containers is skipped in favour of a valid one."""
         empty = Pod(name="empty", labels={"app": "web"}, containers=[])
-        good = Pod(
-            name="good", labels={"app": "db"}, containers=[Container(name="c1")]
-        )
+        good = Pod(name="good", labels={"app": "db"}, containers=[Container(name="c1")])
         namespace = Namespace(name="test-ns", pods=[empty, good])
         cluster = ClusterComponents(namespaces=[namespace], nodes=[])
 

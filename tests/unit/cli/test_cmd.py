@@ -589,7 +589,8 @@ class TestDiscoverCommand:
             {
                 "name": "cart",
                 "url": "http://1.2.3.4:80/health",
-                "discovered_only": False,
+                "probe": True,
+                "active": True,
             }
         ]
 

@@ -74,18 +74,20 @@ class TestHealthCheckRendering:
             KUBECONFIG, DATA, None, []
         ) == create_krkn_ai_template(KUBECONFIG, DATA)
 
-    def test_discovered_apps_render_live_block(self):
-        """Discovered endpoints render an active, valid health_checks block."""
+    def test_enabled_apps_render_live_block(self):
+        """Endpoints with probe+active render an active health_checks block."""
         apps = [
             {
                 "name": "cart",
                 "url": "http://1.2.3.4:80/health",
-                "discovered_only": False,
+                "probe": True,
+                "active": True,
             },
             {
                 "name": "user",
                 "url": "https://1.2.3.4:443/user/ready",
-                "discovered_only": False,
+                "probe": True,
+                "active": True,
             },
         ]
         rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
@@ -99,36 +101,76 @@ class TestHealthCheckRendering:
             KUBECONFIG,
             DATA,
             None,
-            [{"name": "on", "url": "http://x/y", "discovered_only": False}],
+            [{"name": "on", "url": "http://x/y", "probe": True, "active": True}],
         )
         block = _health_checks(rendered)
         assert block["applications"][0]["name"] == "on"
         HealthCheckConfig(**block)
 
-    def test_discovered_only_entries_render_as_comments(self):
-        """Entries with discovered_only=True render the entire block commented."""
+    def test_no_probe_comments_with_reason(self):
+        """An entry with probe=False renders commented with '(no probe)'."""
         apps = [
-            {"name": "web", "url": "http://1.2.3.4:8080/", "discovered_only": True},
+            {
+                "name": "web",
+                "url": "http://1.2.3.4:8080/",
+                "probe": False,
+                "active": True,
+            },
         ]
         rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
         assert "# health_checks:" in rendered
-        assert '#   - name: "web"' in rendered
-        assert '#     url: "http://1.2.3.4:8080/"' in rendered
+        assert "(no probe)" in rendered
         assert _health_checks(rendered) is None
 
-    def test_mixed_active_and_discovered_only(self):
-        """Active entries render as YAML, discovered_only entries as comments."""
+    def test_unreachable_comments_with_reason(self):
+        """An entry with active=False renders commented with '(unreachable)'."""
         apps = [
             {
                 "name": "cart",
                 "url": "http://1.2.3.4:80/health",
-                "discovered_only": False,
+                "probe": True,
+                "active": False,
             },
-            {"name": "web", "url": "http://1.2.3.4:8080/", "discovered_only": True},
+        ]
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
+        assert "# health_checks:" in rendered
+        assert "(unreachable)" in rendered
+        assert _health_checks(rendered) is None
+
+    def test_no_probe_unreachable_comments_with_both_reasons(self):
+        """An entry with both False renders '(no probe, unreachable)'."""
+        apps = [
+            {
+                "name": "web",
+                "url": "http://1.2.3.4:8080/",
+                "probe": False,
+                "active": False,
+            },
+        ]
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
+        assert "(no probe, unreachable)" in rendered
+        assert _health_checks(rendered) is None
+
+    def test_mixed_enabled_and_disabled(self):
+        """Enabled entries render as YAML, disabled as comments with reason."""
+        apps = [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "probe": True,
+                "active": True,
+            },
+            {
+                "name": "web",
+                "url": "http://1.2.3.4:8080/",
+                "probe": False,
+                "active": True,
+            },
         ]
         rendered = create_krkn_ai_template(KUBECONFIG, DATA, None, apps)
         block = _health_checks(rendered)
         assert len(block["applications"]) == 1
         assert block["applications"][0]["name"] == "cart"
         assert '# - name: "web"' in rendered
+        assert "(no probe)" in rendered
         HealthCheckConfig(**block)

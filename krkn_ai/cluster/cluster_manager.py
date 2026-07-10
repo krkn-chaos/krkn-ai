@@ -2,6 +2,8 @@ import re
 import ipaddress
 import concurrent.futures
 from typing import Dict, List, Optional, Union
+
+import requests
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils import run_shell
@@ -250,11 +252,13 @@ class ClusterManager:
                         svc, probe, container
                     )
                     host = self._format_host(address)
+                    url = f"{scheme}://{host}:{port}{path}"
                     recommendations.append(
                         {
                             "name": svc.metadata.name,
-                            "url": f"{scheme}://{host}:{port}{path}",
-                            "discovered_only": probe is None,
+                            "url": url,
+                            "probe": probe is not None,
+                            "active": self._check_reachable(url),
                         }
                     )
             return recommendations
@@ -282,6 +286,14 @@ class ClusterManager:
         except ValueError:
             pass
         return address
+
+    @staticmethod
+    def _check_reachable(url: str) -> bool:
+        try:
+            resp = requests.get(url, timeout=3, verify=False)
+            return resp.status_code < 500
+        except Exception:
+            return False
 
     def _backing_probe(self, svc, pods):
         # First httpGet probe behind the service, preferring readiness over

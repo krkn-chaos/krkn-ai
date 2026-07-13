@@ -28,7 +28,7 @@ class FitnessCalculator:
         now = datetime.datetime.now()
         start = now - datetime.timedelta(minutes=5)
         
-        if self.fitness_function.query:
+        if self.fitness_function.query is not None:
             self._validate_query(self.fitness_function.query, "fitness_function.query", start, now)
         
         for item in self.fitness_function.items:

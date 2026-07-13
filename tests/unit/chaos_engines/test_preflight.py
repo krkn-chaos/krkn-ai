@@ -88,3 +88,14 @@ class TestPreflightCheck:
         calculator.preflight_check()
         
         assert self.mock_prom_client.process_prom_query_in_range.call_count == 2
+
+    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    def test_empty_query_fails_preflight(self, mock_env_is_truthy):
+        mock_env_is_truthy.return_value = False
+        self.mock_prom_client.process_prom_query_in_range.return_value = []
+        
+        fitness_function = FitnessFunction(query="")
+        calculator = FitnessCalculator(self.mock_prom_client, fitness_function)
+        
+        with pytest.raises(FitnessFunctionConfigurationError, match="returned no data"):
+            calculator.preflight_check()

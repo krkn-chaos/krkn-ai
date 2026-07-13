@@ -40,6 +40,12 @@ class KrknRunner:
         self.fitness_calculator = FitnessCalculator(
             self.prom_client, config.fitness_function
         )
+        
+        if not env_is_truthy("MOCK_FITNESS"):
+            logger.info("Running pre-flight fitness function validation...")
+            self.fitness_calculator.preflight_check()
+            logger.info("Pre-flight fitness validation passed.")
+
         self.output_dir = output_dir
         if runner_type is None:
             self.runner_type = self.__check_runner_availability()

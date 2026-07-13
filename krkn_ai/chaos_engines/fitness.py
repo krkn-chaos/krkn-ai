@@ -20,6 +20,53 @@ class FitnessCalculator:
         self.prom_client = prom_client
         self.fitness_function = fitness_function
 
+    def preflight_check(self) -> None:
+        """Validate all fitness queries return data before the experiment starts."""
+        if env_is_truthy("MOCK_FITNESS"):
+            return
+
+        now = datetime.datetime.now()
+        start = now - datetime.timedelta(minutes=5)
+        
+        if self.fitness_function.query:
+            self._validate_query(self.fitness_function.query, "fitness_function.query", start, now)
+        
+        for item in self.fitness_function.items:
+            self._validate_query(item.query, f"fitness_function.items[{item.id}]", start, now)
+
+    def _validate_query(self, query: str, context: str, start: datetime.datetime, end: datetime.datetime):
+        """Run a dry-run query and raise if Prometheus returns no data or multiple series."""
+        test_query = query.replace("$range$", "5m") if "$range$" in query else query
+        
+        try:
+            result = self.prom_client.process_prom_query_in_range(
+                test_query,
+                start_time=start,
+                end_time=end,
+                granularity=100,
+            )
+            
+            series_list = result or []
+            if len(series_list) > 1:
+                raise FitnessFunctionConfigurationError(
+                    f"Pre-flight check failed: query '{query}' ({context}) "
+                    f"returned {len(series_list)} series. Fitness queries must return exactly "
+                    f"one series. Use sum(), max(), avg(), or another PromQL aggregate."
+                )
+            if not series_list or not series_list[0].get("values"):
+                raise FitnessFunctionConfigurationError(
+                    f"Pre-flight check failed: query '{query}' ({context}) "
+                    f"returned no data. This query will fail during the experiment. "
+                    f"Verify the metric exists and the namespace selector is correct."
+                )
+        except FitnessFunctionConfigurationError:
+            raise
+        except Exception as e:
+            raise FitnessFunctionConfigurationError(
+                f"Pre-flight check failed: query '{query}' ({context}) "
+                f"errored: {e}. Fix this before starting the experiment."
+            )
+
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
         if env_is_truthy("MOCK_FITNESS"):

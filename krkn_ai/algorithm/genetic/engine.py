@@ -230,11 +230,12 @@ class GeneticAlgorithm(BaseEngine):
 
         if improvement < cfg.threshold:
             self.stagnant_generations += 1
+            if self.stagnant_generations < cfg.generations:
+                return
+            rate_factor = 1.2
         else:
             self.stagnant_generations = 0
-
-        if self.stagnant_generations < cfg.generations:
-            return
+            rate_factor = 0.9
 
         if cfg.min > cfg.max:
             raise ValueError(
@@ -243,20 +244,19 @@ class GeneticAlgorithm(BaseEngine):
             )
 
         # Increase rate when stagnating, decrease when improving
-        if improvement < cfg.threshold:
-            self.current_scenario_mutation_rate *= 1.2
-        else:
-            self.current_scenario_mutation_rate *= 0.9
+        old_rate = self.current_scenario_mutation_rate
+        self.current_scenario_mutation_rate *= rate_factor
 
         # Clamp to configured bounds
         self.current_scenario_mutation_rate = max(
             cfg.min, min(self.current_scenario_mutation_rate, cfg.max)
         )
 
-        logger.info(
-            "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
-            self.current_scenario_mutation_rate,
-        )
+        if self.current_scenario_mutation_rate != old_rate:
+            logger.info(
+                "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
+                self.current_scenario_mutation_rate,
+            )
 
         self.stagnant_generations = 0
 

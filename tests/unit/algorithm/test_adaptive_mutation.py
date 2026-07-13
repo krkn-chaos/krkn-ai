@@ -124,6 +124,27 @@ class TestAdaptMutationRateUpdate:
         assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.36)
         assert genetic_algorithm.stagnant_generations == 0
 
+    def test_decreases_rate_when_improving(self, genetic_algorithm):
+        """Should multiply rate by 0.9 when fitness is improving above threshold"""
+        genetic_algorithm.algo_config.adaptive_mutation = AdaptiveMutation(
+            enable=True, threshold=0.5, generations=5, min=0.05, max=0.9
+        )
+        genetic_algorithm.algo_config.scenario_mutation_rate = 0.3
+        genetic_algorithm.current_scenario_mutation_rate = 0.3
+        genetic_algorithm.best_of_generation = [
+            make_generation_result(10.0),
+            make_generation_result(11.0),  # 1.0 improvement >= 0.5 threshold
+        ]
+        genetic_algorithm.stagnant_generations = 2
+
+        genetic_algorithm.adapt_mutation_rate()
+
+        assert genetic_algorithm.algo_config.scenario_mutation_rate == pytest.approx(
+            0.3
+        )
+        assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.27)
+        assert genetic_algorithm.stagnant_generations == 0
+
     def test_clamps_current_rate_only(self, genetic_algorithm):
         """Should clamp the current rate while preserving the configured rate"""
         genetic_algorithm.algo_config.adaptive_mutation = AdaptiveMutation(

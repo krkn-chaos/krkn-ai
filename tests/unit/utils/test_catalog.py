@@ -141,8 +141,10 @@ class TestRecommendFitnessQueries:
     def test_all_present_single_series_all_enabled(self):
         prom = _FakeProm(_all_required_metrics())
         results = recommend_fitness_queries(_components(["demo"]), prom)
-        # 4 namespace-scoped x 1 ns + 2 cluster-scoped = 6 items, all enabled
-        assert len(results) == 6
+        # namespace-scoped x 1 ns + cluster-scoped, so the count tracks the catalog
+        ns_scoped = sum(1 for e in BASE_CATALOG if e.scope is Scope.namespace)
+        cluster_scoped = sum(1 for e in BASE_CATALOG if e.scope is Scope.cluster)
+        assert len(results) == ns_scoped + cluster_scoped
         assert all(r["enabled"] for r in results)
         # equal-split weights sum to ~1
         assert abs(sum(r["weight"] for r in results) - 1.0) < 0.01

@@ -324,7 +324,7 @@ def discover(
                 "Prometheus unavailable; using static fitness default (%s).", e
             )
         except Exception as e:
-            logger.debug("Fitness query recommendation failed: %s", e)
+            logger.warning("Fitness query recommendation failed: %s", e)
     save_discovery(
         output,
         save_strategy,

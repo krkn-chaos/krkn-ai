@@ -1,4 +1,5 @@
 kubeconfig_file_path: "{{ kubeconfig_file_path }}"
+wait_duration: 120
 
 baseline:
   enable: true
@@ -7,18 +8,44 @@ baseline:
 # Optional: Random seed for reproducible runs
 # seed: 42
 
-generations: 2
-# duration: 600  # Run for 600 seconds (run until time limit is reached, generations will be ignored)
-population_size: 2
-composition_rate: 0
-population_injection_rate: 0
 
-selection_strategy: "roulette"
+# Algorithm selection: "genetic" (default)
+algorithm: genetic
 
-# selection_strategy: "tournament"
-# tournament_size: 3
+# Genetic algorithm configuration
+genetic:
+  generations: 2
+  # duration: 600  # Run for 600 seconds (run until time limit is reached, generations will be ignored)
+  population_size: 2
+  composition_rate: 0
+  population_injection_rate: 0
 
-wait_duration: 120
+  selection_strategy: "roulette"
+
+  # selection_strategy: "tournament"
+  # tournament_size: 3
+
+  adaptive_mutation:
+    enable: false
+    min: 0.05
+    max: 0.9
+    threshold: 0.1
+    generations: 5
+
+  # Stopping criteria configuration
+  # Multiple criteria can be set - the algorithm stops when ANY criterion is met
+  # stopping_criteria:
+  #   # Stop when best fitness score reaches or exceeds this value
+  #   fitness_threshold: 0.95
+  #
+  #   # Stop if best fitness doesn't improve for N consecutive generations
+  #   generation_saturation: 10
+  #
+  #   # Stop if no new unique scenarios are discovered for N consecutive generations
+  #   exploration_saturation: 5
+  #
+  #   # Minimum improvement threshold for generation saturation (default: 0.0001)
+  #   saturation_threshold: 0.0001
 
 output:
   result_name_fmt: "scenario_%s.yaml"
@@ -38,14 +65,42 @@ elastic:
 
 
 fitness_function:
+  # Use an aggregate query that returns one Prometheus series.
   query: 'sum(kube_pod_container_status_restarts_total)'
   type: point
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
-
+{%- set enabled_apps = health_check_apps | default([]) | selectattr('probe') | selectattr('active') | list -%}
+{%- set disabled_apps = health_check_apps | default([]) | rejectattr('probe') | list + health_check_apps | default([]) | selectattr('probe') | rejectattr('active') | list %}
+{% if enabled_apps %}
+health_checks:
+  stop_watcher_on_failure: false
+  stop_timeout: 5
+  applications:
+{%- for app in enabled_apps %}
+  - name: "{{ app.name }}"
+    url: "{{ app.url }}"
+{%- endfor %}
+{%- for app in disabled_apps %}
+  # ({% if not app.probe and not app.active %}no probe, unreachable{% elif not app.probe %}no probe{% else %}unreachable{% endif %})
+  # - name: "{{ app.name }}"
+  #   url: "{{ app.url }}"
+{%- endfor %}
+{% elif disabled_apps %}
 # health_checks:
 #   stop_watcher_on_failure: false
+#   stop_timeout: 5
+#   applications:
+{%- for app in disabled_apps %}
+#   ({% if not app.probe and not app.active %}no probe, unreachable{% elif not app.probe %}no probe{% else %}unreachable{% endif %})
+#   - name: "{{ app.name }}"
+#     url: "{{ app.url }}"
+{%- endfor %}
+{% else %}
+# health_checks:
+#   stop_watcher_on_failure: false
+#   stop_timeout: 5
 #   applications:
 #   - name: cart
 #     url: "$HOST/cart/add/1/Watson/1"
@@ -59,55 +114,13 @@ fitness_function:
 #     url: "$HOST/user/uniqueid"
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
-
+{% endif %}
 
 scenario:
-  pod-scenarios:
-    enable: true
-  application-outages:
-    enable: true
-  container-scenarios:
-    enable: true
-  node-cpu-hog:
-    enable: false
-  node-memory-hog:
-    enable: false
-  node-io-hog:
-    enable: false
-  time-scenarios:
-    enable: false
-  network-scenarios:
-    enable: false
-  dns-outage:
-    enable: true
-  syn-flood:
-    enable: false
-  pvc-scenarios:
-    enable: false
-  kubevirt-scenarios:
-    enable: false
+{%- for name, enabled in scenario_enables.items() %}
+  {{ name | replace("_", "-") }}:
+    enable: {{ "true" if enabled else "false" }}
+{%- endfor %}
 
 cluster_components:
 {{ cluster_components }}
-
-adaptive_mutation:
-  enable: false
-  min: 0.05
-  max: 0.9
-  threshold: 0.1
-  generations: 5
-
-# Stopping criteria configuration
-# Multiple criteria can be set - the algorithm stops when ANY criterion is met
-# stopping_criteria:
-#   # Stop when best fitness score reaches or exceeds this value
-#   fitness_threshold: 0.95
-#
-#   # Stop if best fitness doesn't improve for N consecutive generations
-#   generation_saturation: 10
-#
-#   # Stop if no new unique scenarios are discovered for N consecutive generations
-#   exploration_saturation: 5
-#
-#   # Minimum improvement threshold for generation saturation (default: 0.0001)
-#   saturation_threshold: 0.0001

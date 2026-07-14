@@ -1,10 +1,7 @@
-numpy
-pandas==2.2.3
-pydantic==2.11.4
-notebook
-jupyterlab
-requests
-click
-krkn-lib@git+https://github.com/krkn-chaos/krkn-lib
-pyyaml
-seaborn
+# Runtime dependencies are declared in pyproject.toml [project].dependencies.
+# Dev dependencies are in [project.optional-dependencies].dev.
+#
+# This file exists as a convenience for contributors so that:
+#   pip install -r requirements.txt
+# installs the package with all runtime and dev deps in editable mode.
+-e .[dev]

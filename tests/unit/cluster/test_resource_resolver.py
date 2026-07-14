@@ -3,8 +3,8 @@ Tests for resolve_pod_name in pvc_utils
 """
 
 from unittest.mock import Mock, patch
-from krkn_ai.utils import pvc_utils
-from krkn_ai.utils.pvc_utils import resolve_pod_name
+from krkn_ai.cluster import pvc_utils
+from krkn_ai.cluster import resolve_pod_name
 
 
 class TestResolvePodName:
@@ -23,7 +23,7 @@ class TestResolvePodName:
         pvc_utils._kubeconfig_path = "/tmp/kubeconfig"
         assert resolve_pod_name("test-ns", "bare-pod") == "bare-pod"
 
-    @patch("krkn_ai.utils.pvc_utils.KrknKubernetes")
+    @patch("krkn_ai.cluster.pvc_utils.KrknKubernetes")
     def test_resolves_to_new_pod_name_via_owner_reference(self, mock_krkn_cls):
         pvc_utils._kubeconfig_path = "/tmp/kubeconfig"
 
@@ -44,7 +44,7 @@ class TestResolvePodName:
         )
         assert result == "cart-new-xyz"
 
-    @patch("krkn_ai.utils.pvc_utils.KrknKubernetes")
+    @patch("krkn_ai.cluster.pvc_utils.KrknKubernetes")
     def test_falls_back_when_no_matching_live_pod(self, mock_krkn_cls):
         pvc_utils._kubeconfig_path = "/tmp/kubeconfig"
 
@@ -65,7 +65,7 @@ class TestResolvePodName:
         )
         assert result == "cart-old-def"
 
-    @patch("krkn_ai.utils.pvc_utils.KrknKubernetes")
+    @patch("krkn_ai.cluster.pvc_utils.KrknKubernetes")
     def test_falls_back_on_api_exception(self, mock_krkn_cls):
         pvc_utils._kubeconfig_path = "/tmp/kubeconfig"
 
@@ -76,7 +76,7 @@ class TestResolvePodName:
         result = resolve_pod_name("robot-shop", "cart-old", "ReplicaSet", "cart-abc")
         assert result == "cart-old"
 
-    @patch("krkn_ai.utils.pvc_utils.KrknKubernetes")
+    @patch("krkn_ai.cluster.pvc_utils.KrknKubernetes")
     def test_distinguishes_pods_from_different_owners(self, mock_krkn_cls):
         pvc_utils._kubeconfig_path = "/tmp/kubeconfig"
 

@@ -46,3 +46,5 @@ jobs:
           file: containers/Containerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ inputs.tag }}

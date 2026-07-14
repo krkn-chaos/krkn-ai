@@ -1,4 +1,10 @@
+from pydantic import BaseModel
 from krkn_ai.utils.rng import RNG
+
+
+class DummyPydanticModel(BaseModel):
+    value: int
+    nested: list[int] = [1, 2, 3]
 
 
 class TestRNG:
@@ -55,6 +61,38 @@ class TestRNG:
         choice2 = rng.choice(items)
         assert choice == choice2
 
+    def test_choice_pydantic_compatibility(self):
+        """Test choice() works with Pydantic models (prevents NumPy array conversion failure)."""
+        rng = RNG(42)
+        models = [
+            DummyPydanticModel(value=1),
+            DummyPydanticModel(value=2),
+            DummyPydanticModel(value=3),
+        ]
+        choice = rng.choice(models)
+        assert choice in models
+
+    def test_choice_numpy_array_compatibility(self):
+        """Test choice() works with numpy arrays (both 1D and object arrays)."""
+        import numpy as np
+
+        rng = RNG(42)
+        arr = np.array([10, 20, 30])
+        choice = rng.choice(arr)
+        assert choice in [10, 20, 30]
+
+    def test_choice_empty_sequence_raises_value_error(self):
+        """Test choice() raises ValueError when passed an empty sequence or empty numpy array."""
+        import numpy as np
+
+        rng = RNG(42)
+        import pytest
+
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choice([])
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choice(np.array([]))
+
     def test_choices(self):
         """Test choices() picks multiple elements with weights."""
         rng = RNG(42)
@@ -71,6 +109,42 @@ class TestRNG:
         rng.set_seed(42)
         choices2 = rng.choices(items, weights, k=5)
         assert choices == choices2
+
+    def test_choices_pydantic_compatibility(self):
+        """Test choices() works with Pydantic models (prevents NumPy array conversion failure)."""
+        rng = RNG(42)
+        models = [
+            DummyPydanticModel(value=1),
+            DummyPydanticModel(value=2),
+            DummyPydanticModel(value=3),
+        ]
+        weights = [0.1, 0.8, 0.1]
+        choices = rng.choices(models, weights, k=5)
+        assert len(choices) == 5
+        assert all(c in models for c in choices)
+
+    def test_choices_numpy_array_compatibility(self):
+        """Test choices() works with numpy arrays."""
+        import numpy as np
+
+        rng = RNG(42)
+        arr = np.array([10, 20, 30])
+        weights = [0.2, 0.6, 0.2]
+        choices = rng.choices(arr, weights, k=5)
+        assert len(choices) == 5
+        assert all(c in [10, 20, 30] for c in choices)
+
+    def test_choices_empty_sequence_raises_value_error(self):
+        """Test choices() raises ValueError when passed an empty sequence or empty numpy array."""
+        import numpy as np
+
+        rng = RNG(42)
+        import pytest
+
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choices([], [1.0], k=2)
+        with pytest.raises(ValueError, match="Cannot select from an empty sequence"):
+            rng.choices(np.array([]), [], k=2)
 
     def test_randint_returns_int_in_inclusive_range(self):
         """Test randint() returns an integer within [low, high] inclusive."""

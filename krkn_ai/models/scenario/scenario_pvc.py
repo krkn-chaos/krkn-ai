@@ -10,7 +10,7 @@ from krkn_ai.models.scenario.parameters import (
     StandardDurationParameter,
 )
 from krkn_ai.models.cluster_components import Namespace, Pod, PVC
-from krkn_ai.utils.pvc_utils import get_pvc_usage_percentage
+from krkn_ai.cluster import get_pvc_usage_percentage
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)

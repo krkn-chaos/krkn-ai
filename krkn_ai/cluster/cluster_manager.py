@@ -1,11 +1,15 @@
 import re
+import ipaddress
+import concurrent.futures
 from typing import Dict, List, Optional, Union
+
+import requests
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
-from krkn_ai.utils.pattern_matcher import PatternMatcher
+from krkn_ai.cluster.pattern_matcher import PatternMatcher
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Container,
@@ -222,6 +226,126 @@ class ClusterManager:
         )
         return service_list
 
+    def recommend_health_checks(
+        self, cluster_components: ClusterComponents
+    ) -> List[Dict[str, Union[str, bool]]]:
+        """Suggest health-check URLs for LoadBalancer services."""
+        try:
+            recommendations: List[Dict[str, Union[str, bool]]] = []
+            for namespace in cluster_components.get_active_components().namespaces:
+                services = self.core_api.list_namespaced_service(
+                    namespace=namespace.name
+                ).items
+                pods = self.core_api.list_namespaced_pod(
+                    namespace=namespace.name, field_selector="status.phase=Running"
+                ).items
+
+                for svc in services:
+                    if svc.spec.type != "LoadBalancer" or not svc.spec.ports:
+                        continue
+                    address = self._external_address(svc)
+                    if address is None:
+                        continue
+
+                    probe, container = self._backing_probe(svc, pods)
+                    port, scheme, path = self._endpoint_from_probe(
+                        svc, probe, container
+                    )
+                    host = self._format_host(address)
+                    url = f"{scheme}://{host}:{port}{path}"
+                    recommendations.append(
+                        {
+                            "name": svc.metadata.name,
+                            "url": url,
+                            "probe": probe is not None,
+                            "active": self._check_reachable(url),
+                        }
+                    )
+            return recommendations
+        except Exception as error:
+            # Never let this break discovery.
+            logger.debug("Health check recommendation failed: %s", error)
+            return []
+
+    @staticmethod
+    def _external_address(svc) -> Optional[str]:
+        # The LoadBalancer's external IP or hostname.
+        if not svc.status or not svc.status.load_balancer:
+            return None
+        for entry in svc.status.load_balancer.ingress or []:
+            if entry.ip or entry.hostname:
+                return entry.ip or entry.hostname
+        return None
+
+    @staticmethod
+    def _format_host(address: str) -> str:
+        # Wrap IPv6 literals in brackets so the URL stays valid.
+        try:
+            if isinstance(ipaddress.ip_address(address), ipaddress.IPv6Address):
+                return f"[{address}]"
+        except ValueError:
+            pass
+        return address
+
+    @staticmethod
+    def _check_reachable(url: str) -> bool:
+        try:
+            resp = requests.get(url, timeout=3, verify=False)
+            return resp.status_code < 500
+        except Exception:
+            return False
+
+    def _backing_probe(self, svc, pods):
+        # First httpGet probe behind the service, preferring readiness over
+        # liveness across all containers.
+        selector = svc.spec.selector or {}
+        if not selector:
+            return None, None
+        for pod in pods:
+            labels = pod.metadata.labels or {}
+            if not all(labels.get(key) == value for key, value in selector.items()):
+                continue
+            for attr in ("readiness_probe", "liveness_probe"):
+                for container in pod.spec.containers:
+                    probe = getattr(container, attr)
+                    if probe and probe.http_get:
+                        return probe.http_get, container
+        return None, None
+
+    @staticmethod
+    def _endpoint_from_probe(svc, probe, container):
+        # Match the probe's port to a service port; else the first port at root.
+        port = svc.spec.ports[0].port
+        path = "/"
+        scheme = None
+        probe_port = (
+            ClusterManager._resolve_port(probe.port, container)
+            if probe is not None
+            else None
+        )
+        if probe_port is not None:
+            for svc_port in svc.spec.ports:
+                target = svc_port.target_port
+                target = svc_port.port if target is None else target
+                if ClusterManager._resolve_port(target, container) == probe_port:
+                    port = svc_port.port
+                    path = probe.path or "/"
+                    scheme = (probe.scheme or "HTTP").lower()
+                    break
+        if scheme is None:
+            scheme = "https" if port in (443, 8443) else "http"
+        return port, scheme, path
+
+    @staticmethod
+    def _resolve_port(value, container):
+        # Turn an int or named port into a port number.
+        if isinstance(value, int):
+            return value
+        for port in container.ports or []:
+            if port.name == value:
+                return port.container_port
+        return None
+
     def list_pvcs(self, namespace: Namespace) -> List[PVC]:
         """List all PVCs in the namespace"""
         try:
@@ -366,17 +490,6 @@ class ClusterManager:
             node_component = Node(name=node.metadata.name, labels=labels, taints=taints)
 
             try:
-                node_component.interfaces = self.list_node_interfaces(
-                    node.metadata.name
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to list node interfaces for node %s: %s",
-                    node.metadata.name,
-                    e,
-                )
-
-            try:
                 alloc_cpu = self.parse_cpu(node.status.allocatable["cpu"])
                 alloc_mem = self.parse_memory(node.status.allocatable["memory"])
                 if node.metadata.name not in node_metrics_map:
@@ -397,7 +510,6 @@ class ClusterManager:
             return node_component
 
         node_list = []
-        import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             futures = [executor.submit(process_node, node) for node in nodes]
@@ -405,6 +517,23 @@ class ClusterManager:
                 result = future.result()
                 if result is not None:
                     node_list.append(result)
+
+        if node_list:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_to_node = {
+                    executor.submit(self.list_node_interfaces, node.name): node
+                    for node in node_list
+                }
+                for future in concurrent.futures.as_completed(future_to_node):
+                    node = future_to_node[future]
+                    try:
+                        node.interfaces = future.result()
+                    except Exception as e:
+                        logger.error(
+                            "Failed to list node interfaces for node %s: %s",
+                            node.name,
+                            e,
+                        )
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list

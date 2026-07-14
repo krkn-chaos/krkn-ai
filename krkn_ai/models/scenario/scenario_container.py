@@ -45,15 +45,18 @@ class ContainerScenario(Scenario):
     def mutate(self):
         namespace_pod_tuple: List[Tuple[Namespace, Pod]] = []
 
-        # look for pods with labels
+        # look for pods with labels and at least one container. A pod without
+        # containers cannot be targeted by a container scenario and would make the
+        # ``rng.randint(1, len(pod.containers))`` call below crash with
+        # "ValueError: low >= high", terminating the whole GA run.
         for namespace in self._cluster_components.namespaces:
             for pod in namespace.pods:
-                if len(pod.labels) > 0:
+                if len(pod.labels) > 0 and len(pod.containers) > 0:
                     namespace_pod_tuple.append((namespace, pod))
 
         if len(namespace_pod_tuple) == 0:
             raise ScenarioParameterInitError(
-                "No pods found with labels for container scenario"
+                "No pods found with labels and containers for container scenario"
             )
 
         # Select a random namespace and pod from the tuple list

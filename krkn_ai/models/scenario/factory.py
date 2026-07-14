@@ -1,6 +1,8 @@
-from typing import List, Tuple
+import contextlib
+import logging
+from typing import Dict, List, Tuple
 from krkn_ai.models.cluster_components import ClusterComponents
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
 from krkn_ai.models.custom_errors import (
     MissingScenarioError,
     ScenarioInitError,
@@ -10,7 +12,7 @@ from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
-from krkn_ai.utils.pvc_utils import initialize_kubeconfig
+from krkn_ai.cluster import initialize_kubeconfig
 
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.scenario_pod import PodScenario
@@ -24,8 +26,21 @@ from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_kubevirt import KubevirtDisruptionScenario
+from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
 
 logger = get_logger(__name__)
+
+
+@contextlib.contextmanager
+def _suppressed_factory_warnings():
+    # suppress warnings for discover
+    previous = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        logger.setLevel(previous)
+
 
 scenario_specs = [
     ("pod_scenarios", PodScenario),
@@ -40,6 +55,7 @@ scenario_specs = [
     ("syn_flood", SynFloodScenario),
     ("pvc_scenarios", PVCScenario),
     ("kubevirt_scenarios", KubevirtDisruptionScenario),
+    ("storage_throttle", StorageThrottleScenario),
 ]
 
 
@@ -126,3 +142,31 @@ class ScenarioFactory:
     @staticmethod
     def create_dummy_scenario():
         return DummyScenario(cluster_components=ClusterComponents())
+
+    @staticmethod
+    def recommend_enabled_scenarios(
+        cluster_components: ClusterComponents, kubeconfig: str
+    ) -> Dict[str, bool]:
+        names = [name for name, _ in scenario_specs]
+        all_disabled = {n: False for n in names}
+        try:
+            config = ConfigFile(
+                kubeconfig_file_path=kubeconfig,
+                fitness_function=FitnessFunction(query="placeholder"),
+                scenario=ScenarioConfig(**{n: {"enable": True} for n in names}),
+                cluster_components=cluster_components,
+            )
+            with _suppressed_factory_warnings():
+                valid = ScenarioFactory.generate_valid_scenarios(config)
+        except MissingScenarioError:
+            logger.warning(
+                "No valid scenarios found for this cluster. "
+                "All scenarios disabled. "
+                "Check your cluster components or re-run discover."
+            )
+            return all_disabled
+        except Exception as error:
+            logger.debug("Scenario recommendation failed: %s", error)
+            return all_disabled
+        valid_names = {name for name, _ in valid}
+        return {n: n in valid_names for n in names}

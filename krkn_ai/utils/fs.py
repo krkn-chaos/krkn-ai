@@ -67,29 +67,17 @@ def read_config_from_file(
             if "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 
-        # Replace parameter in elastic configuration
-        if "elastic" in config and "server" in config["elastic"]:
-            config["elastic"]["enable"] = is_truthy(
-                preprocess_param_string(config["elastic"]["enable"], raw)
-            )
-            config["elastic"]["verify_certs"] = is_truthy(
-                preprocess_param_string(config["elastic"]["verify_certs"], raw)
-            )
-            config["elastic"]["server"] = preprocess_param_string(
-                config["elastic"]["server"], raw
-            )
-            config["elastic"]["port"] = preprocess_param_string(
-                config["elastic"]["port"], raw
-            )
-            config["elastic"]["username"] = preprocess_param_string(
-                config["elastic"]["username"], raw
-            )
-            config["elastic"]["password"] = preprocess_param_string(
-                config["elastic"]["password"], raw
-            )
-            config["elastic"]["index"] = preprocess_param_string(
-                config["elastic"]["index"], raw
-            )
+        # Replace parameters in elastic configuration without forcing optional keys.
+        if isinstance(config.get("elastic"), dict):
+            bool_fields = {"enable", "verify_certs"}
+            for key, value in config["elastic"].items():
+                if isinstance(value, str):
+                    value = preprocess_param_string(value, raw)
+                config["elastic"][key] = (
+                    is_truthy(value)
+                    if key in bool_fields and value is not None
+                    else value
+                )
 
         config["parameters"] = params
 
@@ -183,11 +171,12 @@ def _write_fresh(
     kubeconfig: str,
     scenario_enables: dict = None,
     fitness_queries: list = None,
+    health_checks: list = None,
 ):
     """Write fresh config from discovered components."""
     data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
     template = create_krkn_ai_template(
-        kubeconfig, data, scenario_enables, fitness_queries
+    kubeconfig, data, scenario_enables, fitness_queries, health_checks
     )
     with open(output, "w", encoding="utf-8") as f:
         f.write(template)
@@ -201,6 +190,7 @@ def save_discovery(
     kubeconfig: str,
     scenario_enables: dict = None,
     fitness_queries: list = None,
+    health_checks: list = None,
 ):
     """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new)."""
     strategy = strategy.lower()
@@ -226,4 +216,5 @@ def save_discovery(
     if exists and strategy == "overwrite":
         logger.warning("Overwriting existing %s", output)
 
-    _write_fresh(output, components, kubeconfig, scenario_enables, fitness_queries)
+     _write_fresh(output, components, kubeconfig, scenario_enables, fitness_queries, health_checks)
+

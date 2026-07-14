@@ -106,6 +106,34 @@ class TestContainerScenario:
         ):
             ContainerScenario(cluster_components=cluster)
 
+    def test_container_scenario_raises_error_when_pod_has_no_containers(self):
+        """Regression test for #237.
+
+        A labeled pod with an empty ``containers`` list must not crash with
+        ``ValueError: low >= high`` (from ``rng.randint(1, 0)``); it should raise the
+        graceful ``ScenarioParameterInitError`` instead.
+        """
+        pod = Pod(name="test-pod", labels={"app": "web"}, containers=[])
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(
+            ScenarioParameterInitError,
+            match="No pods found with labels and containers",
+        ):
+            ContainerScenario(cluster_components=cluster)
+
+    def test_container_scenario_skips_pods_without_containers(self):
+        """A labeled pod without containers is skipped in favour of a valid one."""
+        empty = Pod(name="empty", labels={"app": "web"}, containers=[])
+        good = Pod(name="good", labels={"app": "db"}, containers=[Container(name="c1")])
+        namespace = Namespace(name="test-ns", pods=[empty, good])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.label_selector.value == "app=db"
+
 
 class TestNodeCPUHogScenario:
     """Test NodeCPUHogScenario class"""

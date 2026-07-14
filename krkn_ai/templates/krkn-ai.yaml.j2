@@ -93,6 +93,33 @@ fitness_function:
 {%- endfor %}
 {%- endif %}
 
+{%- set enabled_apps = health_check_apps | default([]) | selectattr('probe') | selectattr('active') | list -%}
+{%- set disabled_apps = health_check_apps | default([]) | rejectattr('probe') | list + health_check_apps | default([]) | selectattr('probe') | rejectattr('active') | list %}
+{% if enabled_apps %}
+health_checks:
+  stop_watcher_on_failure: false
+  stop_timeout: 5
+  applications:
+{%- for app in enabled_apps %}
+  - name: "{{ app.name }}"
+    url: "{{ app.url }}"
+{%- endfor %}
+{%- for app in disabled_apps %}
+  # ({% if not app.probe and not app.active %}no probe, unreachable{% elif not app.probe %}no probe{% else %}unreachable{% endif %})
+  # - name: "{{ app.name }}"
+  #   url: "{{ app.url }}"
+{%- endfor %}
+{% elif disabled_apps %}
+# health_checks:
+#   stop_watcher_on_failure: false
+#   stop_timeout: 5
+#   applications:
+{%- for app in disabled_apps %}
+#   ({% if not app.probe and not app.active %}no probe, unreachable{% elif not app.probe %}no probe{% else %}unreachable{% endif %})
+#   - name: "{{ app.name }}"
+#     url: "{{ app.url }}"
+{%- endfor %}
+{% else %}
 # health_checks:
 #   stop_watcher_on_failure: false
 #   stop_timeout: 5
@@ -109,7 +136,7 @@ fitness_function:
 #     url: "$HOST/user/uniqueid"
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
-
+{% endif %}
 
 scenario:
 {%- for name, enabled in scenario_enables.items() %}

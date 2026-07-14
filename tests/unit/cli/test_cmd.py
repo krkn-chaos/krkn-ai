@@ -503,9 +503,9 @@ class TestDiscoverCommand:
                     },
                 ),
             ):
-                mock_manager_class.return_value.discover_components.return_value = (
-                    mock_cluster_components
-                )
+                manager = mock_manager_class.return_value
+                manager.discover_components.return_value = mock_cluster_components
+                manager.recommend_health_checks.return_value = []
                 result = runner.invoke(
                     main, ["discover", "-k", kubeconfig_path, "-o", output_file]
                 )
@@ -515,6 +515,109 @@ class TestDiscoverCommand:
                 # recommended scenario enabled; an unrecommended one stays off
                 assert data["scenario"]["pvc-scenarios"]["enable"] is True
                 assert data["scenario"]["pod-scenarios"]["enable"] is False
+        finally:
+            os.unlink(kubeconfig_path)
+
+    @pytest.mark.parametrize(
+        "strategy, file_exists, expect_recommend_calls",
+        [
+            ("skip", False, 1),
+            ("skip", True, 0),
+            ("overwrite", False, 1),
+            ("overwrite", True, 1),
+            ("merge", False, 1),
+            ("merge", True, 0),
+        ],
+    )
+    def test_discover_recommends_health_checks_only_on_fresh_write(
+        self,
+        strategy,
+        file_exists,
+        expect_recommend_calls,
+        mock_cluster_components,
+        temp_output_dir,
+    ):
+        """Health-check recommendation runs only on a fresh write, like scenarios."""
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        if file_exists:
+            with open(output_file, "w") as f:
+                f.write("existing: true\n")
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch("krkn_ai.cli.cmd.save_discovery"),
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={},
+                ),
+            ):
+                manager = mock_manager_class.return_value
+                manager.discover_components.return_value = mock_cluster_components
+                manager.recommend_health_checks.return_value = []
+                result = runner.invoke(
+                    main,
+                    [
+                        "discover",
+                        "-k",
+                        kubeconfig_path,
+                        "-o",
+                        output_file,
+                        "--save-strategy",
+                        strategy,
+                    ],
+                )
+                assert result.exit_code == 0
+                assert (
+                    manager.recommend_health_checks.call_count == expect_recommend_calls
+                )
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_writes_recommended_health_checks_to_file(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        """Fresh discover writes the recommended health checks to the output file."""
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        apps = [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/health",
+                "probe": True,
+                "active": True,
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = f.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={},
+                ),
+            ):
+                manager = mock_manager_class.return_value
+                manager.discover_components.return_value = mock_cluster_components
+                manager.recommend_health_checks.return_value = apps
+                result = runner.invoke(
+                    main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                )
+
+                assert result.exit_code == 0
+                data = yaml.safe_load(open(output_file))
+                assert data["health_checks"]["applications"] == [
+                    {"name": "cart", "url": "http://1.2.3.4:80/health"}
+                ]
         finally:
             os.unlink(kubeconfig_path)
 

@@ -22,6 +22,8 @@ from krkn_ai.models.custom_errors import (
     UniqueScenariosError,
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
+from krkn_ai.utils.prometheus import create_prometheus_client
+from krkn_ai.utils.catalog import recommend_fitness_queries
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
 
@@ -297,15 +299,31 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
+    fresh_write = not os.path.exists(output) or save_strategy.lower() == "overwrite"
     scenario_enables = (
         ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
-        if not os.path.exists(output) or save_strategy.lower() == "overwrite"
+        if fresh_write
         else None
     )
+    # suggest fitness queries from the cluster; fall back to the static default.
+    fitness_queries = None
+    if fresh_write:
+        try:
+            prom_client = create_prometheus_client(kubeconfig)
+            fitness_queries = recommend_fitness_queries(
+                cluster_components, prom_client
+            )
+        except PrometheusConnectionError as e:
+            logger.info(
+                "Prometheus unavailable; using static fitness default (%s).", e
+            )
+        except Exception as e:
+            logger.debug("Fitness query recommendation failed: %s", e)
     save_discovery(
         output,
         save_strategy,
         cluster_components,
         kubeconfig,
         scenario_enables=scenario_enables,
+        fitness_queries=fitness_queries,
     )

@@ -65,12 +65,33 @@ elastic:
 
 
 fitness_function:
-  # Use an aggregate query that returns one Prometheus series.
-  query: 'sum(kube_pod_container_status_restarts_total)'
-  type: point
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
+{%- set enabled_ff = fitness_queries | default([]) | selectattr('enabled') | list %}
+{%- set disabled_ff = fitness_queries | default([]) | rejectattr('enabled') | list %}
+{%- if enabled_ff %}
+  # Fitness queries validated against the cluster's Prometheus.
+  items:
+{%- for f in enabled_ff %}
+  # {{ f.name }}
+  - query: '{{ f.query }}'
+    type: {{ f.type }}
+    weight: {{ f.weight }}
+{%- endfor %}
+{%- for f in disabled_ff %}
+  # {{ f.name }} ({{ f.reason }})
+  # - query: '{{ f.query }}'
+  #   type: {{ f.type }}
+{%- endfor %}
+{%- else %}
+  # Aggregate query returning one Prometheus series.
+  query: 'sum(kube_pod_container_status_restarts_total)'
+  type: point
+{%- for f in disabled_ff %}
+  # {{ f.name }} ({{ f.reason }}): {{ f.query }}
+{%- endfor %}
+{%- endif %}
 
 # health_checks:
 #   stop_watcher_on_failure: false

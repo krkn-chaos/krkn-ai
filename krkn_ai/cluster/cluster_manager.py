@@ -283,7 +283,12 @@ class ClusterManager:
             )
             return vmi_list
         except Exception as e:
-            logger.warning("Unable to find VMIs in namespace %s: %s", namespace.name, e)
+            logger.warning(
+                "Unable to find VMIs in namespace %s: %s",
+                namespace.name,
+                e,
+                exc_info=True,
+            )
             return []
 
     def list_nodes(

@@ -242,4 +242,4 @@ class HealthCheckReporter:
                 df.to_csv(report_path, index=False)
                 logger.debug("Fitness result CSV sorted by fitness_score")
             except Exception as e:
-                logger.warning("Unable to sort fitness results: %s", e)
+                logger.exception("Unable to sort fitness results: %s", e)

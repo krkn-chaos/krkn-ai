@@ -184,7 +184,7 @@ def run(
                     with open(os.path.join(new_output_path, "results.json"), "w") as f:
                         json.dump({"status": STATUS_FAILED}, f)
                 except Exception as e:
-                    logger.error("Failed to write results.json: %s", e)
+                    logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)
             if monitoring:
                 logger.info(

@@ -617,6 +617,10 @@ class ClusterManager:
             "Ei": 1024**6,
         }
         _mem_power10 = {
+            "n": 1e-9,
+            "u": 1e-6,
+            "m": 1e-3,
+            "k": 1000,
             "K": 1000,
             "M": 1000**2,
             "G": 1000**3,
@@ -641,7 +645,7 @@ class ClusterManager:
         # SI units
         if unit in _mem_power10:
             return int(val * _mem_power10[unit])
-        # case-insensitive fallback
+        # case-insensitive fallback for binary units (e.g. ki -> Ki)
         u_uc = unit.capitalize()
         if u_uc in _mem_power2:
             return int(val * _mem_power2[u_uc])

@@ -30,7 +30,9 @@ def render_summary(df, best_scenarios_data=None):
         # Flatten the nested fitness_result data
         rows = []
         for bs in best_scenarios_data:
-            fr = bs.get("fitness_result", {})
+            if "fitness_result" not in bs:
+                continue
+            fr = bs["fitness_result"]
             rows.append({
                 "Rank": bs.get("rank"),
                 "Scenario ID": bs.get("scenario_id"),

@@ -179,7 +179,7 @@ class HealthCheckApplicationConfig(BaseModel):
     @field_validator("url", mode="after")
     @classmethod
     def validate_url_scheme(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
+        if not value.lower().startswith(("http://", "https://")):
             raise ValueError(
                 f"URL must start with 'http://' or 'https://', got: '{value}'"
             )

@@ -239,6 +239,13 @@ class TestHealthCheckConfig:
         )
         assert app.url == "https://api.example.com/health"
 
+    def test_health_check_accepts_uppercase_http_scheme(self):
+        """Valid HTTP/HTTPS URLs with uppercase schemes must be accepted."""
+        app = HealthCheckApplicationConfig(
+            name="uppercase-app", url="HTTP://localhost:8080/health"
+        )
+        assert app.url == "HTTP://localhost:8080/health"
+
 
 class TestOutputConfig:
     """Test OutputConfig model"""

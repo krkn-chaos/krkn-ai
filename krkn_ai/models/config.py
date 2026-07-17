@@ -176,6 +176,15 @@ class HealthCheckApplicationConfig(BaseModel):
     interval: int = 2  # in seconds
     headers: Optional[Dict[str, str]] = None
 
+    @field_validator("url", mode="after")
+    @classmethod
+    def validate_url_scheme(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError(
+                f"URL must start with 'http://' or 'https://', got: '{value}'"
+            )
+        return value
+
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False

@@ -192,7 +192,7 @@ class TestHealthCheckConfig:
             name="test-app", url="http://localhost:8080/health"
         )
         assert app.name == "test-app"
-        assert app.url == "http://localhost:8080/health"
+        assert str(app.url) == "http://localhost:8080/health"
         assert app.status_code == 200
         assert app.timeout == 4
         assert app.interval == 2
@@ -217,6 +217,27 @@ class TestHealthCheckConfig:
             name="api", url="http://localhost:8080/health"
         )
         assert app_no_headers.headers is None
+
+    def test_health_check_rejects_url_without_scheme(self):
+        """URLs missing http:// or https:// must be rejected at config load time."""
+        with pytest.raises(ValidationError):
+            HealthCheckApplicationConfig(
+                name="bad-app", url="localhost:8080/health"
+            )
+
+    def test_health_check_rejects_non_http_scheme(self):
+        """URLs with non-http schemes (e.g. ftp://) must be rejected."""
+        with pytest.raises(ValidationError):
+            HealthCheckApplicationConfig(
+                name="bad-app", url="ftp://localhost:8080/health"
+            )
+
+    def test_health_check_accepts_valid_https_url(self):
+        """Valid https:// URLs must be accepted."""
+        app = HealthCheckApplicationConfig(
+            name="secure-app", url="https://api.example.com/health"
+        )
+        assert app.url == "https://api.example.com/health"
 
 
 class TestOutputConfig:

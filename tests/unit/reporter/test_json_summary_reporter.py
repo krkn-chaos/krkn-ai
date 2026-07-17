@@ -122,6 +122,13 @@ class TestJSONSummaryReporter:
             assert "generation" in item
             assert "scenario_type" in item
             assert "parameters" in item
+            assert "fitness_result" in item
+            
+            fr = item["fitness_result"]
+            assert "fitness_score" in fr
+            assert "krkn_failure_score" in fr
+            assert "health_check_failure_score" in fr
+            assert "health_check_response_time_score" in fr
 
     def test_average_includes_cached_members_with_population_weighting(
         self, minimal_config

@@ -645,4 +645,6 @@ class ClusterManager:
         u_uc = unit.capitalize()
         if u_uc in _mem_power2:
             return int(val * _mem_power2[u_uc])
+        if u_uc in _mem_power10:
+            return int(val * _mem_power10[u_uc])
         raise ValueError(f"Unknown memory unit: {unit}")

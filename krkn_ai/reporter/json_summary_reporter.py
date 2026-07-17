@@ -176,6 +176,7 @@ class JSONSummaryReporter:
                     "scenario_id": result.scenario_id,
                     "generation": result.generation_id,
                     "fitness_score": result.fitness_result.fitness_score,
+                    "fitness_result": result.fitness_result.model_dump(),
                     "scenario_type": result.scenario.name,
                     "parameters": scenario_params,
                 }

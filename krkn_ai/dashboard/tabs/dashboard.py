@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
-def render_summary(df):
+def render_summary(df, best_scenarios_data=None):
     st.header("Experiment Summary")
     if df is None or df.empty:
         st.warning("Results data not yet available. Waiting for Krkn-AI engine...")
@@ -23,6 +23,37 @@ def render_summary(df):
     col2.metric("Scenarios Executed", scenarios_executed)
     col3.metric("Best Fitness Score", f"{best_fitness:.1f}%")
     col4.metric("Avg Fitness Score", f"{avg_fitness:.1f}%")
+
+    if best_scenarios_data:
+        st.subheader("Top Scenarios Breakdown")
+        
+        # Flatten the nested fitness_result data
+        rows = []
+        for bs in best_scenarios_data:
+            fr = bs.get("fitness_result", {})
+            rows.append({
+                "Rank": bs.get("rank"),
+                "Scenario ID": bs.get("scenario_id"),
+                "Generation": bs.get("generation", 0) + 1,
+                "Total Fitness": bs.get("fitness_score", 0.0),
+                "Krkn Failure Score": fr.get("krkn_failure_score", 0.0),
+                "Health Failure Score": fr.get("health_check_failure_score", 0.0),
+                "Health Latency Score": fr.get("health_check_response_time_score", 0.0),
+            })
+            
+        bs_df = pd.DataFrame(rows)
+        if not bs_df.empty:
+            column_cfg = {
+                "Rank": st.column_config.NumberColumn("Rank", format="%d"),
+                "Scenario ID": st.column_config.TextColumn("Scenario ID"),
+                "Generation": st.column_config.NumberColumn("Generation", format="%d"),
+                "Total Fitness": st.column_config.NumberColumn("Total Fitness", format="%.4f"),
+                "Krkn Failure Score": st.column_config.NumberColumn("Krkn Failure", format="%.4f"),
+                "Health Failure Score": st.column_config.NumberColumn("Health Failure", format="%.4f"),
+                "Health Latency Score": st.column_config.NumberColumn("Health Latency", format="%.4f"),
+            }
+            st.dataframe(bs_df, column_config=column_cfg, hide_index=True, width="stretch")
+
 
 
 def create_fitness_evolution_plot(df):

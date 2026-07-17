@@ -135,7 +135,7 @@ def main():
     # Load data — loaders return (file_found: bool, df | None)
     if running:
         results_file_found, df_results = load_results_csv.__wrapped__(output_dir)
-        best_scenarios_data = load_results_json.__wrapped__(output_dir)
+        best_scenarios_data = []
         config_data = load_config_yaml.__wrapped__(output_dir)
         health_file_found, df_health = load_health_check_csv.__wrapped__(output_dir)
         df_details = load_detailed_scenarios_data.__wrapped__(output_dir)

@@ -53,6 +53,16 @@ def read_config_from_file(
     # param refers to Key-value passed with -p flag during krkn-ai test run
     if param:
         params = {}
+        existing = config.get("parameters")
+        if isinstance(existing, dict):
+            for k, v in existing.items():
+                if isinstance(v, dict):
+                    params[str(k)] = ParameterValue.model_validate(v)
+                else:
+                    params[str(k)] = ParameterValue(
+                        value=str(v), is_private=str(k).startswith("__")
+                    )
+
         for p in param:
             if "=" in p:
                 key, value = p.split("=", 1)

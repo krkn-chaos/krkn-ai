@@ -192,7 +192,7 @@ class TestHealthCheckConfig:
             name="test-app", url="http://localhost:8080/health"
         )
         assert app.name == "test-app"
-        assert app.url == "http://localhost:8080/health"
+        assert str(app.url) == "http://localhost:8080/health/"
         assert app.status_code == 200
         assert app.timeout == 4
         assert app.interval == 2

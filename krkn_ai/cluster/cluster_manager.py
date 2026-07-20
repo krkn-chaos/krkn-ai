@@ -67,7 +67,8 @@ class ClusterManager:
             namespaces[i].pods = pods
             namespaces[i].services = self.list_services(namespace)
             namespaces[i].pvcs = self.list_pvcs(namespace)
-            namespaces[i].vmis = self.list_vmis(namespace)
+            vmis = self.list_vmis(namespace)
+            namespaces[i].vmis = vmis
 
         return ClusterComponents(
             namespaces=namespaces, nodes=self.list_nodes(node_label_pattern)

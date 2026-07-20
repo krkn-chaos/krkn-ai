@@ -566,6 +566,28 @@ class TestClusterManager:
         assert by_name["good-node"].interfaces == ["eth0"]
         assert by_name["bad-node"].interfaces == []
 
+    def test_list_vmis_logs_namespace_name_not_vmi_name(self, cluster_manager):
+        """list_vmis should log the namespace name, not the first VMI's name (#258)."""
+        namespace = Namespace(name="production")
+        cluster_manager.custom_obj_api.list_namespaced_custom_object.return_value = {
+            "items": [{"metadata": {"name": "vmi-abc-123"}}]
+        }
+
+        with patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger:
+            vmis = cluster_manager.list_vmis(namespace)
+
+        # The discovered VMI is still returned correctly.
+        assert [v.name for v in vmis] == ["vmi-abc-123"]
+
+        # The "Found N vmis" debug log must reference the namespace, not the VMI.
+        found_calls = [
+            call.args
+            for call in mock_logger.debug.call_args_list
+            if call.args and call.args[0] == "Found %d vmis in namespace %s"
+        ]
+        assert found_calls, "expected a 'Found ... vmis' debug log"
+        assert found_calls[0][2] == "production"
+
 
 def _http_get(path, port, scheme="HTTP"):
     hg = Mock()

@@ -141,8 +141,15 @@ class TestScenarioFactory:
                 raise Exception("Initialization failed")
 
         candidates = [("failing", FailingScenario)]
-        with pytest.raises(ScenarioInitError):
+        with pytest.raises(ScenarioInitError) as exc_info:
             ScenarioFactory.generate_random_scenario(config, candidates)
+
+        # The underlying error must be interpolated into the message (#258),
+        # not left as a raw tuple argument, and the cause must be chained.
+        assert str(exc_info.value) == (
+            "Unable to initialize scenario: Initialization failed"
+        )
+        assert isinstance(exc_info.value.__cause__, Exception)
 
     def test_create_dummy_scenario_returns_dummy_scenario(self):
         """Test that create_dummy_scenario returns a DummyScenario instance"""

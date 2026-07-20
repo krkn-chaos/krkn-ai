@@ -83,8 +83,10 @@ class TestHealthCheckReporter:
         assert app1_row["success_count"] == 2
         assert app1_row["failure_count"] == 0
 
-    def test_save_report_skips_empty_results_and_continues(self, temp_output_dir):
+    def test_save_report_skips_empty_results_and_continues(self, temp_output_dir, caplog):
         """Test that an empty component results list does not break the loop, missing subsequent components."""
+        import logging
+
         reporter = HealthCheckReporter(output_dir=temp_output_dir)
         scenario = DummyScenario(cluster_components=ClusterComponents())
         now = datetime.datetime.now()
@@ -122,7 +124,8 @@ class TestHealthCheckReporter:
             )
         ]
 
-        reporter.save_report(fitness_results)
+        with caplog.at_level(logging.WARNING, logger="krkn_ai.reporter.health_check_reporter"):
+            reporter.save_report(fitness_results)
 
         report_path = os.path.join(
             temp_output_dir, "reports", "health_check_report.csv"
@@ -133,6 +136,9 @@ class TestHealthCheckReporter:
         # Should contain app1 and app3, skipping broken_app_2 but NOT terminating the loop
         assert len(df) == 2
         assert set(df["component_name"].values) == {"app1", "app3"}
+
+        # Assert the skip was logged so operators can debug silent gaps
+        assert any("zero health-check samples" in msg for msg in caplog.messages)
 
     def test_save_report_with_empty_results(self, temp_output_dir):
         """Test saving report with empty fitness results"""

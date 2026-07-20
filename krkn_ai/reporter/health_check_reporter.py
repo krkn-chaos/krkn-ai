@@ -36,6 +36,10 @@ class HealthCheckReporter:
 
             for component_results in health_check_results:
                 if len(component_results) == 0:
+                    logger.warning(
+                        "Component in scenario_id=%s produced zero health-check samples, skipping.",
+                        scenario_id,
+                    )
                     continue
                 component_name = component_results[0].name
                 min_response_time = min(

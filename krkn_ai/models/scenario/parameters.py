@@ -347,7 +347,7 @@ class PodNameParameter(BaseParameter):
 
     def get_value(self):
         if self._namespace and self._owner_kind and self._owner_name:
-            from krkn_ai.utils.pvc_utils import resolve_pod_name
+            from krkn_ai.cluster import resolve_pod_name
 
             return resolve_pod_name(
                 self._namespace, self.value, self._owner_kind, self._owner_name

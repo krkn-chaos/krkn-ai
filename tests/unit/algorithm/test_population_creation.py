@@ -20,7 +20,7 @@ class TestPopulationCreation:
         mock_scenario = DummyScenario(cluster_components=ClusterComponents())
 
         with patch(
-            "krkn_ai.algorithm.genetic.ScenarioFactory.generate_random_scenario"
+            "krkn_ai.algorithm.genetic.engine.ScenarioFactory.generate_random_scenario"
         ) as mock_gen_scenario:
             mock_gen_scenario.return_value = mock_scenario
             population = genetic_algorithm.create_population(population_size)
@@ -46,7 +46,7 @@ class TestPopulationCreation:
             return None
 
         with patch(
-            "krkn_ai.algorithm.genetic.ScenarioFactory.generate_random_scenario"
+            "krkn_ai.algorithm.genetic.engine.ScenarioFactory.generate_random_scenario"
         ) as mock_gen_scenario:
             mock_gen_scenario.side_effect = limited_scenario_generator
             # Pre-populate seen_population with a scenario for duplication
@@ -63,7 +63,7 @@ class TestPopulationCreation:
         population_size = 10
 
         with patch(
-            "krkn_ai.algorithm.genetic.ScenarioFactory.generate_random_scenario"
+            "krkn_ai.algorithm.genetic.engine.ScenarioFactory.generate_random_scenario"
         ) as mock_gen_scenario:
             mock_gen_scenario.return_value = None
             genetic_algorithm.seen_population = {}

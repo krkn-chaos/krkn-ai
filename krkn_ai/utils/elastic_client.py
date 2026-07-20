@@ -88,19 +88,13 @@ class ElasticSearchClient:
 
         INDEX_NAME = f"{self.config.index}-config"
 
+        # Serialize only the fields relevant for indexing (excludes kubeconfig, elastic creds, etc.)
         config_data = config.model_dump(
             mode="json",
             include={
-                "generations",
-                "population_size",
-                "duration",
+                "algorithm",
+                "genetic",
                 "wait_duration",
-                "mutation_rate",
-                "scenario_mutation_rate",
-                "crossover_rate",
-                "composition_rate",
-                "population_injection_rate",
-                "population_injection_size",
                 "fitness_function",
                 "health_checks",
                 "scenario",

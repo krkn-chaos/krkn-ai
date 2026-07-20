@@ -1,5 +1,5 @@
 from krkn_ai.models.custom_errors import ScenarioParameterInitError
-from krkn_ai.utils.node_selector import select_nodes
+from krkn_ai.cluster import select_nodes
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
     HogScenarioImageParameter,

@@ -105,7 +105,9 @@ class TestReadConfigFromFileHeaders:
         with open(config_file, "w") as f:
             yaml.dump(config, f)
         result = read_config_from_file(config_file, param=["HOST=myhost.com"])
-        assert result.health_checks.applications[0].url == "http://myhost.com/health"
+        assert (
+            str(result.health_checks.applications[0].url) == "http://myhost.com/health"
+        )
 
     def test_no_crash_when_headers_absent(self, tmp_path):
         """Test config without headers loads fine — guards on absent keys don't raise"""
@@ -123,6 +125,73 @@ class TestReadConfigFromFileHeaders:
         result = read_config_from_file(config_file, param=["KEY=value"])
         assert result.health_checks.headers is None
         assert result.health_checks.applications[0].headers is None
+
+    def test_partial_elastic_config_uses_defaults_with_params(self, tmp_path):
+        """Partial elastic config should not fail before Pydantic applies defaults."""
+        config = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "elastic": {"server": "https://$ES_HOST"},
+        }
+        config_file = str(tmp_path / "config.yaml")
+        with open(config_file, "w") as f:
+            yaml.dump(config, f)
+
+        result = read_config_from_file(config_file, param=["ES_HOST=example.com"])
+
+        assert str(result.elastic.server) == "https://example.com/"
+        assert result.elastic.enable is False
+        assert result.elastic.port == 9200
+        assert result.elastic.verify_certs is True
+
+    def test_read_config_merges_cli_params_with_defaults(self, tmp_path):
+        """CLI parameter overrides should merge with default config file parameters, not erase them."""
+        config = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "parameters": {
+                "DEFAULT_TIMEOUT": "30",
+                "TARGET_NAMESPACE": "benchmark",
+            },
+        }
+        config_file = str(tmp_path / "config.yaml")
+        with open(config_file, "w") as f:
+            yaml.dump(config, f)
+
+        # Override TARGET_NAMESPACE, add NEW_PARAM, keep DEFAULT_TIMEOUT
+        result = read_config_from_file(
+            config_file,
+            param=["TARGET_NAMESPACE=prod", "NEW_PARAM=value"],
+        )
+
+        assert "DEFAULT_TIMEOUT" in result.parameters
+        assert result.parameters["DEFAULT_TIMEOUT"].value == "30"
+
+        assert "TARGET_NAMESPACE" in result.parameters
+        assert result.parameters["TARGET_NAMESPACE"].value == "prod"  # Overridden
+
+        assert "NEW_PARAM" in result.parameters
+        assert result.parameters["NEW_PARAM"].value == "value"  # Added
+
+    def test_elastic_null_values_are_not_stringified_with_params(self, tmp_path):
+        """Explicit elastic nulls should remain null so validation catches them."""
+        config = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "elastic": {
+                "server": "https://$ES_HOST",
+                "username": None,
+            },
+        }
+        config_file = str(tmp_path / "config.yaml")
+        with open(config_file, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            read_config_from_file(config_file, param=["ES_HOST=example.com"])
 
 
 class TestReadConfigValidation:

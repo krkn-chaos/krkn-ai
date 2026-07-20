@@ -66,7 +66,7 @@ class HealthCheckWatcher:
             return  # Skip if thread ID is None (should not happen in normal operation)
         thread_results: List[HealthCheckResult] = []
         with self._results_lock:
-            self._thread_results[thread_id] = (health_check.url, thread_results)
+            self._thread_results[thread_id] = (str(health_check.url), thread_results)
 
         resolved_headers = self._resolve_headers(health_check)
 
@@ -74,7 +74,7 @@ class HealthCheckWatcher:
         while not self._stop_event.is_set():
             try:
                 resp = requests.get(
-                    health_check.url,
+                    str(health_check.url),
                     headers=resolved_headers,
                     timeout=health_check.timeout,
                 )

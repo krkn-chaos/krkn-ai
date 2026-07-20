@@ -1423,7 +1423,6 @@ wheels = [
 
 [[package]]
 name = "krkn-ai"
-version = "0.0.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

@@ -11,6 +11,7 @@ Fallback chain:
 """
 
 import json
+import os
 import re
 from typing import Optional, Tuple
 
@@ -131,3 +132,60 @@ def _try_regex_extraction(text: str) -> Optional[Tuple[int, Optional[str]]]:
     logger.debug("Extracted exit_status: %s (regex)", exit_status)
     logger.debug("Extracted run_uuid: %s (regex)", run_uuid)
     return exit_status, run_uuid
+
+
+def extract_telemetry_from_graph_logs(
+    log_dir: str, default_returncode: int
+) -> Tuple[int, Optional[str]]:
+    """
+    Extract return codes from a graph run by parsing individual node log files.
+    krknctl graph run creates a separate log file per graph node execution.
+
+    Returns the worst return code found across all node logs, with safe fallback.
+    """
+    if not os.path.exists(log_dir):
+        logger.warning("Graph log directory does not exist: %s", log_dir)
+        return default_returncode, None
+
+    log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
+    if not log_files:
+        logger.warning("No log files found in graph log directory")
+        return default_returncode, None
+
+    logger.debug("Found %d log files in graph run", len(log_files))
+
+    worst_returncode = 0
+    run_uuid = None
+
+    for log_file in log_files:
+        log_path = os.path.join(log_dir, log_file)
+        try:
+            with open(log_path, "r") as f:
+                node_log = f.read()
+
+            node_returncode, node_uuid = extract_telemetry_from_log(node_log, 0)
+
+            # Track the worst return code seen.
+            # Prioritize misconfiguration (non-zero, non-2) over SLO failures (2).
+            if node_returncode != 0 and node_returncode != 2:
+                worst_returncode = node_returncode
+            elif worst_returncode in (0, 2):
+                if node_returncode > worst_returncode:
+                    worst_returncode = node_returncode
+
+            # Capture UUID from any node (they should all share the same run UUID)
+            if node_uuid and not run_uuid:
+                run_uuid = node_uuid
+
+            logger.debug("Node %s exit status: %d", log_file, node_returncode)
+
+        except Exception as e:
+            logger.warning("Failed to parse log file %s: %s", log_file, e)
+            continue
+
+    logger.info(
+        "Graph run worst exit status: %d (from %d nodes)",
+        worst_returncode,
+        len(log_files),
+    )
+    return worst_returncode, run_uuid

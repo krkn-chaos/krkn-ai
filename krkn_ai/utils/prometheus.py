@@ -86,6 +86,14 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
             "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
         )
 
+    if is_ocp and not token:
+        logger.warning(
+            "Automatic Prometheus token discovery returned empty on OpenShift.\n"
+            "This is expected for exec/certificate-based auth, but if connection fails,\n"
+            "please set the token explicitly:\n"
+            "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
+        )
+
     return _validate_and_create_client(url, token)
 
 

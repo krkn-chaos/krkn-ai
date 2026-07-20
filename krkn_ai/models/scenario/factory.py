@@ -12,7 +12,7 @@ from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
-from krkn_ai.utils.pvc_utils import initialize_kubeconfig
+from krkn_ai.cluster import initialize_kubeconfig
 
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.scenario_pod import PodScenario

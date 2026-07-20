@@ -1,6 +1,9 @@
-"""Tests for krkn_ai.utils.telemetry_parser"""
+"""Tests for krkn_ai.chaos_engines.telemetry_parser"""
 
-from krkn_ai.utils.telemetry_parser import (
+import os
+
+from krkn_ai.chaos_engines.telemetry_parser import (
+    extract_telemetry_from_graph_logs,
     extract_telemetry_from_log,
     strip_ansi,
     _try_json_extraction,
@@ -181,3 +184,54 @@ class TestRegexExtraction:
     def test_handles_ansi_around_values(self):
         text = '\x1b[37m"exit_status"\x1b[0m: 5, "run_uuid": "ansi-uuid"'
         assert _try_regex_extraction(text) == (5, "ansi-uuid")
+
+
+class TestExtractTelemetryFromGraphLogs:
+    """Tests for extracting return codes from a krknctl graph run's per-node log files."""
+
+    def _write_node_log(self, log_dir, name, exit_status, run_uuid="test-uuid-123"):
+        content = f"""
+Chaos data:
+{{
+  "telemetry": {{
+    "run_uuid": "{run_uuid}",
+    "scenarios": [
+      {{
+        "exit_status": {exit_status}
+      }}
+    ]
+  }}
+}}
+"""
+        with open(os.path.join(log_dir, name), "w") as f:
+            f.write(content)
+
+    def test_missing_log_dir_returns_default(self, temp_output_dir):
+        log_dir = os.path.join(temp_output_dir, "does_not_exist")
+        assert extract_telemetry_from_graph_logs(log_dir, 0) == (0, None)
+
+    def test_empty_log_dir_returns_default(self, temp_output_dir):
+        log_dir = os.path.join(temp_output_dir, "empty_graph_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        assert extract_telemetry_from_graph_logs(log_dir, -1) == (-1, None)
+
+    def test_returns_worst_returncode_and_shared_uuid(self, temp_output_dir):
+        log_dir = os.path.join(temp_output_dir, "graph_logs")
+        os.makedirs(log_dir, exist_ok=True)
+        self._write_node_log(log_dir, "node1.log", exit_status=0)
+        self._write_node_log(log_dir, "node2.log", exit_status=2)
+
+        returncode, run_uuid = extract_telemetry_from_graph_logs(log_dir, 0)
+
+        assert returncode == 2
+        assert run_uuid == "test-uuid-123"
+
+    def test_misconfiguration_takes_priority_over_slo_failure(self, temp_output_dir):
+        log_dir = os.path.join(temp_output_dir, "graph_logs_misconfig")
+        os.makedirs(log_dir, exist_ok=True)
+        self._write_node_log(log_dir, "node1.log", exit_status=2)
+        self._write_node_log(log_dir, "node2.log", exit_status=1)
+
+        returncode, _ = extract_telemetry_from_graph_logs(log_dir, 0)
+
+        assert returncode == 1

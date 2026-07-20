@@ -67,6 +67,10 @@ RUN uv sync --frozen --no-install-project --no-dev
 # Copy project source
 COPY . .
 
+# Version for setuptools-scm (.git is excluded by .dockerignore)
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
+
 # Install the project itself (deps already in place, fast)
 RUN uv sync --frozen --no-dev --no-editable
 

@@ -227,6 +227,15 @@ class ElasticConfig(BaseModel):
     index: str = "krkn-ai-metrics"  # Index name for storing Krkn-AI results
     verify_certs: bool = True  # Verify SSL certificates
 
+    @model_validator(mode="after")
+    def server_required_when_enabled(self) -> "ElasticConfig":
+        if self.enable and self.server is None:
+            raise ValueError(
+                "ElasticConfig.server must be set when enable=True. "
+                "Please provide a valid Elasticsearch URL."
+            )
+        return self
+
 
 class HealthCheckResult(BaseModel):
     name: str

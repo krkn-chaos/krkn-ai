@@ -33,12 +33,7 @@ def load_results_json(output_dir: str):
         try:
             with open(json_path, "r") as f:
                 data = json.load(f)
-                scenarios = data.get("best_scenarios", [])
-                if isinstance(scenarios, list):
-                    return scenarios
-                return []
-        except (json.JSONDecodeError, OSError) as e:
-            logging.warning(f"Transient read error for {json_path}: {e}")
+                return data.get("best_scenarios", [])
         except Exception as e:
             logging.error(f"Failed to read {json_path}: {e}")
     return []

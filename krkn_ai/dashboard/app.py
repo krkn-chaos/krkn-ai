@@ -161,7 +161,6 @@ def main():
         learned_weights = load_learned_weights(output_dir)
         health_check_recos = load_health_check_recos(output_dir)
 
-
     # fully unfiltered copy (baseline row included) for anomaly detection
     df_results_all = df_results.copy() if df_results is not None else None
     df_anom_src = df_results.copy() if df_results is not None else None

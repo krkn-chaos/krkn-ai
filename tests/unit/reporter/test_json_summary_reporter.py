@@ -110,7 +110,7 @@ class TestJSONSummaryReporter:
             assert "scenario_type" in item
             assert "parameters" in item
             assert "fitness_result" in item
-            
+
             fr = item["fitness_result"]
             assert "fitness_score" in fr
             assert "krkn_failure_score" in fr

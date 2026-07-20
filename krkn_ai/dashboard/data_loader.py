@@ -44,7 +44,6 @@ def load_results_json(output_dir: str):
     return []
 
 
-
 @st.cache_data(ttl=300)
 def load_config_yaml(output_dir: str):
     config_path = os.path.join(output_dir, "krkn-ai.yaml")

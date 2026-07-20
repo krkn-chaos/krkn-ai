@@ -157,6 +157,11 @@ class TestClusterManager:
         assert ClusterManager.parse_memory("1000K") == 1000 * 1000
         assert ClusterManager.parse_memory("1M") == 1000**2
 
+        # Test lowercase SI units (case-insensitive fallback)
+        assert ClusterManager.parse_memory("1000k") == 1000 * 1000
+        assert ClusterManager.parse_memory("512m") == 512 * 1000**2
+        assert ClusterManager.parse_memory("2g") == 2 * 1000**3
+
         # Test plain bytes
         assert ClusterManager.parse_memory("1024") == 1024
         assert ClusterManager.parse_memory("512.5") == 512

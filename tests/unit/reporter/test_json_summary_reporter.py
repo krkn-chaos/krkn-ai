@@ -48,6 +48,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="test-run",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=best,
             start_time=now,
@@ -63,8 +64,11 @@ class TestJSONSummaryReporter:
         assert summary["start_time"] == now.isoformat()
         assert summary["duration_seconds"] == 100.0
 
-        assert summary["config"]["generations"] == minimal_config.generations
-        assert summary["config"]["population_size"] == minimal_config.population_size
+        assert summary["config"]["generations"] == minimal_config.genetic.generations
+        assert (
+            summary["config"]["population_size"]
+            == minimal_config.genetic.population_size
+        )
 
         assert summary["summary"]["total_scenarios_executed"] == 6
         assert summary["summary"]["best_fitness_score"] == 60.0
@@ -88,6 +92,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="test",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=[],
         )
@@ -115,6 +120,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="single",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=gen0,
             best_of_generation=[gen0[1]],
             completed_generations=1,
@@ -137,6 +143,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="zero",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population={999: res_zero},
             best_of_generation=[],
         )
@@ -149,6 +156,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="empty",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population={},
             best_of_generation=[],
         )
@@ -168,6 +176,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="save-test",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=[],
         )

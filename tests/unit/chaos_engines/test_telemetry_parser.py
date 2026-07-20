@@ -1,6 +1,6 @@
-"""Tests for krkn_ai.utils.telemetry_parser"""
+"""Tests for krkn_ai.chaos_engines.telemetry_parser"""
 
-from krkn_ai.utils.telemetry_parser import (
+from krkn_ai.chaos_engines.telemetry_parser import (
     extract_telemetry_from_log,
     strip_ansi,
     _try_json_extraction,

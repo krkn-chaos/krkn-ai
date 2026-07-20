@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "krkn_ai"
-version = "0.0.3"
+dynamic = ["version"]
 description = "Krkn-AI"
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
@@ -40,6 +40,9 @@ dev = [
   "jupyterlab",
   "beautifulsoup4",
 ]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
 
 [tool.setuptools.packages.find]
 include = ["krkn_ai*"]

@@ -1,4 +1,6 @@
+import logging
 import shlex
+import shutil
 import subprocess
 import threading
 from typing import Iterator
@@ -27,9 +29,19 @@ def run_shell(command, do_not_log=False, timeout=None):
     command = shlex.split(command)
     logger.debug("Running command: %s", command[0])
 
-    process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+    if not shutil.which(command[0]):
+        level = logging.DEBUG if do_not_log else logging.ERROR
+        logger.log(level, "Command not found: '%s'", command[0])
+        return "", 127
+
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+    except OSError as e:
+        level = logging.DEBUG if do_not_log else logging.ERROR
+        logger.log(level, "Failed to execute '%s': %s", command[0], e)
+        return "", 127
 
     output_lines = []
 

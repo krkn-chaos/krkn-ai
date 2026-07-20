@@ -140,8 +140,8 @@ class TestSelection:
         ]
 
         # Configure for tournament selection
-        genetic_algorithm.config.selection_strategy = SelectionStrategy.tournament
-        genetic_algorithm.config.tournament_size = 2
+        genetic_algorithm.algo_config.selection_strategy = SelectionStrategy.tournament
+        genetic_algorithm.algo_config.tournament_size = 2
 
         parent1, parent2 = genetic_algorithm.select_parents(fitness_scores)
 

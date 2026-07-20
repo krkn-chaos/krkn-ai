@@ -13,6 +13,7 @@ from krkn_ai.utils.logger import init_logger, get_logger
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import KrknRunnerType
+from krkn_ai.models.config import AlgorithmType
 from krkn_ai.dashboard.manager import DashboardManager
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
@@ -21,7 +22,8 @@ from krkn_ai.models.custom_errors import (
     UniqueScenariosError,
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
-from krkn_ai.utils.cluster_manager import ClusterManager
+from krkn_ai.cluster import ClusterManager
+from krkn_ai.models.scenario.factory import ScenarioFactory
 
 
 @click.group(context_settings={"show_default": True})
@@ -146,16 +148,22 @@ def run(
             with open(os.path.join(new_output_path, "results.json"), "w") as f:
                 json.dump({"status": STATUS_STARTED}, f)
 
-            genetic = GeneticAlgorithm(
-                run_uuid=run_uuid,
-                config=parsed_config,
-                output_dir=new_output_path,
-                format=format,
-                runner_type=enum_runner_type,
-            )
-            genetic.simulate()
+            # Dispatch to the selected algorithm engine
+            if parsed_config.algorithm == AlgorithmType.genetic:
+                engine = GeneticAlgorithm(
+                    run_uuid=run_uuid,
+                    config=parsed_config,
+                    output_dir=new_output_path,
+                    format=format,
+                    runner_type=enum_runner_type,
+                )
+            else:
+                logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
+                exit(1)
 
-            genetic.save()
+            engine.simulate()
+
+            engine.save()
             run_success = True
         except (
             MissingScenarioError,
@@ -175,8 +183,8 @@ def run(
                 try:
                     with open(os.path.join(new_output_path, "results.json"), "w") as f:
                         json.dump({"status": STATUS_FAILED}, f)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)
             if monitoring:
                 logger.info(
@@ -249,7 +257,7 @@ def monitor(ctx, output: str, port: int):
     "--save-strategy",
     type=click.Choice(["skip", "overwrite", "merge"], case_sensitive=False),
     default="skip",
-    help="How to save: skip, overwrite (replace), or merge (add new). Note: merge does not preserve comments inside cluster_components.",
+    help="How to save: skip, overwrite (replace), or merge (add new components, keep your edits). Note: merge does not preserve comments.",
 )
 @click.pass_context
 def discover(
@@ -289,4 +297,23 @@ def discover(
         logger.error("An unexpected error occurred during discovery: %s", e)
         sys.exit(1)
 
-    save_discovery(output, save_strategy, cluster_components, kubeconfig)
+    # recommend only for overwrite, or when no file exists for other strategies
+    fresh_write = not os.path.exists(output) or save_strategy.lower() == "overwrite"
+    scenario_enables = (
+        ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
+        if fresh_write
+        else None
+    )
+    health_checks = (
+        cluster_manager.recommend_health_checks(cluster_components)
+        if fresh_write
+        else None
+    )
+    save_discovery(
+        output,
+        save_strategy,
+        cluster_components,
+        kubeconfig,
+        scenario_enables=scenario_enables,
+        health_checks=health_checks,
+    )

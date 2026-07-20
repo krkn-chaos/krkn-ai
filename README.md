@@ -104,12 +104,17 @@ Key config options:
 
 ```yaml
 kubeconfig_file_path: "./tmp/kubeconfig.yaml"
-
-generations: 5
-population_size: 10
-composition_rate: 0.3
-population_injection_rate: 0.1
 wait_duration: 30          # seconds between scenarios
+
+# Algorithm selector — currently "genetic", future engines will add their own section
+algorithm: genetic
+
+# Genetic algorithm parameters (separate section per algorithm)
+genetic:
+  generations: 5
+  population_size: 10
+  composition_rate: 0.3
+  population_injection_rate: 0.1
 
 fitness_function:
   query: 'sum(kube_pod_container_status_restarts_total{namespace="robot-shop"})'
@@ -130,6 +135,8 @@ scenario:
   node-cpu-hog:
     enable: true
 ```
+
+> **Note:** Config files using the old flat layout (GA fields at root level) are still supported — they are automatically migrated on load.
 
 See the full config reference in the [docs](https://krkn-chaos.dev/docs/krkn_ai/config/).
 

@@ -16,7 +16,7 @@ class TestCrossover:
         scenario_b = DummyScenario(cluster_components=ClusterComponents())
 
         # Set crossover rate to 1.0 to ensure crossover happens
-        genetic_algorithm.config.crossover_rate = 1.0
+        genetic_algorithm.algo_config.crossover_rate = 1.0
 
         child1, child2 = genetic_algorithm.crossover(scenario_a, scenario_b)
 

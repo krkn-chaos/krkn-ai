@@ -6,7 +6,12 @@ import pytest
 from unittest.mock import patch
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
-from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.cluster_components import (
+    ClusterComponents,
+    Namespace,
+    Pod,
+    Node,
+)
 from krkn_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 
@@ -27,6 +32,36 @@ class TestScenarioFactory:
         candidates = ScenarioFactory.list_scenarios(config)
         assert len(candidates) == 1
         assert candidates[0][0] == "pod_scenarios"
+
+    def test_scenario_config_accepts_underscore_names(self):
+        """ScenarioConfig accepts underscore field names (populate_by_name)."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(pod_scenarios={"enable": True}),
+            cluster_components=cluster,
+        )
+        candidates = ScenarioFactory.list_scenarios(config)
+        assert len(candidates) == 1
+        assert candidates[0][0] == "pod_scenarios"
+
+    def test_scenario_config_accepts_both_naming_conventions(self):
+        """ScenarioConfig accepts hyphen and underscore names in the same call."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(
+                **{"pod-scenarios": {"enable": True}},
+                node_cpu_hog={"enable": True},
+            ),
+            cluster_components=cluster,
+        )
+        candidates = ScenarioFactory.list_scenarios(config)
+        names = {name for name, _ in candidates}
+        assert "pod_scenarios" in names
+        assert "node_cpu_hog" in names
 
     def test_list_scenarios_filters_out_disabled_scenarios(self):
         """Test that list_scenarios excludes disabled scenarios"""
@@ -114,3 +149,62 @@ class TestScenarioFactory:
         scenario = ScenarioFactory.create_dummy_scenario()
         assert isinstance(scenario, DummyScenario)
         assert scenario._cluster_components == ClusterComponents()
+
+
+class TestRecommendEnabledScenarios:
+    """Test ScenarioFactory.recommend_enabled_scenarios"""
+
+    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
+    def test_node_scenarios_depend_on_nodes(self, _mock_init):
+        """Node scenarios are recommended only with nodes."""
+        with_nodes = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(
+                namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
+                nodes=[Node(name="n1")],
+            ),
+            "/tmp/kubeconfig",
+        )
+        without_nodes = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(
+                namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])]
+            ),
+            "/tmp/kubeconfig",
+        )
+        assert with_nodes["node_cpu_hog"] is True
+        assert without_nodes["node_cpu_hog"] is False
+
+    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
+    def test_namespace_scenarios_depend_on_pods(self, _mock_init):
+        """Pod scenarios are recommended only with pods."""
+        with_pods = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(
+                namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
+                nodes=[Node(name="n1")],
+            ),
+            "/tmp/kubeconfig",
+        )
+        nodes_only = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(nodes=[Node(name="n1")]), "/tmp/kubeconfig"
+        )
+        assert with_pods["dns_outage"] is True
+        assert nodes_only["dns_outage"] is False
+
+    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
+    def test_all_disabled_for_empty_cluster(self, _mock_init):
+        """Empty cluster disables all scenarios."""
+        result = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(), "/tmp/kubeconfig"
+        )
+        assert isinstance(result, dict)
+        assert not any(result.values())
+
+    @patch(
+        "krkn_ai.models.scenario.factory.ScenarioFactory.generate_valid_scenarios",
+        side_effect=RuntimeError("boom"),
+    )
+    def test_all_disabled_on_unexpected_error(self, _mock_gen):
+        """Errors return all-disabled dict instead of raising."""
+        cluster = ClusterComponents(namespaces=[Namespace(name="shop")])
+        result = ScenarioFactory.recommend_enabled_scenarios(cluster, "/tmp/kubeconfig")
+        assert isinstance(result, dict)
+        assert not any(result.values())

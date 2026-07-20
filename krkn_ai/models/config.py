@@ -220,7 +220,9 @@ class ElasticConfig(BaseModel):
     """
 
     enable: bool = False  # Enable Elasticsearch integration
-    server: Optional[AnyHttpUrl] = None  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
+    server: Optional[AnyHttpUrl] = (
+        None  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
+    )
     port: int = 9200  # Elasticsearch port
     username: str = ""  # Elasticsearch username
     password: str = Field(exclude=True, default="")  # Elasticsearch password

@@ -105,7 +105,7 @@ class TestReadConfigFromFileHeaders:
         with open(config_file, "w") as f:
             yaml.dump(config, f)
         result = read_config_from_file(config_file, param=["HOST=myhost.com"])
-        assert result.health_checks.applications[0].url == "http://myhost.com/health"
+        assert str(result.health_checks.applications[0].url) == "http://myhost.com/health"
 
     def test_no_crash_when_headers_absent(self, tmp_path):
         """Test config without headers loads fine — guards on absent keys don't raise"""
@@ -138,7 +138,7 @@ class TestReadConfigFromFileHeaders:
 
         result = read_config_from_file(config_file, param=["ES_HOST=example.com"])
 
-        assert result.elastic.server == "https://example.com"
+        assert str(result.elastic.server) == "https://example.com/"
         assert result.elastic.enable is False
         assert result.elastic.port == 9200
         assert result.elastic.verify_certs is True

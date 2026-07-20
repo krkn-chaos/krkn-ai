@@ -5,6 +5,22 @@ from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
 
 
+def _mutate_percentage(value: int, floor: int) -> int:
+    """Mutate an integer percentage by at least +/-1, clamped to ``[floor, 100]``.
+
+    The ``max(1, ...)`` guard guarantees a real change even for small values.
+    Without it, ``int(rng.randint(1, 35) * value / 100)`` truncates to ``0`` for
+    low ``value`` (e.g. ``value <= 3`` with ``floor == 1``), so ``mutate`` would
+    be a no-op and the genetic algorithm would stagnate on those parameters
+    instead of exploring the search space. (#292)
+    """
+    if rng.random() < 0.5:
+        value += max(1, int(rng.randint(1, 35) * value / 100))
+    else:
+        value -= max(1, int(rng.randint(1, 25) * value / 100))
+    return min(max(value, floor), 100)
+
+
 class DummyEndParameter(BaseParameter):
     krknhub_name: str = "END"
     krknctl_name: str = "duration"
@@ -112,13 +128,7 @@ class NodeCPUPercentageParameter(BaseParameter):
     value: int = 50
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=20)
 
 
 class NodeMemoryPercentageParameter(BaseParameter):
@@ -134,13 +144,7 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=20)
 
 
 class NumberOfWorkersParameter(BaseParameter):
@@ -503,13 +507,7 @@ class IOWriteBytesParameter(BaseParameter):
         """
         Mutate the percentage value between 1 and 100.
         """
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 1)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=1)
 
 
 class NodeMountPathParameter(BaseParameter):

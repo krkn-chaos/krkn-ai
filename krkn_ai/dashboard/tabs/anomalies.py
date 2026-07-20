@@ -1349,13 +1349,13 @@ Upper fence = Q3 + 1.5 × IQR
 | Detector | Metric | Method | Trigger |
 |---|---|---|---|
 | **Low / High Fitness** | `fitness_score` | IQR fence | x < Q1−1.5·IQR or x > Q3+1.5·IQR |
-| **Duration Anomaly** | `duration_seconds` | Z-score (RMS σ vs baseline if available) | `\|z\| ≥ 1.5` |
+| **Duration Anomaly** | `duration_seconds` | Z-score (RMS σ vs baseline if available) | `|z| ≥ 1.5` |
 | **HC Failure Surge** | `health_check_failure_score` | IQR fence | x > Q3+1.5·IQR |
 | **Fitness Regression** | Best fitness per generation | Gen-over-gen delta | `drop% = (prev−cur)/prev×100`; High if drop > 20% |
-| **Service Failure Rate** | Per-service failure_rate | Z-score vs service distribution | `\|z\| ≥ 1.5` |
+| **Service Failure Rate** | Per-service failure_rate | Z-score vs service distribution | `|z| ≥ 1.5` |
 | **Krkn Failure Score** | `krkn_failure_score` | Non-zero sentinel + IQR | Non-zero → Medium; above IQR upper fence → High |
-| **HC Response Time** | `health_check_response_time_score` | IQR + Z-score | IQR breach OR `\|z\| ≥ 1.5` |
-| **Service RT Spike** | Avg `response_time` per service | Z-score vs per-service distribution | `\|z\| ≥ 1.5` |
+| **HC Response Time** | `health_check_response_time_score` | IQR + Z-score | IQR breach OR `|z| ≥ 1.5` |
+| **Service RT Spike** | Avg `response_time` per service | Z-score vs per-service distribution | `|z| ≥ 1.5` |
 
 *Duration uses RMS deviation: `σ_rms = √[ Σ(dᵢ − baseline)² / N ]` when a baseline is available; falls back to population σ otherwise.*
 """
@@ -1367,9 +1367,9 @@ For each value **x** and its baseline reference **b**:
 
 | Symbol | Formula |
 |:---|:---|
-| Percent deviation | `Δ% = (x − b) / \|b\| × 100` |
+| Percent deviation | `Δ% = (x − b) / |b| × 100` |
 
-> **Severity bands:** `\|Δ%\| ≥ 60` → High &nbsp;|&nbsp; `\|Δ%\| ≥ 30` → Medium &nbsp;|&nbsp; else → Low
+> **Severity bands:** `|Δ%| ≥ 60` → High &nbsp;|&nbsp; `|Δ%| ≥ 30` → Medium &nbsp;|&nbsp; else → Low
 
 > **Note:** IQR fences (Q1−1.5·IQR / Q3+1.5·IQR) are still applied for Fitness as an additional gate.
 
@@ -1378,13 +1378,13 @@ For each value **x** and its baseline reference **b**:
 | Detector | Baseline reference *b* | Trigger condition |
 |---|---|---|
 | **Low / High Fitness** | Baseline scenario `fitness_score` | IQR fence breach **and/or** `Δ% < 0` below baseline |
-| **Duration Anomaly** | Baseline scenario `duration_seconds` | `\|Δ%\| ≥ 30` |
-| **HC Failure Surge** | Baseline `health_check_failure_score` | `\|Δ%\| ≥ 30` |
+| **Duration Anomaly** | Baseline scenario `duration_seconds` | `|Δ%| ≥ 30` |
+| **HC Failure Surge** | Baseline `health_check_failure_score` | `|Δ%| ≥ 30` |
 | **Fitness Regression** | Previous generation best fitness | `drop% = (prev−cur)/prev×100`; High if drop > 20%, Medium if drop > 10% |
-| **Service Failure Rate** | Baseline per-service failure rate | `\|Δ%\| ≥ 30` |
+| **Service Failure Rate** | Baseline per-service failure rate | `|Δ%| ≥ 30` |
 | **Krkn Failure Score** | — (non-zero sentinel) | Non-zero → Medium; above IQR upper fence → High |
-| **HC Response Time** | Baseline `health_check_response_time_score` | `\|Δ%\| ≥ 30` |
-| **Service RT Spike** | Baseline per-service avg `response_time` | `\|Δ%\| ≥ 30` |
+| **HC Response Time** | Baseline `health_check_response_time_score` | `|Δ%| ≥ 30` |
+| **Service RT Spike** | Baseline per-service avg `response_time` | `|Δ%| ≥ 30` |
 
 *Fitness Regression and Krkn Failure Score do not use % deviation — they use fixed rule-based logic regardless of mode.*
 """

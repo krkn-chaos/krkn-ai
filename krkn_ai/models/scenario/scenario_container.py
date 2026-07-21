@@ -70,10 +70,14 @@ class ContainerScenario(Scenario):
         self.label_selector.value = "{}={}".format(label, labels[label])
 
         # DISRUPTION_COUNT is the number of *pods* to disrupt, so bound it by how
-        # many pods in the namespace match the selected label rather than by the
-        # container count of a single pod. (#277)
+        # many pods in the namespace are eligible targets for the selected label
+        # rather than by the container count of a single pod. Pods without
+        # containers are excluded here just as they are from the candidate list
+        # above, so the count never exceeds the number of disruptable pods. (#277)
         matching_pod_count = sum(
-            1 for p in namespace.pods if p.labels.get(label) == labels[label]
+            1
+            for p in namespace.pods
+            if p.labels.get(label) == labels[label] and len(p.containers) > 0
         )
         self.disruption_count.value = rng.randint(1, matching_pod_count)
 

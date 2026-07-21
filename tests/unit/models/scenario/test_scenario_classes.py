@@ -121,6 +121,24 @@ class TestContainerScenario:
             seen_counts.add(scenario.disruption_count.value)
         assert max(seen_counts) > 1  # bounded by pods (3), not the single container
 
+    def test_container_scenario_disruption_count_excludes_containerless_pods(self):
+        """Label-matching pods without containers don't inflate the count (#277).
+
+        Three pods share the label but only one has a container, so only one pod
+        is a disruptable target and disruption_count must always be 1.
+        """
+        pods = [
+            Pod(name="web-0", labels={"app": "web"}, containers=[Container(name="c1")]),
+            Pod(name="web-1", labels={"app": "web"}, containers=[]),
+            Pod(name="web-2", labels={"app": "web"}, containers=[]),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.disruption_count.value == 1
+
     def test_container_scenario_container_name_is_specific_or_wildcard(self):
         """container_name is a real container or '.*', decoupled from count (#277).
 

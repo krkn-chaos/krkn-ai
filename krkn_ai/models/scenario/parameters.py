@@ -6,19 +6,27 @@ from krkn_ai.models.scenario.base import BaseParameter
 
 
 def _mutate_percentage(value: int, floor: int) -> int:
-    """Mutate an integer percentage by at least +/-1, clamped to ``[floor, 100]``.
+    """Mutate an integer percentage, clamped to ``[floor, 100]``.
 
-    The ``max(1, ...)`` guard guarantees a real change even for small values.
-    Without it, ``int(rng.randint(1, 35) * value / 100)`` truncates to ``0`` for
-    low ``value`` (e.g. ``value <= 3`` with ``floor == 1``), so ``mutate`` would
-    be a no-op and the genetic algorithm would stagnate on those parameters
-    instead of exploring the search space. (#292)
+    Preserves the original ``int(value +/- randint(...) * value / 100)`` rounding
+    of the previous per-parameter implementations, but guarantees the mutation is
+    not a silent no-op: when truncation would leave ``value`` unchanged it is
+    nudged by +/-1, so the genetic algorithm keeps exploring instead of
+    stagnating on small values (e.g. ``value <= 3`` with ``floor == 1``, where
+    ``int(randint(1, 35) * value / 100)`` truncated to ``0``). (#292)
+
+    Note: at the bounds the final clamp to ``[floor, 100]`` may still return the
+    original value (e.g. an increment from ``100`` or a decrement at ``floor``).
     """
     if rng.random() < 0.5:
-        value += max(1, int(rng.randint(1, 35) * value / 100))
+        mutated = int(value + rng.randint(1, 35) * value / 100)
+        if mutated == value:
+            mutated = value + 1
     else:
-        value -= max(1, int(rng.randint(1, 25) * value / 100))
-    return min(max(value, floor), 100)
+        mutated = int(value - rng.randint(1, 25) * value / 100)
+        if mutated == value:
+            mutated = value - 1
+    return min(max(mutated, floor), 100)
 
 
 class DummyEndParameter(BaseParameter):

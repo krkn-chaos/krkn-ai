@@ -52,6 +52,35 @@ class TestPercentageMutationDoesNotStagnate:
             param.mutate()
         assert param.value == 1
 
+    def test_decrement_preserves_original_int_rounding(self):
+        """A real decrement keeps the pre-refactor int(value - delta) rounding.
+
+        value=50, multiplier=3 -> delta=1.5; int(50 - 1.5) == 48. The no-op guard
+        must not alter this, since the value genuinely changed (50 -> 48).
+        """
+        param = NodeCPUPercentageParameter()
+        param.value = 50
+        with (
+            patch(f"{_RNG}.random", return_value=0.9),
+            patch(f"{_RNG}.randint", return_value=3),
+        ):
+            param.mutate()
+        assert param.value == 48
+
+    def test_increment_preserves_original_int_rounding(self):
+        """A real increment keeps the pre-refactor int(value + delta) rounding.
+
+        value=50, multiplier=3 -> delta=1.5; int(50 + 1.5) == 51.
+        """
+        param = NodeCPUPercentageParameter()
+        param.value = 50
+        with (
+            patch(f"{_RNG}.random", return_value=0.0),
+            patch(f"{_RNG}.randint", return_value=3),
+        ):
+            param.mutate()
+        assert param.value == 51
+
     def test_result_always_within_bounds_and_integer(self):
         for cls, floor in (
             (NodeCPUPercentageParameter, 20),

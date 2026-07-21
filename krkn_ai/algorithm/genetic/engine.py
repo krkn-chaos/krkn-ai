@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import time
+import uuid
 from typing import List, Optional
 
 from krkn_ai.algorithm.base import BaseEngine
@@ -341,10 +342,23 @@ class GeneticAlgorithm(BaseEngine):
         if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
+                new_scenario.parent_id = scenario.id
+                new_scenario.mutation_type = "type_mutation"
                 return new_scenario
 
         if hasattr(scenario, "mutate"):
+            old_params = {p.krknctl_name: p.value for p in scenario.parameters} if hasattr(scenario, "parameters") else {}
             scenario.mutate()
+            mutated = []
+            if hasattr(scenario, "parameters"):
+                for p in scenario.parameters:
+                    if p.krknctl_name in old_params and old_params[p.krknctl_name] != p.value:
+                        mutated.append(p.krknctl_name)
+            if mutated:
+                scenario.parent_id = scenario.id
+                scenario.id = str(uuid.uuid4())
+                scenario.mutation_type = "parameter_mutation"
+                scenario.mutated_parameters = mutated
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario
@@ -425,6 +439,14 @@ class GeneticAlgorithm(BaseEngine):
         return parent1, parent2
 
     def crossover(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
+        scenario_a.parent_id = scenario_a.id
+        scenario_a.id = str(uuid.uuid4())
+        scenario_a.mutation_type = "crossover"
+        
+        scenario_b.parent_id = scenario_b.id
+        scenario_b.id = str(uuid.uuid4())
+        scenario_b.mutation_type = "crossover"
+
         if isinstance(scenario_a, CompositeScenario) and isinstance(
             scenario_b, CompositeScenario
         ):
@@ -485,6 +507,8 @@ class GeneticAlgorithm(BaseEngine):
             scenario_a=scenario_a,
             scenario_b=scenario_b,
             dependency=dependency,
+            parent_id=f"{scenario_a.id},{scenario_b.id}",
+            mutation_type="composition"
         )
         return composite_scenario
 

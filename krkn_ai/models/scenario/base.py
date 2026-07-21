@@ -1,7 +1,8 @@
 from enum import Enum
-from pydantic import BaseModel, PrivateAttr
+import uuid
+from pydantic import BaseModel, PrivateAttr, Field
 from krkn_ai.models.cluster_components import ClusterComponents
-from typing import Any
+from typing import Any, Optional, List
 
 
 class BaseParameter(BaseModel):
@@ -20,9 +21,13 @@ class BaseParameter(BaseModel):
 
 
 class BaseScenario(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     krknctl_name: str  # Name of the scenario in krknctl
     krknhub_image: str  # Image of the scenario in krknhub
+    parent_id: Optional[str] = None
+    mutation_type: Optional[str] = None
+    mutated_parameters: Optional[List[str]] = []
 
 
 class Scenario(BaseScenario):

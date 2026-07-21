@@ -1,15 +1,20 @@
 """Catalog of PromQL fitness queries and a recommender that adapts them per cluster."""
 
+import os
 from enum import Enum
 from typing import Dict, List, Optional, Union
 
-from pydantic import BaseModel, field_validator
+import yaml
+from pydantic import BaseModel
 
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import FitnessFunctionItem, FitnessFunctionType
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_CATALOG_PATH = os.path.join(os.path.dirname(__file__), "catalog.yaml")
+_VALIDATION_RANGE = "5m"
 
 
 class FitnessCategory(str, Enum):
@@ -28,21 +33,13 @@ class CatalogEntry(BaseModel):
     """A fitness query template, where $ns is a namespace and $range$ the run window."""
 
     key: str
-    category: FitnessCategory
-    name: str
     query_template: str
+    category: Optional[FitnessCategory] = None
+    name: Optional[str] = None
     type: FitnessFunctionType = FitnessFunctionType.range
-    requires: List[str]
+    requires: List[str] = []
     scope: Scope = Scope.namespace
-    default_weight: float = 1.0
-
-    @field_validator("default_weight")
-    @classmethod
-    def _weight_range(cls, value: float) -> float:
-        # Match FitnessFunctionItem's [0.0, 1.0] constraint.
-        if value < 0 or value > 1:
-            raise ValueError(f"{value} is outside the range [0.0, 1.0]")
-        return value
+    default_weight: float = 1.0  # seed used when there's no learned weight
 
     def resolved_query(self, namespace: Optional[str] = None) -> str:
         """Fill $ns; $range$ is left for the runtime executor."""
@@ -58,84 +55,13 @@ class CatalogEntry(BaseModel):
         )
 
 
-# High-impact signals: restarts, downtime, OOM, CPU throttling, node and API health.
-BASE_CATALOG: List[CatalogEntry] = [
-    CatalogEntry(
-        key="pod-restarts",
-        category=FitnessCategory.availability,
-        name="Pod container restarts",
-        query_template=(
-            'sum(increase(kube_pod_container_status_restarts_total'
-            '{namespace="$ns"}[$range$]))'
-        ),
-        requires=["kube_pod_container_status_restarts_total"],
-        scope=Scope.namespace,
-    ),
-    CatalogEntry(
-        key="pod-unavailable",
-        category=FitnessCategory.availability,
-        name="Non-running pods (Pending/Failed/Unknown)",
-        query_template=(
-            'sum(kube_pod_status_phase'
-            '{namespace="$ns", phase=~"Pending|Failed|Unknown"})'
-        ),
-        requires=["kube_pod_status_phase"],
-        scope=Scope.namespace,
-    ),
-    CatalogEntry(
-        # 0 series until a container was last killed by OOM.
-        key="oom-kills",
-        category=FitnessCategory.resource,
-        name="Containers last terminated by OOMKilled",
-        query_template=(
-            'sum(kube_pod_container_status_last_terminated_reason'
-            '{namespace="$ns", reason="OOMKilled"})'
-        ),
-        requires=["kube_pod_container_status_last_terminated_reason"],
-        scope=Scope.namespace,
-    ),
-    CatalogEntry(
-        key="cpu-throttle",
-        category=FitnessCategory.resource,
-        name="Worst-container CPU throttling ratio",
-        query_template=(
-            "max("
-            "rate(container_cpu_cfs_throttled_periods_total"
-            '{namespace="$ns", container!=""}[$range$])'
-            " / "
-            "rate(container_cpu_cfs_periods_total"
-            '{namespace="$ns", container!=""}[$range$])'
-            ")"
-        ),
-        requires=[
-            "container_cpu_cfs_throttled_periods_total",
-            "container_cpu_cfs_periods_total",
-        ],
-        scope=Scope.namespace,
-    ),
-    CatalogEntry(
-        key="node-pressure",
-        category=FitnessCategory.node,
-        name="Nodes reporting a pressure condition",
-        query_template=(
-            "sum(kube_node_status_condition"
-            '{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"})'
-        ),
-        requires=["kube_node_status_condition"],
-        scope=Scope.cluster,
-    ),
-    CatalogEntry(
-        key="apiserver-errors",
-        category=FitnessCategory.control_plane,
-        name="API server 5xx error fraction",
-        query_template=(
-            'sum(rate(apiserver_request_total{code=~"5.."}[$range$]))'
-            " / sum(rate(apiserver_request_total[$range$]))"
-        ),
-        requires=["apiserver_request_total"],
-        scope=Scope.cluster,
-    ),
-]
+def _load_catalog() -> List[CatalogEntry]:
+    with open(_CATALOG_PATH, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or []
+    return [CatalogEntry.model_validate(e) for e in data]
+
+
+BASE_CATALOG: List[CatalogEntry] = _load_catalog()
 
 
 def get_base_catalog() -> List[CatalogEntry]:
@@ -144,8 +70,6 @@ def get_base_catalog() -> List[CatalogEntry]:
 
 
 # Dynamic layer: adapt the catalog to a live cluster
-
-_VALIDATION_RANGE = "5m"
 
 
 def _safe_query(query: str) -> str:
@@ -165,10 +89,20 @@ def _validate_shape(prom_client, query: str) -> tuple:
     return True, ""
 
 
+def _assign_weights(enabled: List[dict]) -> None:
+    """Normalize seed weights across enabled items (equal when all are default)."""
+    total = sum(r["weight"] for r in enabled)
+    if total <= 0:
+        return
+    for r in enabled:
+        r["weight"] = round(r["weight"] / total, 4)
+
+
 def recommend_fitness_queries(
-    components: ClusterComponents, prom_client
+    components: ClusterComponents, prom_client, learned_weights: dict = None
 ) -> List[Dict[str, Union[str, bool, float]]]:
-    """Suggest fitness queries for the cluster, gated on which metrics exist."""
+    """Suggest fitness queries the cluster can run, seeded by learned_weights if given."""
+    learned_weights = learned_weights or {}
     try:
         available = set(prom_client.prom_cli.all_metrics())
     except Exception as error:
@@ -198,18 +132,11 @@ def recommend_fitness_queries(
                     "name": name,
                     "query": query,
                     "type": entry.type.value,
-                    "weight": entry.default_weight,
+                    "weight": learned_weights.get(query, entry.default_weight),
                     "enabled": enabled,
                     "reason": reason,
                 }
             )
 
-    # split weight evenly across enabled items
-    enabled_count = sum(1 for r in results if r["enabled"])
-    if enabled_count:
-        share = round(1.0 / enabled_count, 4)
-        for r in results:
-            if r["enabled"]:
-                r["weight"] = share
-
+    _assign_weights([r for r in results if r["enabled"]])
     return results

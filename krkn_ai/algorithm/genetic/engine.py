@@ -23,6 +23,9 @@ from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
+from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
+
+LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
 logger = get_logger(__name__)
 
@@ -209,10 +212,24 @@ class GeneticAlgorithm(BaseEngine):
         )
         summary_reporter.save(self.output_dir)
 
+        self._save_learned_weights()
+
         if self.elastic_client is not None:
             self.elastic_client.index_run_summary(
                 summary_reporter.generate_summary(), self.run_uuid
             )
+
+    def _save_learned_weights(self):
+        """Learn per-query weights from this run's scenarios for future runs to seed."""
+        items = self.config.fitness_function.items
+        if not items:
+            return
+        weights = learn_weights(self.seen_population.values(), items)
+        if not weights:
+            return
+        path = os.path.join(self.output_dir, LEARNED_WEIGHTS_FILE)
+        save_learned_weights(weights, path)
+        logger.info("Saved learned fitness weights to %s", path)
 
     def adapt_mutation_rate(self):
         cfg = self.algo_config.adaptive_mutation

@@ -15,8 +15,8 @@ def create_krkn_ai_template(
     kubeconfig_file_path: str,
     cluster_component_data: dict,
     scenario_enables: dict = None,
-    fitness_queries: list = None,
     health_checks: list = None,
+    fitness_queries: list = None,
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module

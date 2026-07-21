@@ -24,6 +24,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.catalog import recommend_fitness_queries
+from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
 
@@ -261,6 +262,11 @@ def monitor(ctx, output: str, port: int):
     default="skip",
     help="How to save: skip, overwrite (replace), or merge (add new components, keep your edits). Note: merge does not preserve comments.",
 )
+@click.option(
+    "--learned-weights",
+    help="Path to a learned_weights.json from a previous run, to prioritize fitness queries.",
+    default=None,
+)
 @click.pass_context
 def discover(
     ctx,
@@ -272,6 +278,7 @@ def discover(
     verbose: int = 0,
     skip_pod_name: str = None,
     save_strategy: str = "skip",
+    learned_weights: str = None,
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
@@ -311,18 +318,19 @@ def discover(
         if fresh_write
         else None
     )
-    # suggest fitness queries from the cluster; fall back to the static default.
+    # recommend fitness queries on fresh writes and merges; else keep the static default.
+    recommend_fitness = fresh_write or save_strategy.lower() == "merge"
     fitness_queries = None
-    if fresh_write:
+    if recommend_fitness:
         try:
             prom_client = create_prometheus_client(kubeconfig)
             fitness_queries = recommend_fitness_queries(
-                cluster_components, prom_client
+                cluster_components,
+                prom_client,
+                load_learned_weights(learned_weights),
             )
         except PrometheusConnectionError as e:
-            logger.info(
-                "Prometheus unavailable; using static fitness default (%s).", e
-            )
+            logger.info("Prometheus unavailable; using static fitness default (%s).", e)
         except Exception as e:
             logger.warning("Fitness query recommendation failed: %s", e)
     save_discovery(

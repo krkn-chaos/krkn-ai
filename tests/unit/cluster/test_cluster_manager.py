@@ -472,16 +472,18 @@ class TestClusterManager:
         with patch(
             "krkn_ai.cluster.cluster_manager.run_shell",
             return_value=(
-                "eth0\nens5\neno1\nbond0\nbr-ex\nlo\novs-system\nveth1a2b\npodman0\n",
+                "eth0\nens5\neno1\nbond0\nbr-ex\n"
+                "br-int\nlo\novs-system\nveth1a2b\npodman0\nppp0\n",
                 0,
             ),
         ):
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
-        # Physical / bond / bridge interfaces are targetable.
+        # Physical / bond / external-bridge interfaces are targetable.
         assert interfaces == ["eth0", "ens5", "eno1", "bond0", "br-ex"]
-        # Virtual / internal interfaces are excluded.
-        for excluded in ("lo", "ovs-system", "veth1a2b", "podman0"):
+        # Virtual / internal interfaces are excluded, including the OVS/OVN
+        # integration bridge and PPP links.
+        for excluded in ("br-int", "lo", "ovs-system", "veth1a2b", "podman0", "ppp0"):
             assert excluded not in interfaces
 
     @pytest.mark.parametrize(
@@ -512,8 +514,11 @@ class TestClusterManager:
             "lo",
             "veth1a2b",
             "ovs-system",
+            "br-int",  # OVN integration bridge (shares the "br" prefix)
+            "br-tun",  # OVS tunnel bridge (shares the "br" prefix)
             "docker0",
-            "podman0",  # shares the "p" prefix but must still be excluded
+            "podman0",  # would match a bare "p" prefix but must be excluded
+            "ppp0",  # PPP link: not a biosdevname PCI NIC
             "cni0",
             "flannel.1",
             "cali1234abcd",

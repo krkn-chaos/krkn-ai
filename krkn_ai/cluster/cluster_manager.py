@@ -32,20 +32,26 @@ _TARGETABLE_INTERFACE_PREFIXES = (
     "eth",  # classic: eth0
     "en",  # predictable names: ens5, eno1, enp0s3, enx001122334455
     "em",  # onboard (older biosdevname): em1
-    "p",  # PCI (older biosdevname): p2p1, p1p1
     "bond",  # link aggregation: bond0
     "br",  # bridges: br-ex, br0, bridge0
     "ib",  # InfiniBand: ib0
     "wlan",  # wireless: wlan0
 )
 
+# biosdevname-style PCI NICs (e.g. p2p1, p1p1). Matched separately from the
+# prefix tuple so a bare "p" doesn't admit non-physical names like "ppp0". (#294)
+_PCI_INTERFACE_RE = re.compile(r"^p\d")
+
 # Virtual / internal interfaces that must never be disrupted, even when they
-# share a prefix with a targetable one (e.g. "podman0" starts with "p").
-# Exclusion takes precedence over the whitelist above. (#294)
+# share a prefix with a targetable one (e.g. "podman0" starts with "p", and the
+# OVS/OVN internal bridges "br-int"/"br-tun" start with "br"). Exclusion takes
+# precedence over the whitelist above. (#294)
 _EXCLUDED_INTERFACE_PREFIXES = (
     "lo",  # loopback
     "veth",  # container virtual ethernet pairs
     "ovs",  # Open vSwitch: ovs-system
+    "br-int",  # OVN/OVS integration bridge (pod-to-pod traffic)
+    "br-tun",  # OVS tunnel bridge (overlay traffic)
     "docker",  # docker bridge: docker0
     "podman",  # podman bridge: podman0
     "cni",  # CNI plugin interfaces: cni0
@@ -610,7 +616,10 @@ class ClusterManager:
         """
         if not name or name.startswith(_EXCLUDED_INTERFACE_PREFIXES):
             return False
-        return name.startswith(_TARGETABLE_INTERFACE_PREFIXES)
+        if name.startswith(_TARGETABLE_INTERFACE_PREFIXES):
+            return True
+        # biosdevname PCI NICs (p2p1, p1p1) but not names like "ppp0".
+        return bool(_PCI_INTERFACE_RE.match(name))
 
     @staticmethod
     def parse_cpu(cpu_str: str):

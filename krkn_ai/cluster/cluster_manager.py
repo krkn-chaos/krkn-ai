@@ -25,6 +25,37 @@ from krkn_ai.models.cluster_components import VMI
 
 logger = get_logger(__name__)
 
+# Network interface name prefixes that are valid targets for network chaos.
+# Covers classic and predictable NIC names, bonds, bridges, InfiniBand and
+# wireless across bare-metal, cloud and OpenShift nodes. (#294)
+_TARGETABLE_INTERFACE_PREFIXES = (
+    "eth",  # classic: eth0
+    "en",  # predictable names: ens5, eno1, enp0s3, enx001122334455
+    "em",  # onboard (older biosdevname): em1
+    "p",  # PCI (older biosdevname): p2p1, p1p1
+    "bond",  # link aggregation: bond0
+    "br",  # bridges: br-ex, br0, bridge0
+    "ib",  # InfiniBand: ib0
+    "wlan",  # wireless: wlan0
+)
+
+# Virtual / internal interfaces that must never be disrupted, even when they
+# share a prefix with a targetable one (e.g. "podman0" starts with "p").
+# Exclusion takes precedence over the whitelist above. (#294)
+_EXCLUDED_INTERFACE_PREFIXES = (
+    "lo",  # loopback
+    "veth",  # container virtual ethernet pairs
+    "ovs",  # Open vSwitch: ovs-system
+    "docker",  # docker bridge: docker0
+    "podman",  # podman bridge: podman0
+    "cni",  # CNI plugin interfaces: cni0
+    "flannel",  # flannel.1
+    "cali",  # Calico: cali<hash>
+    "tunl",  # IPIP tunnels: tunl0
+    "vxlan",  # VXLAN overlays: vxlan.calico
+    "dummy",  # dummy interfaces
+)
+
 
 class ClusterManager:
     def __init__(self, kubeconfig: str):
@@ -558,20 +589,28 @@ class ClusterManager:
             logger.warning("Unable to find interfaces for node %s", node)
             return []
 
-        interfaces = []
         interfaces_list = [x.strip() for x in log.splitlines()]
 
-        # TODO: Check which interfaces to consider for network chaos
-        # For now, consider specific interfaces like ens5, eth0, etc.
-
-        for intf in interfaces_list:
-            # TODO: Check which interfaces to consider for network chaos
-            # ens5, eth0, br-ex, br-int, etc. as well as other interfaces like lo, ovs-system, etc.
-            # Krkn validation doesn't work with interfaces with name like ABC-XYZ
-            if intf.startswith("ens") or intf.startswith("eth"):
-                interfaces.append(intf)
+        # Keep only physical/targetable interfaces; drop virtual and internal
+        # ones (loopback, veth pairs, overlay/bridge interfaces created by
+        # container runtimes and CNIs) so chaos never disrupts core networking.
+        interfaces = [
+            intf for intf in interfaces_list if self._is_targetable_interface(intf)
+        ]
 
         return interfaces
+
+    @staticmethod
+    def _is_targetable_interface(name: str) -> bool:
+        """Return True if ``name`` is a physical/targetable network interface.
+
+        Excluded virtual/internal interfaces take precedence over the targetable
+        whitelist, so names that share a prefix with a real NIC (e.g. "podman0"
+        vs the "p" prefix) are still filtered out. (#294)
+        """
+        if not name or name.startswith(_EXCLUDED_INTERFACE_PREFIXES):
+            return False
+        return name.startswith(_TARGETABLE_INTERFACE_PREFIXES)
 
     @staticmethod
     def parse_cpu(cpu_str: str):

@@ -139,6 +139,48 @@ class TestContainerScenario:
             scenario = ContainerScenario(cluster_components=cluster)
             assert scenario.disruption_count.value == 1
 
+    def test_container_scenario_count_excludes_pods_without_target_container(self):
+        """A specific container name limits the count to pods that have it (#277).
+
+        Pods can share a generic label (env=prod) while being different
+        workloads. If nginx is the targeted container, the redis pods must not
+        be counted, otherwise krkn would pick a pod with no nginx container and
+        fail the lookup. When the wildcard is chosen every labelled pod counts.
+        """
+        pods = [
+            Pod(
+                name="nginx-0",
+                labels={"env": "prod"},
+                containers=[Container(name="nginx")],
+            ),
+            Pod(
+                name="redis-0",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+            Pod(
+                name="redis-1",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(200):
+            scenario = ContainerScenario(cluster_components=cluster)
+            target = scenario.container_name.value
+            count = scenario.disruption_count.value
+            if target == ".*":
+                # Wildcard applies to every labelled pod with containers.
+                assert 1 <= count <= 3
+            else:
+                # Only the pods actually running that container may be counted.
+                eligible = sum(
+                    1 for p in pods if any(c.name == target for c in p.containers)
+                )
+                assert 1 <= count <= eligible
+
     def test_container_scenario_container_name_is_specific_or_wildcard(self):
         """container_name is a real container or '.*', decoupled from count (#277).
 

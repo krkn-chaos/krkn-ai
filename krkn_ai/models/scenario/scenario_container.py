@@ -69,24 +69,31 @@ class ContainerScenario(Scenario):
         # pod_label is a string of the form "key=value"
         self.label_selector.value = "{}={}".format(label, labels[label])
 
-        # DISRUPTION_COUNT is the number of *pods* to disrupt, so bound it by how
-        # many pods in the namespace are eligible targets for the selected label
-        # rather than by the container count of a single pod. Pods without
-        # containers are excluded here just as they are from the candidate list
-        # above, so the count never exceeds the number of disruptable pods. (#277)
-        matching_pod_count = sum(
-            1
-            for p in namespace.pods
-            if p.labels.get(label) == labels[label] and len(p.containers) > 0
-        )
-        self.disruption_count.value = rng.randint(1, matching_pod_count)
-
         # CONTAINER_NAME selects which container(s) to kill inside each disrupted
-        # pod, independently of how many pods are disrupted: either one specific
-        # container, or ".*" to target every container in the pod. (#277)
+        # pod: either one specific container, or ".*" to target every container.
+        # It is chosen before the disruption count because it constrains which
+        # pods can actually be targeted. (#277)
         if rng.random() < 0.5:
             self.container_name.value = rng.choice([x.name for x in pod.containers])
         else:
             self.container_name.value = ".*"
+
+        target_container = self.container_name.value
+
+        def is_targetable(candidate: Pod) -> bool:
+            """Whether the label selector and container name both apply to a pod."""
+            if candidate.labels.get(label) != labels[label]:
+                return False
+            if target_container == ".*":
+                return len(candidate.containers) > 0
+            return any(c.name == target_container for c in candidate.containers)
+
+        # DISRUPTION_COUNT is the number of *pods* to disrupt, not the container
+        # count of a single pod. Only pods that also contain the targeted
+        # container are counted: pods sharing a generic label (e.g. env=prod) can
+        # be completely different workloads, so counting them would let krkn pick
+        # a pod that has no such container and fail the lookup. (#277)
+        matching_pod_count = sum(1 for p in namespace.pods if is_targetable(p))
+        self.disruption_count.value = rng.randint(1, matching_pod_count)
 
         self.action.value = rng.choice(["1", "9"])

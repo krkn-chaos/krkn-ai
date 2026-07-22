@@ -31,6 +31,7 @@ class JSONSummaryReporter:
         seen_population: Dict[Any, CommandRunResult],
         best_of_generation: List[CommandRunResult],
         baseline_result: Optional[CommandRunResult] = None,
+        all_evaluations: Optional[List[CommandRunResult]] = None,
         start_time: Optional[datetime.datetime] = None,
         end_time: Optional[datetime.datetime] = None,
         completed_generations: int = 0,
@@ -43,6 +44,7 @@ class JSONSummaryReporter:
         self.seen_population = seen_population
         self.best_of_generation = best_of_generation
         self.baseline_result = baseline_result
+        self.all_evaluations = all_evaluations
         self.start_time = start_time
         self.end_time = end_time
         self.completed_generations = completed_generations
@@ -186,12 +188,14 @@ class JSONSummaryReporter:
     def _build_population_lineage(self) -> List[Dict[str, Any]]:
         """Build the complete evolutionary lineage of all generated scenarios."""
         lineage = []
-        for result in self.seen_population.values():
+        source = self.all_evaluations if self.all_evaluations is not None else self.seen_population.values()
+        for result in source:
             lineage.append({
                 "scenario_id": result.scenario_id,
+                "scenario_uuid": getattr(result.scenario, "id", None),
                 "generation": result.generation_id,
                 "fitness_score": result.fitness_result.fitness_score,
-                "parent_id": getattr(result.scenario, "parent_id", None),
+                "parent_uuids": getattr(result.scenario, "parent_uuids", []),
                 "mutation_type": getattr(result.scenario, "mutation_type", None),
                 "mutated_parameters": getattr(result.scenario, "mutated_parameters", []),
             })

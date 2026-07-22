@@ -25,7 +25,7 @@ class BaseScenario(BaseModel):
     name: str
     krknctl_name: str  # Name of the scenario in krknctl
     krknhub_image: str  # Image of the scenario in krknhub
-    parent_id: Optional[str] = None
+    parent_uuids: List[str] = Field(default_factory=list)
     mutation_type: Optional[str] = None
     mutated_parameters: Optional[List[str]] = []
 

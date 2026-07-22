@@ -35,7 +35,7 @@ def load_results_json(output_dir: str):
                 data = json.load(f)
                 return data.get("best_scenarios", [])
         except Exception as e:
-            logging.error(f"Failed to read {json_path}: {e}")
+            logging.exception(f"Failed to read {json_path}: {e}")
     return []
 
 

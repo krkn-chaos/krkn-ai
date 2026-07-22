@@ -196,3 +196,46 @@ class TestJSONSummaryReporter:
         with open(path, "r") as f:
             saved_content = json.load(f)
             assert saved_content == expected_summary
+
+    def test_population_lineage_fields(self, minimal_config):
+        """Test that population_lineage contains the correct UUID fields for ancestry tracking"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cc = minimal_config.cluster_components
+        scenario = DummyScenario(cluster_components=cc)
+        # Manually set some lineage metadata
+        scenario.parent_uuids = ["parent-uuid-123"]
+        scenario.mutation_type = "crossover"
+        scenario.mutated_parameters = ["param1"]
+
+        res = CommandRunResult(
+            generation_id=0,
+            scenario_id=100,
+            scenario=scenario,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=50.0),
+        )
+
+        reporter = JSONSummaryReporter(
+            run_uuid="lineage-test",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={100: res},
+            best_of_generation=[],
+            all_evaluations=[res]
+        )
+
+        summary = reporter.generate_summary()
+        lineage = summary.get("population_lineage", [])
+        assert len(lineage) == 1
+        
+        node = lineage[0]
+        assert node["scenario_id"] == 100
+        assert node["scenario_uuid"] == scenario.id
+        assert node["generation"] == 0
+        assert node["parent_uuids"] == ["parent-uuid-123"]
+        assert node["mutation_type"] == "crossover"
+        assert node["mutated_parameters"] == ["param1"]

@@ -204,6 +204,7 @@ class GeneticAlgorithm(BaseEngine):
             algo_config=self.algo_config,
             seen_population=self.seen_population,
             best_of_generation=self.best_of_generation,
+            all_evaluations=self.all_evaluations,
             baseline_result=self.baseline_result,
             start_time=self.start_time,
             end_time=self.end_time,
@@ -326,6 +327,8 @@ class GeneticAlgorithm(BaseEngine):
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
+            result.scenario = scenario
+            self.all_evaluations.append(result)
             return result
 
         self.stopping.record_new_scenario()
@@ -342,7 +345,7 @@ class GeneticAlgorithm(BaseEngine):
         if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
-                new_scenario.parent_id = scenario.id
+                new_scenario.parent_uuids = [scenario.id]
                 new_scenario.mutation_type = "type_mutation"
                 return new_scenario
 
@@ -355,7 +358,7 @@ class GeneticAlgorithm(BaseEngine):
                     if p.krknctl_name in old_params and old_params[p.krknctl_name] != p.value:
                         mutated.append(p.krknctl_name)
             if mutated:
-                scenario.parent_id = scenario.id
+                scenario.parent_uuids = [scenario.id]
                 scenario.id = str(uuid.uuid4())
                 scenario.mutation_type = "parameter_mutation"
                 scenario.mutated_parameters = mutated
@@ -439,11 +442,14 @@ class GeneticAlgorithm(BaseEngine):
         return parent1, parent2
 
     def crossover(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
-        scenario_a.parent_id = scenario_a.id
+        parent_a_id = scenario_a.id
+        parent_b_id = scenario_b.id
+
+        scenario_a.parent_uuids = [parent_a_id, parent_b_id]
         scenario_a.id = str(uuid.uuid4())
         scenario_a.mutation_type = "crossover"
         
-        scenario_b.parent_id = scenario_b.id
+        scenario_b.parent_uuids = [parent_b_id, parent_a_id]
         scenario_b.id = str(uuid.uuid4())
         scenario_b.mutation_type = "crossover"
 
@@ -507,7 +513,7 @@ class GeneticAlgorithm(BaseEngine):
             scenario_a=scenario_a,
             scenario_b=scenario_b,
             dependency=dependency,
-            parent_id=f"{scenario_a.id},{scenario_b.id}",
+            parent_uuids=[scenario_a.id, scenario_b.id],
             mutation_type="composition"
         )
         return composite_scenario

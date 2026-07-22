@@ -3,7 +3,7 @@ import datetime
 import json
 import uuid
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 import yaml
 
@@ -47,6 +47,7 @@ class BaseEngine(ABC):
 
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)
         self.seen_population: Dict[BaseScenario, CommandRunResult] = {}
+        self.all_evaluations: List[CommandRunResult] = []
 
         self.baseline_result: Optional[CommandRunResult] = None
 
@@ -94,6 +95,7 @@ class BaseEngine(ABC):
     ) -> CommandRunResult:
         scenario_result = self.krkn_client.run(scenario, generation_id)
         self.seen_population[scenario] = scenario_result
+        self.all_evaluations.append(scenario_result)
 
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)

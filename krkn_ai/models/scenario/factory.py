@@ -62,6 +62,15 @@ scenario_specs = [
     ("service_disruption", ServiceDisruptionScenario),
 ]
 
+# Scenarios whose blast radius is too large to enable automatically in a
+# generated config. They stay fully supported and configurable, but `discover`
+# leaves them disabled so users opt in deliberately.
+#
+# Service disruption deletes entire namespaces, destroying every resource inside
+# them; unlike a pod or container kill, recovery depends on an operator or
+# GitOps controller reconciling the namespace back.
+NOT_RECOMMENDED_BY_DEFAULT = {"service_disruption"}
+
 
 class ScenarioFactory:
     @staticmethod
@@ -173,4 +182,6 @@ class ScenarioFactory:
             logger.debug("Scenario recommendation failed: %s", error)
             return all_disabled
         valid_names = {name for name, _ in valid}
-        return {n: n in valid_names for n in names}
+        return {
+            n: n in valid_names and n not in NOT_RECOMMENDED_BY_DEFAULT for n in names
+        }

@@ -190,6 +190,25 @@ class TestRecommendEnabledScenarios:
         assert nodes_only["dns_outage"] is False
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
+    def test_high_blast_radius_scenarios_are_not_auto_recommended(self, _mock_init):
+        """Service disruption stays off in generated configs (#13).
+
+        It initializes fine whenever a namespace exists, so without the explicit
+        opt-out `discover` would enable namespace deletion for nearly every
+        cluster. Users must turn it on deliberately.
+        """
+        result = ScenarioFactory.recommend_enabled_scenarios(
+            ClusterComponents(
+                namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
+                nodes=[Node(name="n1")],
+            ),
+            "/tmp/kubeconfig",
+        )
+        assert result["service_disruption"] is False
+        # Other recoverable scenarios are still recommended normally.
+        assert result["dns_outage"] is True
+
+    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_all_disabled_for_empty_cluster(self, _mock_init):
         """Empty cluster disables all scenarios."""
         result = ScenarioFactory.recommend_enabled_scenarios(

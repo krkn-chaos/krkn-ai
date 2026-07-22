@@ -17,6 +17,9 @@ from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_service_disruption import (
+    ServiceDisruptionScenario,
+)
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -443,3 +446,45 @@ class TestStorageThrottleScenario:
         assert "write-iops" in param_names
         assert "read-bps" in param_names
         assert "write-bps" in param_names
+
+
+class TestServiceDisruptionScenario:
+    """Test ServiceDisruptionScenario class (#13)."""
+
+    def test_service_disruption_initialization_with_namespaces(self):
+        """Initializes against a discovered namespace with valid krkn parameters."""
+        namespace = Namespace(name="robot-shop")
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        assert scenario.name == "service-disruption"
+        assert scenario.krknctl_name == "service-disruption-scenarios"
+        assert scenario.namespace.value == "robot-shop"
+        # NAMESPACE and LABEL_SELECTOR are mutually exclusive; target by name.
+        assert scenario.label_selector.value == ""
+        # One named namespace matches, so delete exactly one; runs stays small.
+        assert scenario.delete_count.value == 1
+        assert 1 <= scenario.runs.value <= 3
+
+    def test_service_disruption_parameter_names_map_to_krkn(self):
+        """Parameters expose the exact krknctl flags and krkn-hub env vars."""
+        namespace = Namespace(name="robot-shop")
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        krknctl_flags = [
+            p.get_name(return_krknhub_name=False) for p in scenario.parameters
+        ]
+        krknhub_vars = [
+            p.get_name(return_krknhub_name=True) for p in scenario.parameters
+        ]
+        assert krknctl_flags == ["namespace", "label-selector", "delete-count", "runs"]
+        assert krknhub_vars == ["NAMESPACE", "LABEL_SELECTOR", "DELETE_COUNT", "RUNS"]
+
+    def test_service_disruption_raises_error_when_no_namespaces(self):
+        """With no namespaces the scenario cannot initialize and raises cleanly."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
+            ServiceDisruptionScenario(cluster_components=cluster)

@@ -72,6 +72,10 @@ class StorageThrottleScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class ServiceDisruptionScenarioConfig(BaseModel):
+    enable: bool = False
+
+
 class BaselineConfig(BaseModel):
     enable: bool = True
     duration: int = 60 * 2  # 2 minutes
@@ -116,6 +120,9 @@ class ScenarioConfig(BaseModel):
     )
     storage_throttle: Optional[StorageThrottleScenarioConfig] = Field(
         alias="storage-throttle", default=None
+    )
+    service_disruption: Optional[ServiceDisruptionScenarioConfig] = Field(
+        alias="service-disruption", default=None
     )
 
 

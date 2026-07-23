@@ -83,7 +83,9 @@ class TestHealthCheckReporter:
         assert app1_row["success_count"] == 2
         assert app1_row["failure_count"] == 0
 
-    def test_save_report_skips_empty_results_and_continues(self, temp_output_dir, caplog):
+    def test_save_report_skips_empty_results_and_continues(
+        self, temp_output_dir, caplog
+    ):
         """Test that an empty component results list does not break the loop, missing subsequent components."""
         import logging
 
@@ -124,7 +126,9 @@ class TestHealthCheckReporter:
             )
         ]
 
-        with caplog.at_level(logging.WARNING, logger="krkn_ai.reporter.health_check_reporter"):
+        with caplog.at_level(
+            logging.WARNING, logger="krkn_ai.reporter.health_check_reporter"
+        ):
             reporter.save_report(fitness_results)
 
         report_path = os.path.join(

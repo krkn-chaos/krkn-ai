@@ -85,7 +85,7 @@ def _expand_composite_json(
         if scenario.dependency == CompositeDependency.A_ON_B:
             key = depends_on
         elif scenario.dependency == CompositeDependency.B_ON_A:
-            key = key_b
+            key = key_a
         elif scenario.dependency == CompositeDependency.NONE:
             key = key_root
 

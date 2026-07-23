@@ -102,6 +102,36 @@ class TestScenarioFactory:
         candidates = ScenarioFactory.list_scenarios(config)
         assert [name for name, _ in candidates] == ["service_disruption"]
 
+    def test_dangerous_skip_warning_uses_user_facing_key(self):
+        """The skip warning names the hyphenated config key, not the attr (#13)."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(**{"service-disruption": {"enable": True}}),
+            cluster_components=cluster,
+        )
+        with patch("krkn_ai.models.scenario.factory.logger") as mock_logger:
+            ScenarioFactory.list_scenarios(config)
+        mock_logger.warning.assert_called_once()
+        assert mock_logger.warning.call_args.args[-1] == "service-disruption"
+
+    @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
+    def test_only_dangerous_enabled_raises_actionable_error(self, _mock_init):
+        """Blocking the only enabled scenario points the user at the opt-in (#13)."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(**{"service-disruption": {"enable": True}}),
+            cluster_components=cluster,
+        )
+        with pytest.raises(MissingScenarioError) as exc_info:
+            ScenarioFactory.generate_valid_scenarios(config)
+        message = str(exc_info.value)
+        assert "allow_dangerous_scenarios: true" in message
+        assert "service-disruption" in message
+
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_generate_valid_scenarios_raises_error_when_no_scenarios(
         self, mock_initialize_kubeconfig

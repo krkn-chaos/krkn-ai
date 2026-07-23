@@ -74,6 +74,22 @@ DANGEROUS_SCENARIOS = {"service_disruption"}
 
 class ScenarioFactory:
     @staticmethod
+    def _blocked_dangerous_scenarios(config: ConfigFile) -> List[str]:
+        """User-facing keys of enabled dangerous scenarios blocked by the gate."""
+        if config.allow_dangerous_scenarios:
+            return []
+        blocked = []
+        for attr, _ in scenario_specs:
+            scenario_cfg = getattr(config.scenario, attr)
+            if (
+                attr in DANGEROUS_SCENARIOS
+                and scenario_cfg is not None
+                and scenario_cfg.enable
+            ):
+                blocked.append(attr.replace("_", "-"))
+        return blocked
+
+    @staticmethod
     def list_scenarios(config: ConfigFile) -> List[Tuple[str, type[Scenario]]]:
         # List all enabled scenarios from config, gating dangerous ones behind
         # the explicit allow_dangerous_scenarios opt-in.
@@ -87,7 +103,7 @@ class ScenarioFactory:
                     "Scenario '%s' is enabled but has a cluster-critical blast "
                     "radius; skipping it because 'allow_dangerous_scenarios' is "
                     "not set. Set allow_dangerous_scenarios: true to run it.",
-                    attr,
+                    attr.replace("_", "-"),
                 )
                 continue
             candidates.append((attr, factory))
@@ -106,6 +122,13 @@ class ScenarioFactory:
         candidates = ScenarioFactory.list_scenarios(config)
 
         if len(candidates) == 0:
+            blocked = ScenarioFactory._blocked_dangerous_scenarios(config)
+            if blocked:
+                raise MissingScenarioError(
+                    "The only enabled scenario(s) ({}) are cluster-critical and "
+                    "were blocked. Set 'allow_dangerous_scenarios: true' in your "
+                    "config to run them.".format(", ".join(blocked))
+                )
             raise MissingScenarioError(
                 "No scenarios found. Please provide atleast 1 scenario."
             )

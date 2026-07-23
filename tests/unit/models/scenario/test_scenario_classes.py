@@ -354,6 +354,19 @@ class TestPVCScenario:
         with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
             PVCScenario(cluster_components=cluster)
 
+    def test_pvc_scenario_raises_when_pods_but_no_pvcs(self):
+        """PVCScenario requires a PVC and does not fall back to a pod (#384)."""
+        pod = Pod(
+            name="test-pod", labels={"app": "web"}, containers=[Container(name="c1")]
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(
+            ScenarioParameterInitError, match="No PVCs found in cluster components"
+        ):
+            PVCScenario(cluster_components=cluster)
+
 
 class TestStorageThrottleScenario:
     """Test StorageThrottleScenario class"""
@@ -371,8 +384,8 @@ class TestStorageThrottleScenario:
         assert scenario.pod_name.value == ""
         assert scenario.throttle_type.value in ["iops", "bandwidth", "both"]
 
-    def test_storage_throttle_scenario_initialization_with_pods_only(self):
-        """Test that StorageThrottleScenario falls back to pods when no PVCs exist"""
+    def test_storage_throttle_scenario_raises_when_pods_but_no_pvcs(self):
+        """StorageThrottleScenario requires a PVC, not just a pod (#384)."""
         pod = Pod(
             name="test-pod",
             labels={"app": "web"},
@@ -381,11 +394,10 @@ class TestStorageThrottleScenario:
         namespace = Namespace(name="test-ns", pods=[pod])
         cluster = ClusterComponents(namespaces=[namespace], nodes=[])
 
-        scenario = StorageThrottleScenario(cluster_components=cluster)
-        assert scenario.name == "storage-throttle"
-        assert scenario.namespace.value == "test-ns"
-        assert scenario.pod_name.value == "test-pod"
-        assert scenario.pvc_name.value == ""
+        with pytest.raises(
+            ScenarioParameterInitError, match="No PVCs found in cluster components"
+        ):
+            StorageThrottleScenario(cluster_components=cluster)
 
     def test_storage_throttle_scenario_raises_error_when_no_pvcs_or_pods(self):
         """Test that StorageThrottleScenario raises error when no PVCs or pods exist"""
@@ -395,11 +407,11 @@ class TestStorageThrottleScenario:
             StorageThrottleScenario(cluster_components=cluster)
 
     def test_storage_throttle_scenario_raises_error_empty_namespace(self):
-        """Test that StorageThrottleScenario raises error when namespace has no PVCs or pods"""
+        """Test that StorageThrottleScenario raises error when namespace has no PVCs"""
         namespace = Namespace(name="test-ns")
         cluster = ClusterComponents(namespaces=[namespace], nodes=[])
 
-        with pytest.raises(ScenarioParameterInitError, match="No PVCs or pods found"):
+        with pytest.raises(ScenarioParameterInitError, match="No PVCs found"):
             StorageThrottleScenario(cluster_components=cluster)
 
     def test_storage_throttle_scenario_conditional_parameters_iops(self):

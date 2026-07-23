@@ -15,7 +15,7 @@ from krkn_ai.models.scenario.parameters import (
     WriteBPSParameter,
     WriteIOPSParameter,
 )
-from krkn_ai.models.cluster_components import Namespace, Pod, PVC
+from krkn_ai.models.cluster_components import Namespace, PVC
 from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -71,30 +71,26 @@ class StorageThrottleScenario(Scenario):
                 "No namespaces found in cluster components"
             )
 
-        namespace_pvc_tuple: List[Tuple[Namespace, PVC]] = []
-        namespace_pod_tuple: List[Tuple[Namespace, Pod]] = []
+        namespace_pvc_tuple: List[Tuple[Namespace, PVC]] = [
+            (namespace, pvc)
+            for namespace in self._cluster_components.namespaces
+            for pvc in namespace.pvcs
+        ]
 
-        for namespace in self._cluster_components.namespaces:
-            if namespace.pvcs:
-                namespace_pvc_tuple.extend((namespace, pvc) for pvc in namespace.pvcs)
-            if namespace.pods:
-                namespace_pod_tuple.extend((namespace, pod) for pod in namespace.pods)
-
-        if not namespace_pvc_tuple and not namespace_pod_tuple:
+        # Storage throttling always targets a PersistentVolumeClaim. krkn's
+        # pod-name mode still requires the pod to have a PVC mounted, and
+        # discovery does not track pod->PVC mounts, so a namespace with pods but
+        # no PVCs is not a valid target -- do not fall back to an arbitrary pod
+        # (which would trigger the scenario and then fail at runtime). (#384)
+        if not namespace_pvc_tuple:
             raise ScenarioParameterInitError(
-                "No PVCs or pods found in cluster components for storage-throttle scenario"
+                "No PVCs found in cluster components for storage-throttle scenario"
             )
 
-        if namespace_pvc_tuple:
-            namespace, pvc = rng.choice(namespace_pvc_tuple)
-            self.namespace.value = namespace.name
-            self.pvc_name.value = pvc.name
-            self.pod_name.value = ""
-        else:
-            namespace, pod = rng.choice(namespace_pod_tuple)
-            self.namespace.value = namespace.name
-            self.pod_name.set_pod(namespace.name, pod)
-            self.pvc_name.value = ""
+        namespace, pvc = rng.choice(namespace_pvc_tuple)
+        self.namespace.value = namespace.name
+        self.pvc_name.value = pvc.name
+        self.pod_name.value = ""
 
         self.throttle_type.mutate()
         self.read_iops.mutate()

@@ -27,6 +27,7 @@ from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_kubevirt import KubevirtDisruptionScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_pod_network import PodNetworkScenario
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,7 @@ scenario_specs = [
     ("pvc_scenarios", PVCScenario),
     ("kubevirt_scenarios", KubevirtDisruptionScenario),
     ("storage_throttle", StorageThrottleScenario),
+    ("pod_network_chaos", PodNetworkScenario),
 ]
 
 

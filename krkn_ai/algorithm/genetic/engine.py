@@ -324,6 +324,8 @@ class GeneticAlgorithm(BaseEngine):
                 "Scenario %s already evaluated, skipping fitness calculation.",
                 scenario,
             )
+            cached_uuid = self.seen_population[scenario].scenario.id
+            scenario.id = cached_uuid
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
@@ -445,14 +447,6 @@ class GeneticAlgorithm(BaseEngine):
         parent_a_id = scenario_a.id
         parent_b_id = scenario_b.id
 
-        scenario_a.parent_uuids = [parent_a_id, parent_b_id]
-        scenario_a.id = str(uuid.uuid4())
-        scenario_a.mutation_type = "crossover"
-        
-        scenario_b.parent_uuids = [parent_b_id, parent_a_id]
-        scenario_b.id = str(uuid.uuid4())
-        scenario_b.mutation_type = "crossover"
-
         if isinstance(scenario_a, CompositeScenario) and isinstance(
             scenario_b, CompositeScenario
         ):
@@ -460,45 +454,57 @@ class GeneticAlgorithm(BaseEngine):
                 scenario_b.scenario_b,
                 scenario_a.scenario_b,
             )
-            return scenario_a, scenario_b
+            child1, child2 = scenario_a, scenario_b
         elif isinstance(scenario_a, CompositeScenario) or isinstance(
             scenario_b, CompositeScenario
         ):
             if isinstance(scenario_a, CompositeScenario):
                 a_b = scenario_a.scenario_b
                 scenario_a.scenario_b = scenario_b
-                return scenario_a, a_b
+                child1, child2 = scenario_a, a_b
             else:
                 b_a = scenario_b.scenario_a
                 scenario_b.scenario_a = scenario_a
-                return b_a, scenario_b
-
-        if not hasattr(scenario_a, "parameters") or not hasattr(
-            scenario_b, "parameters"
-        ):
-            logger.warning(
-                "Scenario %s or %s does not have property 'parameters'",
-                scenario_a,
-                scenario_b,
-            )
-            return scenario_a, scenario_b
-
-        common_params = set([type(x) for x in scenario_a.parameters]) & set(
-            [type(x) for x in scenario_b.parameters]
-        )
-
-        if len(common_params) == 0:
-            return scenario_a, scenario_b
+                child1, child2 = b_a, scenario_b
         else:
-            for param_type in common_params:
-                if rng.random() < self.algo_config.crossover_rate:
-                    a_value = self.__get_param_value(scenario_a, param_type)
-                    b_value = self.__get_param_value(scenario_b, param_type)
+            if not hasattr(scenario_a, "parameters") or not hasattr(
+                scenario_b, "parameters"
+            ):
+                logger.warning(
+                    "Scenario %s or %s does not have property 'parameters'",
+                    scenario_a,
+                    scenario_b,
+                )
+                return scenario_a, scenario_b
 
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
+            common_params = set([type(x) for x in scenario_a.parameters]) & set(
+                [type(x) for x in scenario_b.parameters]
+            )
 
-            return scenario_a, scenario_b
+            if len(common_params) == 0:
+                logger.warning(
+                    "Scenario %s and %s have no common parameters",
+                    scenario_a,
+                    scenario_b,
+                )
+                return scenario_a, scenario_b
+
+            for p in scenario_a.parameters:
+                if type(p) in common_params and rng.random() < self.algo_config.crossover_rate:
+                    p_b = next((x for x in scenario_b.parameters if type(x) == type(p)))
+                    p.value, p_b.value = p_b.value, p.value
+            
+            child1, child2 = scenario_a, scenario_b
+
+        child1.parent_uuids = [parent_a_id, parent_b_id]
+        child1.id = str(uuid.uuid4())
+        child1.mutation_type = "crossover"
+        
+        child2.parent_uuids = [parent_b_id, parent_a_id]
+        child2.id = str(uuid.uuid4())
+        child2.mutation_type = "crossover"
+
+        return child1, child2
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         dependency = rng.choice(

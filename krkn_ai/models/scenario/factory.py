@@ -62,26 +62,35 @@ scenario_specs = [
     ("service_disruption", ServiceDisruptionScenario),
 ]
 
-# Scenarios whose blast radius is too large to enable automatically in a
-# generated config. They stay fully supported and configurable, but `discover`
-# leaves them disabled so users opt in deliberately.
+# Scenarios with a cluster-critical blast radius. They are fully supported, but
+# are only ever run when the config explicitly sets ``allow_dangerous_scenarios:
+# true`` -- their own ``enable`` flag is not sufficient on its own.
 #
 # Service disruption deletes entire namespaces, destroying every resource inside
 # them; unlike a pod or container kill, recovery depends on an operator or
 # GitOps controller reconciling the namespace back.
-NOT_RECOMMENDED_BY_DEFAULT = {"service_disruption"}
+DANGEROUS_SCENARIOS = {"service_disruption"}
 
 
 class ScenarioFactory:
     @staticmethod
     def list_scenarios(config: ConfigFile) -> List[Tuple[str, type[Scenario]]]:
-        # List all scenarios that are set in config
-        candidates = [
-            (attr, factory)
-            for attr, factory in scenario_specs
-            if getattr(config.scenario, attr) is not None
-            and getattr(config.scenario, attr).enable
-        ]
+        # List all enabled scenarios from config, gating dangerous ones behind
+        # the explicit allow_dangerous_scenarios opt-in.
+        candidates = []
+        for attr, factory in scenario_specs:
+            scenario_cfg = getattr(config.scenario, attr)
+            if scenario_cfg is None or not scenario_cfg.enable:
+                continue
+            if attr in DANGEROUS_SCENARIOS and not config.allow_dangerous_scenarios:
+                logger.warning(
+                    "Scenario '%s' is enabled but has a cluster-critical blast "
+                    "radius; skipping it because 'allow_dangerous_scenarios' is "
+                    "not set. Set allow_dangerous_scenarios: true to run it.",
+                    attr,
+                )
+                continue
+            candidates.append((attr, factory))
         return candidates
 
     @staticmethod
@@ -182,6 +191,4 @@ class ScenarioFactory:
             logger.debug("Scenario recommendation failed: %s", error)
             return all_disabled
         valid_names = {name for name, _ in valid}
-        return {
-            n: n in valid_names and n not in NOT_RECOMMENDED_BY_DEFAULT for n in names
-        }
+        return {n: n in valid_names for n in names}

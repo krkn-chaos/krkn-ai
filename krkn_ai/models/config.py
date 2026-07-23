@@ -338,6 +338,12 @@ class ConfigFile(BaseModel):
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
 
+    # Opt-in gate for scenarios with a cluster-critical blast radius (e.g.
+    # service disruption, which deletes whole namespaces). Such scenarios are
+    # skipped unless this is explicitly set to true, even when their own
+    # ``enable`` flag is on.
+    allow_dangerous_scenarios: bool = False
+
     output: OutputConfig = OutputConfig()
 
     elastic: Optional[ElasticConfig] = Field(

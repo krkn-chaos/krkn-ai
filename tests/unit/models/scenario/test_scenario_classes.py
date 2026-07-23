@@ -451,10 +451,18 @@ class TestStorageThrottleScenario:
 class TestServiceDisruptionScenario:
     """Test ServiceDisruptionScenario class (#13)."""
 
+    @staticmethod
+    def _namespace_with_service(name="robot-shop"):
+        return Namespace(
+            name=name,
+            services=[Service(name="rs", ports=[ServicePort(port=80)])],
+        )
+
     def test_service_disruption_initialization_with_namespaces(self):
         """Initializes against a discovered namespace with valid krkn parameters."""
-        namespace = Namespace(name="robot-shop")
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
 
         scenario = ServiceDisruptionScenario(cluster_components=cluster)
 
@@ -467,10 +475,11 @@ class TestServiceDisruptionScenario:
         assert scenario.delete_count.value == 1
         assert 1 <= scenario.runs.value <= 3
 
-    def test_service_disruption_parameter_names_map_to_krkn(self):
-        """Parameters expose the exact krknctl flags and krkn-hub env vars."""
-        namespace = Namespace(name="robot-shop")
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+    def test_service_disruption_omits_empty_label_selector(self):
+        """An empty label_selector is not emitted alongside NAMESPACE (#13 review)."""
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
 
         scenario = ServiceDisruptionScenario(cluster_components=cluster)
 
@@ -480,11 +489,44 @@ class TestServiceDisruptionScenario:
         krknhub_vars = [
             p.get_name(return_krknhub_name=True) for p in scenario.parameters
         ]
-        assert krknctl_flags == ["namespace", "label-selector", "delete-count", "runs"]
-        assert krknhub_vars == ["NAMESPACE", "LABEL_SELECTOR", "DELETE_COUNT", "RUNS"]
+        assert krknctl_flags == ["namespace", "delete-count", "runs"]
+        assert krknhub_vars == ["NAMESPACE", "DELETE_COUNT", "RUNS"]
+        assert "label-selector" not in krknctl_flags
 
     def test_service_disruption_raises_error_when_no_namespaces(self):
         """With no namespaces the scenario cannot initialize and raises cleanly."""
         cluster = ClusterComponents(namespaces=[], nodes=[])
-        with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
+        with pytest.raises(
+            ScenarioParameterInitError, match="No non-system namespaces with services"
+        ):
             ServiceDisruptionScenario(cluster_components=cluster)
+
+    def test_service_disruption_raises_when_namespace_has_no_services(self):
+        """A namespace without services is not a valid target (#13 review)."""
+        cluster = ClusterComponents(namespaces=[Namespace(name="empty-ns")], nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No non-system namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)
+
+    def test_service_disruption_never_targets_system_namespaces(self):
+        """System namespaces are excluded even when they run services (#13 review)."""
+        system = [
+            Namespace(
+                name=name, services=[Service(name="svc", ports=[ServicePort(port=80)])]
+            )
+            for name in ("kube-system", "default", "openshift-etcd", "kube-public")
+        ]
+        cluster = ClusterComponents(namespaces=system, nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No non-system namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)
+
+        # A user namespace mixed in is the only eligible target.
+        cluster = ClusterComponents(
+            namespaces=system + [self._namespace_with_service("robot-shop")], nodes=[]
+        )
+        for _ in range(50):
+            scenario = ServiceDisruptionScenario(cluster_components=cluster)
+            assert scenario.namespace.value == "robot-shop"

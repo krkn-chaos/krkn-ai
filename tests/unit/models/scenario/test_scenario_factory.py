@@ -11,6 +11,8 @@ from krkn_ai.models.cluster_components import (
     Namespace,
     Pod,
     Node,
+    Service,
+    ServicePort,
 )
 from krkn_ai.models.custom_errors import MissingScenarioError, ScenarioInitError
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
@@ -74,6 +76,31 @@ class TestScenarioFactory:
         )
         candidates = ScenarioFactory.list_scenarios(config)
         assert len(candidates) == 0
+
+    def test_dangerous_scenario_skipped_without_allow_flag(self):
+        """An enabled dangerous scenario is skipped unless explicitly allowed (#13)."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(**{"service-disruption": {"enable": True}}),
+            cluster_components=cluster,
+        )
+        # enable alone is not enough for a dangerous scenario.
+        assert ScenarioFactory.list_scenarios(config) == []
+
+    def test_dangerous_scenario_included_with_allow_flag(self):
+        """allow_dangerous_scenarios lets an enabled dangerous scenario run (#13)."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="test"),
+            scenario=ScenarioConfig(**{"service-disruption": {"enable": True}}),
+            allow_dangerous_scenarios=True,
+            cluster_components=cluster,
+        )
+        candidates = ScenarioFactory.list_scenarios(config)
+        assert [name for name, _ in candidates] == ["service_disruption"]
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
     def test_generate_valid_scenarios_raises_error_when_no_scenarios(
@@ -190,16 +217,22 @@ class TestRecommendEnabledScenarios:
         assert nodes_only["dns_outage"] is False
 
     @patch("krkn_ai.models.scenario.factory.initialize_kubeconfig")
-    def test_high_blast_radius_scenarios_are_not_auto_recommended(self, _mock_init):
+    def test_dangerous_scenarios_are_not_auto_recommended(self, _mock_init):
         """Service disruption stays off in generated configs (#13).
 
-        It initializes fine whenever a namespace exists, so without the explicit
-        opt-out `discover` would enable namespace deletion for nearly every
-        cluster. Users must turn it on deliberately.
+        The recommendation path never sets allow_dangerous_scenarios, so the
+        gate keeps namespace deletion out of generated configs even though the
+        scenario would otherwise be valid for a namespace that runs services.
         """
         result = ScenarioFactory.recommend_enabled_scenarios(
             ClusterComponents(
-                namespaces=[Namespace(name="shop", pods=[Pod(name="redis")])],
+                namespaces=[
+                    Namespace(
+                        name="shop",
+                        pods=[Pod(name="redis")],
+                        services=[Service(name="rs", ports=[ServicePort(port=80)])],
+                    )
+                ],
                 nodes=[Node(name="n1")],
             ),
             "/tmp/kubeconfig",

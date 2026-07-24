@@ -21,7 +21,7 @@ def build_graph_command(
     graph_json_directory = os.path.join(output_dir, "graphs")
     os.makedirs(graph_json_directory, exist_ok=True)
 
-    scenario_json = _expand_composite_json(scenario)
+    scenario_json, _ = _expand_composite_json(scenario)
     with tempfile.NamedTemporaryFile(
         suffix=".json",
         dir=graph_json_directory,
@@ -42,7 +42,7 @@ def build_graph_command(
 
 def _expand_composite_json(
     scenario: CompositeScenario, root: str = "$", depends_on: str = None
-):
+) -> tuple[dict, str]:
     result = {}
     scenario_a = scenario.scenario_a
     scenario_b = scenario.scenario_b
@@ -50,60 +50,77 @@ def _expand_composite_json(
     key_root = root
     key_a = root + "l"
     key_b = root + "r"
+    
+    terminal_key = None
 
     if scenario.dependency == CompositeDependency.NONE:
         result[key_root] = _generate_scenario_json(
             ScenarioFactory.create_dummy_scenario(), depends_on=depends_on
         )
+        terminal_key = key_root
 
-    if isinstance(scenario_a, CompositeScenario):
-        key = None
-        if scenario.dependency == CompositeDependency.A_ON_B:
-            key = key_b
-        elif scenario.dependency == CompositeDependency.B_ON_A:
-            key = depends_on
-        elif scenario.dependency == CompositeDependency.NONE:
-            key = key_root
+        if isinstance(scenario_a, CompositeScenario):
+            nodes_a, _ = _expand_composite_json(scenario_a, key_a, depends_on=key_root)
+            result.update(nodes_a)
+        elif isinstance(scenario_a, Scenario):
+            result[key_a] = _generate_scenario_json(scenario_a, depends_on=key_root)
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_a)}")
 
-        result.update(_expand_composite_json(scenario_a, key_a, depends_on=key))
-    elif isinstance(scenario_a, Scenario):
-        key = None
-        if scenario.dependency == CompositeDependency.A_ON_B:
-            key = key_b
-        elif scenario.dependency == CompositeDependency.B_ON_A:
-            key = depends_on
-        elif scenario.dependency == CompositeDependency.NONE:
-            key = key_root
+        if isinstance(scenario_b, CompositeScenario):
+            nodes_b, _ = _expand_composite_json(scenario_b, key_b, depends_on=key_root)
+            result.update(nodes_b)
+        elif isinstance(scenario_b, Scenario):
+            result[key_b] = _generate_scenario_json(scenario_b, depends_on=key_root)
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_b)}")
 
-        result[key_a] = _generate_scenario_json(
-            scenario_a,
-            depends_on=key,
-        )
+    elif scenario.dependency == CompositeDependency.A_ON_B:
+        if isinstance(scenario_b, CompositeScenario):
+            nodes_b, term_b = _expand_composite_json(scenario_b, key_b, depends_on=depends_on)
+            result.update(nodes_b)
+        elif isinstance(scenario_b, Scenario):
+            result[key_b] = _generate_scenario_json(scenario_b, depends_on=depends_on)
+            term_b = key_b
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_b)}")
+        
+        if isinstance(scenario_a, CompositeScenario):
+            nodes_a, term_a = _expand_composite_json(scenario_a, key_a, depends_on=term_b)
+            result.update(nodes_a)
+        elif isinstance(scenario_a, Scenario):
+            result[key_a] = _generate_scenario_json(scenario_a, depends_on=term_b)
+            term_a = key_a
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_a)}")
+            
+        terminal_key = term_a
 
-    if isinstance(scenario_b, CompositeScenario):
-        key = None
-        if scenario.dependency == CompositeDependency.A_ON_B:
-            key = depends_on
-        elif scenario.dependency == CompositeDependency.B_ON_A:
-            key = key_b
-        elif scenario.dependency == CompositeDependency.NONE:
-            key = key_root
+    elif scenario.dependency == CompositeDependency.B_ON_A:
+        if isinstance(scenario_a, CompositeScenario):
+            nodes_a, term_a = _expand_composite_json(scenario_a, key_a, depends_on=depends_on)
+            result.update(nodes_a)
+        elif isinstance(scenario_a, Scenario):
+            result[key_a] = _generate_scenario_json(scenario_a, depends_on=depends_on)
+            term_a = key_a
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_a)}")
+            
+        if isinstance(scenario_b, CompositeScenario):
+            nodes_b, term_b = _expand_composite_json(scenario_b, key_b, depends_on=term_a)
+            result.update(nodes_b)
+        elif isinstance(scenario_b, Scenario):
+            result[key_b] = _generate_scenario_json(scenario_b, depends_on=term_a)
+            term_b = key_b
+        else:
+            raise TypeError(f"Unsupported scenario type: {type(scenario_b)}")
+            
+        terminal_key = term_b
+    else:
+        raise ValueError(f"Unsupported dependency type: {scenario.dependency}")
 
-        result.update(_expand_composite_json(scenario_b, key_b, depends_on=key))
-    elif isinstance(scenario_b, Scenario):
-        key = None
-        if scenario.dependency == CompositeDependency.A_ON_B:
-            key = depends_on
-        elif scenario.dependency == CompositeDependency.B_ON_A:
-            key = key_a
-        elif scenario.dependency == CompositeDependency.NONE:
-            key = key_root
-        result[key_b] = _generate_scenario_json(
-            scenario_b,
-            depends_on=key,
-        )
-
-    return result
+    assert terminal_key is not None, "terminal_key must be resolved"
+    return result, terminal_key
 
 
 def _generate_scenario_json(scenario: Scenario, depends_on: str = None):

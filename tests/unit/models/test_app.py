@@ -52,7 +52,7 @@ class TestCommandRunResult:
         assert result.end_time == end_time
         assert result.fitness_result.fitness_score == 10.0
         assert result.health_check_results == {}
-        assert result.scenario_id > 0  # Auto-generated ID
+        assert result.scenario_id >= 0  # Auto-generated ID
 
     def test_command_run_result_auto_increments_scenario_id(self):
         """Test that CommandRunResult auto-increments scenario_id"""

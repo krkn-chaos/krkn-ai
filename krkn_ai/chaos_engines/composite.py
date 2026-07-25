@@ -108,7 +108,7 @@ def _expand_composite_json(
 
 def _generate_scenario_json(scenario: Scenario, depends_on: str = None):
     env = {
-        param.get_name(return_krknhub_name=True): str(param.get_value())
+        param.get_name(return_krknhub_name=True): str(param.get_value(return_krknhub_name=True))
         for param in scenario.parameters
     }
     result = {

@@ -130,8 +130,10 @@ class NodeMemoryPercentageParameter(BaseParameter):
     krknctl_name: str = "memory-consumption"
     value: int = 50
 
-    def get_value(self):
-        return f"{self.value}%"
+    def get_value(self, return_krknhub_name: bool = False):
+        if return_krknhub_name:
+            return f"{self.value}%"
+        return self.value
 
     def mutate(self):
         if rng.random() < 0.5:

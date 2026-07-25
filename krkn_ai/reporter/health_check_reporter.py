@@ -106,6 +106,13 @@ class HealthCheckReporter:
                         "success": 1 if health_check_result.success else 0,
                     }
                 )
+        if not records:
+            logger.debug(
+                "No health check records found to plot for scenario_id=%s",
+                result.scenario_id,
+            )
+            return
+
         df = pd.DataFrame(records)
         df = df.sort_values("timestamp")
 

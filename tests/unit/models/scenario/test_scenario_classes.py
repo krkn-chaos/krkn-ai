@@ -92,8 +92,118 @@ class TestContainerScenario:
         scenario = ContainerScenario(cluster_components=cluster)
         assert scenario.name == "container-scenarios"
         assert scenario.namespace.value == "test-ns"
-        assert scenario.disruption_count.value >= 1
-        assert scenario.disruption_count.value <= len(pod.containers)
+        # Only one pod matches the label, so disruption_count (number of pods
+        # to disrupt) is 1 regardless of how many containers the pod has (#277).
+        assert scenario.disruption_count.value == 1
+
+    def test_container_scenario_disruption_count_bounded_by_matching_pods(self):
+        """disruption_count counts matching pods, not one pod's containers (#277).
+
+        Each pod has a single container, so the old logic
+        (``rng.randint(1, len(pod.containers))``) could only ever produce 1.
+        With three pods sharing the label, the count must be able to exceed 1.
+        """
+        pods = [
+            Pod(
+                name=f"web-{i}",
+                labels={"app": "web"},
+                containers=[Container(name="c1")],
+            )
+            for i in range(3)
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        seen_counts = set()
+        for _ in range(100):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert 1 <= scenario.disruption_count.value <= 3
+            seen_counts.add(scenario.disruption_count.value)
+        assert max(seen_counts) > 1  # bounded by pods (3), not the single container
+
+    def test_container_scenario_disruption_count_excludes_containerless_pods(self):
+        """Label-matching pods without containers don't inflate the count (#277).
+
+        Three pods share the label but only one has a container, so only one pod
+        is a disruptable target and disruption_count must always be 1.
+        """
+        pods = [
+            Pod(name="web-0", labels={"app": "web"}, containers=[Container(name="c1")]),
+            Pod(name="web-1", labels={"app": "web"}, containers=[]),
+            Pod(name="web-2", labels={"app": "web"}, containers=[]),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.disruption_count.value == 1
+
+    def test_container_scenario_count_excludes_pods_without_target_container(self):
+        """A specific container name limits the count to pods that have it (#277).
+
+        Pods can share a generic label (env=prod) while being different
+        workloads. If nginx is the targeted container, the redis pods must not
+        be counted, otherwise krkn would pick a pod with no nginx container and
+        fail the lookup. When the wildcard is chosen every labelled pod counts.
+        """
+        pods = [
+            Pod(
+                name="nginx-0",
+                labels={"env": "prod"},
+                containers=[Container(name="nginx")],
+            ),
+            Pod(
+                name="redis-0",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+            Pod(
+                name="redis-1",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(200):
+            scenario = ContainerScenario(cluster_components=cluster)
+            target = scenario.container_name.value
+            count = scenario.disruption_count.value
+            if target == ".*":
+                # Wildcard applies to every labelled pod with containers.
+                assert 1 <= count <= 3
+            else:
+                # Only the pods actually running that container may be counted.
+                eligible = sum(
+                    1 for p in pods if any(c.name == target for c in p.containers)
+                )
+                assert 1 <= count <= eligible
+
+    def test_container_scenario_container_name_is_specific_or_wildcard(self):
+        """container_name is a real container or '.*', decoupled from count (#277).
+
+        Even though only one pod matches (so disruption_count is always 1), the
+        container scope must still vary between a specific container and ".*"
+        rather than being forced to ".*" whenever the count is 1 (the old bug).
+        """
+        pod = Pod(
+            name="web",
+            labels={"app": "web"},
+            containers=[Container(name="c1"), Container(name="c2")],
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        valid = {"c1", "c2", ".*"}
+        seen = set()
+        for _ in range(100):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.container_name.value in valid
+            seen.add(scenario.container_name.value)
+        assert ".*" in seen  # wildcard still reachable
+        assert seen & {"c1", "c2"}  # specific-container choice reachable too
 
     def test_container_scenario_raises_error_when_no_pods_with_labels(self):
         """Test that ContainerScenario raises error when no pods have labels"""

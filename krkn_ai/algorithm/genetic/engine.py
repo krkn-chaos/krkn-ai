@@ -187,7 +187,6 @@ class GeneticAlgorithm(BaseEngine):
                 format_duration(elapsed_time),
             )
             self.completed_generations = cur_generation
-            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
@@ -274,8 +273,6 @@ class GeneticAlgorithm(BaseEngine):
                 "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
                 self.current_scenario_mutation_rate,
             )
-
-        self.stagnant_generations = 0
 
     def create_population(self, population_size) -> List[BaseScenario]:
         logger.info("Creating population of size %d", population_size)

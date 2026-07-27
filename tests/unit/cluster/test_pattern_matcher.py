@@ -73,6 +73,13 @@ class TestPatternMatcherCreation:
         assert matcher.matches("kube-system")
         assert not matcher.matches("test-ns")
 
+    def test_list_input_wildcard_creates_match_all_matcher(self):
+        """Test ['*'] matches everything, like the string form '*'"""
+        matcher = PatternMatcher.from_string(["*"])
+        assert matcher.match_all
+        assert matcher.matches("anything")
+        assert matcher.matches("kube-system")
+
 
 class TestPatternMatcherExclusion:
     """Test PatternMatcher exclusion patterns"""
@@ -129,6 +136,14 @@ class TestPatternMatcherExclusion:
         assert matcher.matches("default")
         assert not matcher.matches("kube-system")
         assert not matcher.matches("other")
+
+    def test_list_input_wildcard_with_exclusion(self):
+        """Test ['*', '!pattern'] matches everything except the excluded one"""
+        matcher = PatternMatcher.from_string(["*", "!kube-system"])
+        assert matcher.match_all
+        assert matcher.matches("default")
+        assert matcher.matches("prod-ns")
+        assert not matcher.matches("kube-system")
 
 
 class TestPatternMatcherFilter:
@@ -199,6 +214,17 @@ class TestPatternMatcherValidation:
         """Test from_string raises PatternValidationError for invalid regex"""
         with pytest.raises(PatternValidationError, match="Invalid regex"):
             PatternMatcher.from_string("[invalid")
+
+    def test_validate_accepts_list_input(self):
+        """Test validate accepts a list of patterns, like from_string"""
+        assert PatternMatcher.validate(["default", "kube-.*"]) == []
+        assert PatternMatcher.validate(["*", "!kube-system"]) == []
+
+    def test_validate_returns_errors_for_invalid_regex_in_list(self):
+        """Test validate reports invalid regex inside a list"""
+        errors = PatternMatcher.validate(["default", "[invalid"])
+        assert len(errors) == 1
+        assert "Invalid regex" in errors[0]
 
 
 class TestPatternMatcherEdgeCases:

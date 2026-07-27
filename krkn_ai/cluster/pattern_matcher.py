@@ -70,14 +70,22 @@ class PatternMatcher:
         if isinstance(pattern_string, list):
             list_include: List[re.Pattern] = []
             list_exclude: List[re.Pattern] = []
+            list_has_wildcard = False
             for pat in pattern_string:
-                if pat.startswith("!"):
-                    actual = pat[1:]
+                stripped_pat = pat.strip()
+                if stripped_pat == "*":
+                    # '*' means match all (before exclusions), same as the string form
+                    list_has_wildcard = True
+                elif stripped_pat.startswith("!"):
+                    actual = stripped_pat[1:]
                     if actual:
                         list_exclude.append(cls._compile_pattern(actual))
-                else:
-                    list_include.append(cls._compile_pattern(pat))
-            list_match_all = len(list_include) == 0 and len(list_exclude) > 0
+                elif stripped_pat:
+                    list_include.append(cls._compile_pattern(stripped_pat))
+            # Match all when '*' is present, or when only exclusions were given
+            list_match_all = list_has_wildcard or (
+                len(list_include) == 0 and len(list_exclude) > 0
+            )
             return cls(list_include, list_exclude, match_all=list_match_all)
 
         # Handle None or empty string
@@ -222,21 +230,30 @@ class PatternMatcher:
         return not self.match_all and len(self.include_patterns) == 0
 
     @classmethod
-    def validate(cls, pattern_string: str) -> List[str]:
+    def validate(cls, pattern_string: Optional[Union[str, List[str]]]) -> List[str]:
         """
-        Validate a pattern string without creating a matcher.
+        Validate a pattern string (or list of patterns) without creating a matcher.
+
+        Accepts the same inputs as ``from_string`` so list-form patterns can be
+        pre-validated too.
 
         Args:
-            pattern_string: The pattern string to validate
+            pattern_string: The pattern string or list of patterns to validate
 
         Returns:
             List of error messages (empty if valid)
         """
         errors: List[str] = []
-        if not pattern_string or pattern_string.strip() in ("", "*"):
+        if pattern_string is None:
             return errors
 
-        parts = [p.strip() for p in pattern_string.split(",") if p.strip()]
+        if isinstance(pattern_string, list):
+            parts = [p.strip() for p in pattern_string if p.strip()]
+        else:
+            if pattern_string.strip() in ("", "*"):
+                return errors
+            parts = [p.strip() for p in pattern_string.split(",") if p.strip()]
+
         for part in parts:
             if part == "*":
                 continue

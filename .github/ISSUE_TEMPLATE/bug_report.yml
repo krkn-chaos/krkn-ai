@@ -26,14 +26,14 @@ body:
         2. Click on '...'
         3. See error
     validations:
-      required: true
+      required: false
   - type: textarea
     id: expected
     attributes:
       label: Expected Behavior
       description: What did you expect to happen?
     validations:
-      required: true
+      required: false
   - type: textarea
     id: environment
     attributes:

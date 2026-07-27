@@ -110,6 +110,17 @@ class GeneticAlgorithm(BaseEngine):
             self.mark_cancelled(None)
             return
 
+        if self.baseline_result is not None:
+            self.baseline_window = (
+                self.baseline_result.start_time,
+                self.baseline_result.end_time,
+            )
+        else:
+            self.baseline_window = (
+                self.start_time - datetime.timedelta(minutes=5),
+                self.start_time,
+            )
+
         # Initial population (Gen 0)
         self.population = self.create_population(self.algo_config.population_size)
 
@@ -369,7 +380,15 @@ class GeneticAlgorithm(BaseEngine):
         items = self.config.fitness_function.items
         if not items:
             return
-        weights = learn_weights(self.seen_population.values(), items)
+            
+        prom_client = getattr(self.krkn_client, "prom_client", None)
+        baseline_window = getattr(self, "baseline_window", None)
+        weights = learn_weights(
+            self.seen_population.values(),
+            items,
+            prom_client=prom_client,
+            baseline_window=baseline_window,
+        )
         if not weights:
             return
         path = os.path.join(self.output_dir, LEARNED_WEIGHTS_FILE)

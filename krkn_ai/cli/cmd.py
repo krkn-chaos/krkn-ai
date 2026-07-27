@@ -106,20 +106,20 @@ def run(
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
-        exit(1)
+        sys.exit(1)
     if not os.path.exists(config):
         logger.error("Config file not found.")
-        exit(1)
+        sys.exit(1)
 
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
         logger.info("Initialized config: %s", config)
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
-        exit(1)
+        sys.exit(1)
     except (ValueError, ValidationError) as err:
         logger.error("Unable to parse config file: %s", err)
-        exit(1)
+        sys.exit(1)
 
     # Override seed from CLI if provided
     if seed is not None:
@@ -162,7 +162,7 @@ def run(
                 )
             else:
                 logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
-                exit(1)
+                sys.exit(1)
 
             engine.simulate()
 
@@ -174,13 +174,13 @@ def run(
             UniqueScenariosError,
         ) as e:
             logger.error("%s", e)
-            exit(1)
+            sys.exit(1)
         except FitnessFunctionCalculationError as e:
             logger.error("Unable to calculate fitness function score: %s", e)
-            exit(1)
+            sys.exit(1)
         except Exception as e:
             logger.exception("Something went wrong: %s", e)
-            exit(1)
+            sys.exit(1)
         finally:
             if not run_success:
                 try:

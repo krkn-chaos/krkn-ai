@@ -345,11 +345,19 @@ class TestNodeMemoryHogScenario:
         )
 
         cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
-        assert f'--memory-consumption "{scenario.node_memory_percentage.value}"' in cli_cmd
-        assert f'--memory-consumption "{scenario.node_memory_percentage.value}%"' not in cli_cmd
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}"' in cli_cmd
+        )
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}%"'
+            not in cli_cmd
+        )
 
         hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
-        assert f'-e MEMORY_CONSUMPTION_PERCENTAGE="{scenario.node_memory_percentage.value}%"' in hub_cmd
+        assert (
+            f'-e MEMORY_CONSUMPTION_PERCENTAGE="{scenario.node_memory_percentage.value}%"'
+            in hub_cmd
+        )
 
 
 class TestNodeIOHogScenario:

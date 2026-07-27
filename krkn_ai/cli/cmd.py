@@ -342,3 +342,87 @@ def discover(
         fitness_queries=fitness_queries,
         health_checks=health_checks,
     )
+
+
+@main.command(help="Validate a Krkn-AI config file without running any chaos")
+@click.option("--config", "-c", help="Path to krkn-ai config file.")
+@click.option(
+    "--kubeconfig",
+    "-k",
+    help="Path to cluster kubeconfig file. Overrides the value in the config file.",
+    envvar="KUBECONFIG",
+    default=None,
+)
+@click.option(
+    "--param",
+    "-p",
+    multiple=True,
+    help="Additional parameters for config file in key=value format.",
+)
+@click.option(
+    "--check-connectivity",
+    is_flag=True,
+    help="Also verify the cluster and Prometheus are reachable (requires a cluster).",
+)
+@click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.pass_context
+def validate(
+    ctx,
+    config: str,
+    kubeconfig: str = None,
+    param: tuple[str, ...] = (),
+    check_connectivity: bool = False,
+    verbose: int = 0,
+):
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
+
+    if config == "" or config is None:
+        logger.error("Config file invalid.")
+        sys.exit(1)
+    if not os.path.exists(config):
+        logger.error("Config file not found.")
+        sys.exit(1)
+
+    # Offline validation: parse + Pydantic-validate without touching a cluster.
+    try:
+        parsed_config = read_config_from_file(config, param, kubeconfig)
+    except KeyError as err:
+        logger.error("Invalid config file, missing key: %s", err)
+        sys.exit(1)
+    except (ValueError, ValidationError) as err:
+        logger.error("Invalid config file: %s", err)
+        sys.exit(1)
+
+    logger.info("Config file '%s' is valid.", config)
+
+    if not check_connectivity:
+        return
+
+    resolved_kubeconfig = kubeconfig or parsed_config.kubeconfig_file_path
+    if not resolved_kubeconfig or not os.path.exists(resolved_kubeconfig):
+        logger.error(
+            "--check-connectivity requires a valid kubeconfig "
+            "(via -k or kubeconfig_file_path in the config file)."
+        )
+        sys.exit(1)
+
+    reachable = True
+
+    try:
+        cluster_manager = ClusterManager(resolved_kubeconfig)
+        cluster_manager.core_api.list_namespace(limit=1)
+        logger.info("Cluster is reachable.")
+    except Exception as err:
+        logger.error("Cluster is not reachable: %s", err)
+        reachable = False
+
+    try:
+        create_prometheus_client(resolved_kubeconfig)
+        logger.info("Prometheus is reachable.")
+    except PrometheusConnectionError as err:
+        logger.error("Prometheus is not reachable: %s", err)
+        reachable = False
+
+    if not reachable:
+        sys.exit(1)

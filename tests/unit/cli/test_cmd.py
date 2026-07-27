@@ -12,7 +12,10 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from krkn_ai.cli.cmd import main
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+    PrometheusConnectionError,
+)
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile
 
@@ -637,3 +640,121 @@ class TestDiscoverCommand:
             assert result.exit_code != 0
         finally:
             os.unlink(kubeconfig_path)
+
+
+class TestValidateCommand:
+    """Test behavior of the validate command"""
+
+    def _write_config(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("apiVersion: v1\n")
+            return f.name
+
+    def test_validate_valid_config_succeeds_offline(self, minimal_config):
+        """A valid config validates without touching the cluster."""
+        runner = CliRunner()
+        config_path = self._write_config()
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read,
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+                patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            ):
+                mock_read.return_value = minimal_config
+                result = runner.invoke(main, ["validate", "--config", config_path])
+
+                assert result.exit_code == 0, result.exception
+                mock_read.assert_called_once_with(config_path, (), None)
+                # offline by default: no cluster / prometheus contact
+                mock_cm.assert_not_called()
+                mock_prom.assert_not_called()
+        finally:
+            os.unlink(config_path)
+
+    def test_validate_missing_config_fails(self):
+        """Empty or non-existent config paths fail fast."""
+        runner = CliRunner()
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+
+            result = runner.invoke(main, ["validate", "--config", ""])
+            assert result.exit_code == 1
+            assert "Config file invalid" in str(mock_logger.error.call_args)
+
+            mock_logger.reset_mock()
+            result = runner.invoke(
+                main, ["validate", "--config", "/nonexistent/file.yaml"]
+            )
+            assert result.exit_code == 1
+            assert "Config file not found" in str(mock_logger.error.call_args)
+
+    def test_validate_invalid_config_fails(self, minimal_config):
+        """A schema-invalid config exits non-zero."""
+        runner = CliRunner()
+        config_path = self._write_config()
+        try:
+            with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
+                mock_read.side_effect = ValidationError.from_exception_data(
+                    "ConfigFile", []
+                )
+                result = runner.invoke(main, ["validate", "--config", config_path])
+                assert result.exit_code == 1
+        finally:
+            os.unlink(config_path)
+
+    def test_validate_check_connectivity_success(self, minimal_config):
+        """--check-connectivity passes when cluster and Prometheus are reachable."""
+        runner = CliRunner()
+        config_path = self._write_config()
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read,
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+                patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            ):
+                mock_read.return_value = minimal_config
+                # config_path exists on disk, so it doubles as a valid kubeconfig path
+                result = runner.invoke(
+                    main,
+                    [
+                        "validate",
+                        "--config",
+                        config_path,
+                        "-k",
+                        config_path,
+                        "--check-connectivity",
+                    ],
+                )
+                assert result.exit_code == 0, result.exception
+                mock_cm.assert_called_once()
+                mock_prom.assert_called_once()
+        finally:
+            os.unlink(config_path)
+
+    def test_validate_check_connectivity_prometheus_failure(self, minimal_config):
+        """--check-connectivity exits non-zero when Prometheus is unreachable."""
+        runner = CliRunner()
+        config_path = self._write_config()
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read,
+                patch("krkn_ai.cli.cmd.ClusterManager"),
+                patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            ):
+                mock_read.return_value = minimal_config
+                mock_prom.side_effect = PrometheusConnectionError("no prometheus")
+                result = runner.invoke(
+                    main,
+                    [
+                        "validate",
+                        "--config",
+                        config_path,
+                        "-k",
+                        config_path,
+                        "--check-connectivity",
+                    ],
+                )
+                assert result.exit_code == 1
+        finally:
+            os.unlink(config_path)

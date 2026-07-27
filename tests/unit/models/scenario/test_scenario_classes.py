@@ -314,6 +314,51 @@ class TestNodeMemoryHogScenario:
         with pytest.raises(ScenarioParameterInitError, match="No nodes found"):
             NodeMemoryHogScenario(cluster_components=cluster)
 
+    def test_node_memory_percentage_parameter_value_formatting_for_runners(self):
+        """Test NodeMemoryPercentageParameter get_value formatting for krknhub vs krknctl (#446)"""
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        param = scenario.node_memory_percentage
+
+        # For krknctl (CLI runner), get_value(return_krknhub_name=False) returns an unadorned integer value
+        assert param.get_value(return_krknhub_name=False) == param.value
+        assert "%" not in str(param.get_value(return_krknhub_name=False))
+
+        # For krknhub (container runner), get_value(return_krknhub_name=True) returns value with % suffix
+        assert param.get_value(return_krknhub_name=True) == f"{param.value}%"
+
+    def test_node_memory_hog_command_building_runner_formatting(self):
+        """Test build_scenario_command outputs integer for krknctl and percent string for krknhub (#446)"""
+        from krkn_ai.chaos_engines.commands import build_scenario_command
+        from krkn_ai.models.app import KrknRunnerType
+        from krkn_ai.models.config import ConfigFile, FitnessFunction
+
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="dummy"),
+            cluster_components=cluster,
+        )
+
+        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}"' in cli_cmd
+        )
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}%"'
+            not in cli_cmd
+        )
+
+        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
+        assert (
+            f'-e MEMORY_CONSUMPTION_PERCENTAGE="{scenario.node_memory_percentage.value}%"'
+            in hub_cmd
+        )
+
 
 class TestNodeIOHogScenario:
     """Test NodeIOHogScenario class"""

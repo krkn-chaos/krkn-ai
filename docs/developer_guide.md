@@ -61,6 +61,9 @@ brew install vfkit
 minikube start --driver=vfkit
 ```
 
+### Configure Cluster Access
+
+```bash
 # Switch to minikube cluster context
 kubectl config use-context minikube
 

@@ -15,7 +15,7 @@ class BaseParameter(BaseModel):
             return self.krknhub_name
         return self.krknctl_name
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         return self.value
 
 

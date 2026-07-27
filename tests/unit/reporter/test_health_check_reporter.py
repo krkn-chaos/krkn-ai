@@ -126,10 +126,13 @@ class TestHealthCheckReporter:
             )
         ]
 
-        with caplog.at_level(
-            logging.WARNING, logger="krkn_ai.reporter.health_check_reporter"
-        ):
-            reporter.save_report(fitness_results)
+        target_logger = logging.getLogger("krkn-ai")
+        target_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.WARNING):
+                reporter.save_report(fitness_results)
+        finally:
+            target_logger.removeHandler(caplog.handler)
 
         report_path = os.path.join(
             temp_output_dir, "reports", "health_check_report.csv"

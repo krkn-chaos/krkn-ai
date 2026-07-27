@@ -9,6 +9,16 @@ from krkn_ai.models.scenario.base import (
 )
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
+from krkn_ai.models.scenario.parameters import (
+    IOBlockSizeParameter,
+    IOWriteBytesParameter,
+    NetworkScenarioEgressParamsParameter,
+    NetworkScenarioNetworkParamsParameter,
+    NodeMemoryPercentageParameter,
+    PodNameParameter,
+    ReadBPSParameter,
+    WriteBPSParameter,
+)
 
 
 class TestBaseParameter:
@@ -31,6 +41,22 @@ class TestBaseParameter:
             krknctl_name="test", krknhub_name="TEST", value="test-value"
         )
         assert param.get_value() == "test-value"
+
+    def test_parameter_overrides_accept_krknhub_value_formatting(self):
+        """Every custom get_value override accepts Hub runner formatting."""
+        parameters = [
+            NodeMemoryPercentageParameter(),
+            NetworkScenarioNetworkParamsParameter(),
+            NetworkScenarioEgressParamsParameter(),
+            PodNameParameter(),
+            IOBlockSizeParameter(),
+            IOWriteBytesParameter(),
+            ReadBPSParameter(),
+            WriteBPSParameter(),
+        ]
+
+        for parameter in parameters:
+            assert parameter.get_value(return_krknhub_name=True) is not None
 
 
 class TestScenario:

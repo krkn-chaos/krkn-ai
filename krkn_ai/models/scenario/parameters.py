@@ -130,8 +130,10 @@ class NodeMemoryPercentageParameter(BaseParameter):
     krknctl_name: str = "memory-consumption"
     value: int = 50
 
-    def get_value(self):
-        return f"{self.value}%"
+    def get_value(self, return_krknhub_name: bool = False):
+        if return_krknhub_name:
+            return f"{self.value}%"
+        return self.value
 
     def mutate(self):
         if rng.random() < 0.5:
@@ -272,7 +274,7 @@ class NetworkScenarioNetworkParamsParameter(BaseParameter):
         self.value.latency = rng.randint(1, 1000)
         self.value.bandwidth = rng.randint(100, 1000)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         # TODO: Add support for loss once https://github.com/krkn-chaos/krkn-hub/pull/349 is merged
         # loss is excluded: krknctl regex requires unquoted numeric values which
         # YAML parses as float, but krkn's arcaflow model requires Dict[str, str]
@@ -293,7 +295,7 @@ class NetworkScenarioEgressParamsParameter(BaseParameter):
         self.value.loss = round(rng.uniform(0.01, 0.1), 2)
         self.value.bandwidth = rng.randint(100, 1000)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         return (
             "{"
             + f"latency: {self.value.latency}ms,loss: {self.value.loss},bandwidth: {self.value.bandwidth}mbit"
@@ -345,7 +347,7 @@ class PodNameParameter(BaseParameter):
             self._owner_kind = None
             self._owner_name = None
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         if self._namespace and self._owner_kind and self._owner_name:
             from krkn_ai.cluster import resolve_pod_name
 
@@ -452,7 +454,7 @@ class IOBlockSizeParameter(BaseParameter):
     krknctl_name: str = "io-block-size"
     value: int = 1048576  # 1MB in bytes (1024 * 1024)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         """
         Format the value with appropriate unit suffix (b, k, m).
         Returns string like "1m", "512k", "1024b"
@@ -496,7 +498,7 @@ class IOWriteBytesParameter(BaseParameter):
     krknctl_name: str = "io-write-bytes"
     value: int = 10  # Percentage of free space (1-100)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         return f"{self.value}%"
 
     def mutate(self):
@@ -574,7 +576,7 @@ class ReadBPSParameter(BaseParameter):
     krknctl_name: str = "read-bps"
     value: int = 1048576  # 1Mi in bytes (1024 * 1024)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         if self.value < 1024:
             return f"{self.value}"
         elif self.value < 1024 * 1024:
@@ -591,7 +593,7 @@ class WriteBPSParameter(BaseParameter):
     krknctl_name: str = "write-bps"
     value: int = 524288  # 512Ki in bytes (512 * 1024)
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         if self.value < 1024:
             return f"{self.value}"
         elif self.value < 1024 * 1024:

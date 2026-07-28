@@ -47,6 +47,10 @@ class CommandRunResult(BaseModel):
     run_uuid: Optional[str] = (
         None  # Unique identifier generated from krkn engine during scenario execution
     )
+    parent_uuids: List[str] = Field(default_factory=list)
+    mutation_type: Optional[str] = None
+    mutated_parameters: List[str] = Field(default_factory=list)
+    duplicate_of: Optional[str] = None
 
 
 class KrknRunnerType(str, Enum):

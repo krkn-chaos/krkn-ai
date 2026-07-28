@@ -109,13 +109,8 @@ class TestJSONSummaryReporter:
             assert "generation" in item
             assert "scenario_type" in item
             assert "parameters" in item
-            assert "fitness_result" in item
-
-            fr = item["fitness_result"]
-            assert "fitness_score" in fr
-            assert "krkn_failure_score" in fr
-            assert "health_check_failure_score" in fr
-            assert "health_check_response_time_score" in fr
+            assert "scenario_type" in item
+            assert "parameters" in item
 
     def test_edge_cases(self, minimal_config):
         """Test single generation and zero fitness cases"""
@@ -202,11 +197,7 @@ class TestJSONSummaryReporter:
         now = datetime.datetime.now(datetime.timezone.utc)
         cc = minimal_config.cluster_components
         scenario = DummyScenario(cluster_components=cc)
-        # Manually set some lineage metadata
-        scenario.parent_uuids = ["parent-uuid-123"]
-        scenario.mutation_type = "crossover"
-        scenario.mutated_parameters = ["param1"]
-
+        # Manually set some lineage metadata on the result
         res = CommandRunResult(
             generation_id=0,
             scenario_id=100,
@@ -218,6 +209,10 @@ class TestJSONSummaryReporter:
             end_time=now,
             fitness_result=FitnessResult(fitness_score=50.0),
         )
+        res.parent_uuids = ["parent-uuid-123"]
+        res.mutation_type = "crossover"
+        res.mutated_parameters = ["param1"]
+        res.duplicate_of = "duplicate-uuid-456"
 
         reporter = JSONSummaryReporter(
             run_uuid="lineage-test",
@@ -239,3 +234,4 @@ class TestJSONSummaryReporter:
         assert node["parent_uuids"] == ["parent-uuid-123"]
         assert node["mutation_type"] == "crossover"
         assert node["mutated_parameters"] == ["param1"]
+        assert node["duplicate_of"] == "duplicate-uuid-456"

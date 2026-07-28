@@ -65,6 +65,7 @@ class GeneticAlgorithm(BaseEngine):
         self.stopping = StoppingCriteriaEvaluator(
             self.algo_config, self.best_of_generation
         )
+        self.lineage_metadata = {}  # type: ignore
 
     def optimize(self):
         return self.simulate()
@@ -324,18 +325,30 @@ class GeneticAlgorithm(BaseEngine):
                 "Scenario %s already evaluated, skipping fitness calculation.",
                 scenario,
             )
-            cached_uuid = self.seen_population[scenario].scenario.id
-            scenario.id = cached_uuid
-            result = self.seen_population[scenario]
-            result = copy.deepcopy(result)
+            cached_result = self.seen_population[scenario]
+            result = copy.deepcopy(cached_result)
             result.generation_id = generation_id
             result.scenario = scenario
+            result.duplicate_of = cached_result.scenario.id
+            
+            # Inject lineage metadata if present
+            meta = self.lineage_metadata.get(scenario.id, {})
+            result.parent_uuids = meta.get("parent_uuids", [])
+            result.mutation_type = meta.get("mutation_type", None)
+            result.mutated_parameters = meta.get("mutated_parameters", [])
+
             self.all_evaluations.append(result)
             return result
 
         self.stopping.record_new_scenario()
 
         scenario_result = self.evaluate_scenario(scenario, generation_id)
+        
+        meta = self.lineage_metadata.get(scenario.id, {})
+        scenario_result.parent_uuids = meta.get("parent_uuids", [])
+        scenario_result.mutation_type = meta.get("mutation_type", None)
+        scenario_result.mutated_parameters = meta.get("mutated_parameters", [])
+        
         return scenario_result
 
     def mutate(self, scenario: BaseScenario):
@@ -347,8 +360,10 @@ class GeneticAlgorithm(BaseEngine):
         if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
-                new_scenario.parent_uuids = [scenario.id]
-                new_scenario.mutation_type = "type_mutation"
+                self.lineage_metadata[new_scenario.id] = {
+                    "parent_uuids": [scenario.id],
+                    "mutation_type": "type_mutation"
+                }
                 return new_scenario
 
         if hasattr(scenario, "mutate"):
@@ -360,10 +375,12 @@ class GeneticAlgorithm(BaseEngine):
                     if p.krknctl_name in old_params and old_params[p.krknctl_name] != p.value:
                         mutated.append(p.krknctl_name)
             if mutated:
-                scenario.parent_uuids = [scenario.id]
                 scenario.id = str(uuid.uuid4())
-                scenario.mutation_type = "parameter_mutation"
-                scenario.mutated_parameters = mutated
+                self.lineage_metadata[scenario.id] = {
+                    "parent_uuids": [scenario.id], # Self pointer is fine for parameter mutation since it evolved
+                    "mutation_type": "parameter_mutation",
+                    "mutated_parameters": mutated
+                }
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario
@@ -482,27 +499,34 @@ class GeneticAlgorithm(BaseEngine):
             )
 
             if len(common_params) == 0:
-                logger.warning(
+                logger.debug(
                     "Scenario %s and %s have no common parameters",
                     scenario_a,
                     scenario_b,
                 )
                 return scenario_a, scenario_b
 
-            for p in scenario_a.parameters:
-                if type(p) in common_params and rng.random() < self.algo_config.crossover_rate:
-                    p_b = next((x for x in scenario_b.parameters if type(x) == type(p)))
-                    p.value, p_b.value = p_b.value, p.value
+            for param_type in common_params:
+                if rng.random() < self.algo_config.crossover_rate:
+                    a_value = self.__get_param_value(scenario_a, param_type)
+                    b_value = self.__get_param_value(scenario_b, param_type)
+
+                    self.__set_param_value(scenario_a, param_type, b_value)
+                    self.__set_param_value(scenario_b, param_type, a_value)
             
             child1, child2 = scenario_a, scenario_b
 
-        child1.parent_uuids = [parent_a_id, parent_b_id]
         child1.id = str(uuid.uuid4())
-        child1.mutation_type = "crossover"
+        self.lineage_metadata[child1.id] = {
+            "parent_uuids": [parent_a_id, parent_b_id],
+            "mutation_type": "crossover"
+        }
         
-        child2.parent_uuids = [parent_b_id, parent_a_id]
         child2.id = str(uuid.uuid4())
-        child2.mutation_type = "crossover"
+        self.lineage_metadata[child2.id] = {
+            "parent_uuids": [parent_b_id, parent_a_id],
+            "mutation_type": "crossover"
+        }
 
         return child1, child2
 
@@ -518,10 +542,12 @@ class GeneticAlgorithm(BaseEngine):
             name="composite",
             scenario_a=scenario_a,
             scenario_b=scenario_b,
-            dependency=dependency,
-            parent_uuids=[scenario_a.id, scenario_b.id],
-            mutation_type="composition"
+            dependency=dependency
         )
+        self.lineage_metadata[composite_scenario.id] = {
+            "parent_uuids": [scenario_a.id, scenario_b.id],
+            "mutation_type": "composition"
+        }
         return composite_scenario
 
     def __get_param_value(self, scenario: Scenario, param_type):

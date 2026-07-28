@@ -14,7 +14,6 @@ from krkn_ai.constants import (
 )
 from krkn_ai.dashboard.data_loader import (
     load_results_csv,
-    load_results_json,
     load_config_yaml,
     load_health_check_csv,
     load_detailed_scenarios_data,
@@ -133,14 +132,12 @@ def main():
     # Load data — loaders return (file_found: bool, df | None)
     if running:
         results_file_found, df_results = load_results_csv.__wrapped__(output_dir)
-        best_scenarios_data = load_results_json.__wrapped__(output_dir)
         config_data = load_config_yaml.__wrapped__(output_dir)
         health_file_found, df_health = load_health_check_csv.__wrapped__(output_dir)
         df_details = load_detailed_scenarios_data.__wrapped__(output_dir)
         df_logs = load_logs.__wrapped__(output_dir)
     else:
         results_file_found, df_results = load_results_csv(output_dir)
-        best_scenarios_data = load_results_json(output_dir)
         config_data = load_config_yaml(output_dir)
         health_file_found, df_health = load_health_check_csv(output_dir)
         df_details = load_detailed_scenarios_data(output_dir)
@@ -486,7 +483,7 @@ def main():
                 "No scenarios match the selected filters. Try adjusting the sidebar filters."
             )
         else:
-            render_summary(df_results, best_scenarios_data)
+            render_summary(df_results)
             st.divider()
 
             colA, colB = st.columns(2)

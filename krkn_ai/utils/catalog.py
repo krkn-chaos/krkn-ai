@@ -22,6 +22,8 @@ class FitnessCategory(str, Enum):
     resource = "resource"
     node = "node"
     control_plane = "control_plane"
+    etcd = "etcd"
+    storage = "storage"
 
 
 class Scope(str, Enum):

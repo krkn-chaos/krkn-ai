@@ -62,37 +62,15 @@ scenario_specs = [
     ("service_disruption", ServiceDisruptionScenario),
 ]
 
-# Scenarios with a cluster-critical blast radius. They are fully supported, but
-# are only ever run when the config explicitly sets ``allow_dangerous_scenarios:
-# true`` -- their own ``enable`` flag is not sufficient on its own.
-#
-# Service disruption deletes entire namespaces, destroying every resource inside
-# them; unlike a pod or container kill, recovery depends on an operator or
-# GitOps controller reconciling the namespace back.
+# Scenarios with a cluster-critical blast radius (e.g. namespace deletion).
+# Gated behind ``allow_dangerous_scenarios`` — their own ``enable`` flag is
+# not sufficient on its own.
 DANGEROUS_SCENARIOS = {"service_disruption"}
 
 
 class ScenarioFactory:
     @staticmethod
-    def _blocked_dangerous_scenarios(config: ConfigFile) -> List[str]:
-        """User-facing keys of enabled dangerous scenarios blocked by the gate."""
-        if config.allow_dangerous_scenarios:
-            return []
-        blocked = []
-        for attr, _ in scenario_specs:
-            scenario_cfg = getattr(config.scenario, attr)
-            if (
-                attr in DANGEROUS_SCENARIOS
-                and scenario_cfg is not None
-                and scenario_cfg.enable
-            ):
-                blocked.append(attr.replace("_", "-"))
-        return blocked
-
-    @staticmethod
     def list_scenarios(config: ConfigFile) -> List[Tuple[str, type[Scenario]]]:
-        # List all enabled scenarios from config, gating dangerous ones behind
-        # the explicit allow_dangerous_scenarios opt-in.
         candidates = []
         for attr, factory in scenario_specs:
             scenario_cfg = getattr(config.scenario, attr)
@@ -100,9 +78,9 @@ class ScenarioFactory:
                 continue
             if attr in DANGEROUS_SCENARIOS and not config.allow_dangerous_scenarios:
                 logger.warning(
-                    "Scenario '%s' is enabled but has a cluster-critical blast "
-                    "radius; skipping it because 'allow_dangerous_scenarios' is "
-                    "not set. Set allow_dangerous_scenarios: true to run it.",
+                    "Scenario '%s' is enabled but requires "
+                    "'--allow-dangerous-scenarios' (CLI) or "
+                    "'allow_dangerous_scenarios: true' (config). Skipping.",
                     attr.replace("_", "-"),
                 )
                 continue
@@ -118,17 +96,9 @@ class ScenarioFactory:
 
         Returns a list of valid scenarios.
         """
-        # Get all scenarios that are set in config
         candidates = ScenarioFactory.list_scenarios(config)
 
         if len(candidates) == 0:
-            blocked = ScenarioFactory._blocked_dangerous_scenarios(config)
-            if blocked:
-                raise MissingScenarioError(
-                    "The only enabled scenario(s) ({}) are cluster-critical and "
-                    "were blocked. Set 'allow_dangerous_scenarios: true' in your "
-                    "config to run them.".format(", ".join(blocked))
-                )
             raise MissingScenarioError(
                 "No scenarios found. Please provide atleast 1 scenario."
             )

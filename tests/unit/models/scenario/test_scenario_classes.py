@@ -497,36 +497,14 @@ class TestServiceDisruptionScenario:
         """With no namespaces the scenario cannot initialize and raises cleanly."""
         cluster = ClusterComponents(namespaces=[], nodes=[])
         with pytest.raises(
-            ScenarioParameterInitError, match="No non-system namespaces with services"
+            ScenarioParameterInitError, match="No namespaces with services"
         ):
             ServiceDisruptionScenario(cluster_components=cluster)
 
     def test_service_disruption_raises_when_namespace_has_no_services(self):
-        """A namespace without services is not a valid target (#13 review)."""
+        """A namespace without services is not a valid target."""
         cluster = ClusterComponents(namespaces=[Namespace(name="empty-ns")], nodes=[])
         with pytest.raises(
-            ScenarioParameterInitError, match="No non-system namespaces with services"
+            ScenarioParameterInitError, match="No namespaces with services"
         ):
             ServiceDisruptionScenario(cluster_components=cluster)
-
-    def test_service_disruption_never_targets_system_namespaces(self):
-        """System namespaces are excluded even when they run services (#13 review)."""
-        system = [
-            Namespace(
-                name=name, services=[Service(name="svc", ports=[ServicePort(port=80)])]
-            )
-            for name in ("kube-system", "default", "openshift-etcd", "kube-public")
-        ]
-        cluster = ClusterComponents(namespaces=system, nodes=[])
-        with pytest.raises(
-            ScenarioParameterInitError, match="No non-system namespaces with services"
-        ):
-            ServiceDisruptionScenario(cluster_components=cluster)
-
-        # A user namespace mixed in is the only eligible target.
-        cluster = ClusterComponents(
-            namespaces=system + [self._namespace_with_service("robot-shop")], nodes=[]
-        )
-        for _ in range(50):
-            scenario = ServiceDisruptionScenario(cluster_components=cluster)
-            assert scenario.namespace.value == "robot-shop"

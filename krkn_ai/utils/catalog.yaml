@@ -101,14 +101,14 @@
 - key: etcd-request-errors
   category: etcd
   name: API server to etcd error fraction
-  query_template: 'sum(rate(etcd_request_errors_total[$range$])) / sum(rate(etcd_requests_total[$range$]))'
+  query_template: '(sum(rate(etcd_request_errors_total[$range$])) / sum(rate(etcd_requests_total[$range$]))) and (sum(rate(etcd_requests_total[$range$])) > 0)'
   requires: [etcd_request_errors_total, etcd_requests_total]
   scope: cluster
 
 - key: etcd-db-size
   category: etcd
   name: etcd database size in bytes
-  query_template: 'sum(apiserver_storage_size_bytes)'
+  query_template: 'max(apiserver_storage_size_bytes)'
   requires: [apiserver_storage_size_bytes]
   scope: cluster
 
@@ -123,7 +123,7 @@
 - key: etcd-leader-changes
   category: etcd
   name: etcd leader changes in the window
-  query_template: 'sum(increase(etcd_server_leader_changes_seen_total[$range$]))'
+  query_template: 'max(increase(etcd_server_leader_changes_seen_total[$range$]))'
   requires: [etcd_server_leader_changes_seen_total]
   scope: cluster
 

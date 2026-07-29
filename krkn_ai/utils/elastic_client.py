@@ -88,19 +88,13 @@ class ElasticSearchClient:
 
         INDEX_NAME = f"{self.config.index}-config"
 
+        # Serialize only the fields relevant for indexing (excludes kubeconfig, elastic creds, etc.)
         config_data = config.model_dump(
             mode="json",
             include={
-                "generations",
-                "population_size",
-                "duration",
+                "algorithm",
+                "genetic",
                 "wait_duration",
-                "mutation_rate",
-                "scenario_mutation_rate",
-                "crossover_rate",
-                "composition_rate",
-                "population_injection_rate",
-                "population_injection_size",
                 "fitness_function",
                 "health_checks",
                 "scenario",
@@ -111,6 +105,31 @@ class ElasticSearchClient:
 
         status = self.client.upload_data_to_elasticsearch(
             item=config_data, index=INDEX_NAME
+        )
+        return self.__handle_index_status(status)
+
+    def index_run_summary(self, summary: dict, run_uuid: str) -> bool:
+        """
+        Index the end-of-run summary into the krkn-ai "summary" index in Elasticsearch.
+
+        Args:
+            summary: Dict produced by JSONSummaryReporter.generate_summary()
+            run_uuid: Unique identifier for this run
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.config.enable or self.client is None:
+            logger.debug(
+                "Elasticsearch indexing is disabled. Skipping indexing of run summary."
+            )
+            return False
+
+        INDEX_NAME = f"{self.config.index}-summary"
+        summary["run_uuid"] = run_uuid
+
+        status = self.client.upload_data_to_elasticsearch(
+            item=summary, index=INDEX_NAME
         )
         return self.__handle_index_status(status)
 

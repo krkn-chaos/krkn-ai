@@ -183,5 +183,4 @@ krknctl-kubeconfig*
 chaos-ai.yaml
 krkn-ai.yaml
 
-uv.lock
 .DS_Store

@@ -7,6 +7,9 @@ import streamlit as st
 import re
 import json
 
+from krkn_ai.models.config import OutputConfig
+from krkn_ai.utils.output import fmt_to_glob, fmt_to_id_regex
+
 
 @st.cache_data(ttl=300)
 def load_results_csv(output_dir: str):
@@ -35,8 +38,23 @@ def load_config_yaml(output_dir: str):
 
 
 @st.cache_data(ttl=300)
+def _get_output_config(output_dir: str) -> OutputConfig:
+    """Load the output filename config for a run, falling back to defaults."""
+    raw = load_config_yaml(output_dir)
+    try:
+        return OutputConfig(**(raw or {}).get("output", {}))
+    except Exception as e:
+        logging.error(f"Failed to parse output config for {output_dir}: {e}")
+        return OutputConfig()
+
+
+@st.cache_data(ttl=300)
 def load_detailed_scenarios_data(output_dir: str):
-    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", "scenario_*.yaml")
+    output_config = _get_output_config(output_dir)
+    yaml_glob = fmt_to_glob(output_config.result_name_fmt)
+    base_name, _ext = os.path.splitext(yaml_glob)
+    yaml_glob = f"{base_name}.yaml"
+    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", yaml_glob)
     yaml_files = glob.glob(yaml_pattern)
 
     rows = []
@@ -101,13 +119,18 @@ def load_health_check_csv(output_dir: str):
 @st.cache_data(ttl=300)
 def load_logs(output_dir: str):
     """
-    Parse all scenario_N.log files and return a list of structured dicts,
-    one per scenario, containing everything needed for the report card.
+    Parse all scenario log files (matched using the run's configured
+    log_name_fmt) and return a list of structured dicts, one per scenario,
+    containing everything needed for the report card.
     """
 
     log_dir = os.path.join(output_dir, "logs")
     if not os.path.isdir(log_dir):
         return []
+
+    output_config = _get_output_config(output_dir)
+    log_glob = fmt_to_glob(output_config.log_name_fmt)
+    log_id_regex = fmt_to_id_regex(output_config.log_name_fmt)
 
     # Matches: "2026-03-17 11:58:12,164 [INFO] message..."
     log_re = re.compile(
@@ -119,9 +142,9 @@ def load_logs(output_dir: str):
     ansi_re = re.compile(r"\x1b\[[0-9;]*m")
 
     results = []
-    for log_file in sorted(glob.glob(os.path.join(log_dir, "scenario_*.log"))):
+    for log_file in sorted(glob.glob(os.path.join(log_dir, log_glob))):
         base = os.path.basename(log_file)
-        m = re.match(r"scenario_(\d+)\.log", base)
+        m = log_id_regex.match(base)
         scen_id = int(m.group(1)) if m else base
 
         try:

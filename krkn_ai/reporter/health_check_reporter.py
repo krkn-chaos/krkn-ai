@@ -36,7 +36,11 @@ class HealthCheckReporter:
 
             for component_results in health_check_results:
                 if len(component_results) == 0:
-                    break
+                    logger.warning(
+                        "Component in scenario_id=%s produced zero health-check samples, skipping.",
+                        scenario_id,
+                    )
+                    continue
                 component_name = component_results[0].name
                 min_response_time = min(
                     [result.response_time for result in component_results]
@@ -241,5 +245,5 @@ class HealthCheckReporter:
                 df = df.sort_values(by="fitness_score", ascending=False)
                 df.to_csv(report_path, index=False)
                 logger.debug("Fitness result CSV sorted by fitness_score")
-            except Exception:
-                logger.warning("Unable to sort fitness results")
+            except Exception as e:
+                logger.exception("Unable to sort fitness results: %s", e)

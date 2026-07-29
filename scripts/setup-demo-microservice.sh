@@ -18,13 +18,24 @@
 #
 #******************************************************************************
 
+set -e
+
+detect_openshift() {
+    if kubectl get clusterversion &>/dev/null; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
+
 # Define variables
 chart_name="robot-shop"
 repo_url="https://github.com/instana/robot-shop/" # Replace with the actual Helm repo URL
 namespace="${DEMO_NAMESPACE:-robot-shop}" # Replace with the desired namespace if not default
 repo_dir="temp-helm-repo"
 helm_chart="K8s/helm"
-is_openshift="${IS_OPENSHIFT:-true}" # TODO: Automatically detect if the cluster is openshift or not
+is_openshift="${IS_OPENSHIFT:-$(detect_openshift)}"
 image_repo="mirror.gcr.io/robotshop"
 infra_registry="mirror.gcr.io/library" # mirror for Docker Hub official images (redis, rabbitmq)
 
@@ -32,12 +43,14 @@ infra_registry="mirror.gcr.io/library" # mirror for Docker Hub official images (
 temp_dir="./tmp"
 mkdir -p $temp_dir
 
-# Trap for exit signals and errors
-trap cleanup EXIT
-
+post_renderer=""
 cleanup() {
+  [ -n "$post_renderer" ] && rm -f "$post_renderer"
   echo "Script finished."
 }
+
+# Trap for exit signals and errors
+trap cleanup EXIT
 
 # Switch to the temporary directory
 cd "$temp_dir"
@@ -55,13 +68,15 @@ cd $repo_dir
 echo "Switched to cloned directory: $PWD"
 
 # Setup Namespace
-kubectl get ns $namespace || kubectl create ns $namespace
-
 if [ "$is_openshift" = "true" ]; then
     # Based on https://github.com/instana/robot-shop/tree/master/OpenShift
-    oc adm new-project $namespace
-    oc adm policy add-scc-to-user anyuid -z default -n $namespace
-    oc adm policy add-scc-to-user privileged -z default -n $namespace
+    echo "OpenShift cluster detected: $is_openshift"
+    oc get project $namespace >/dev/null 2>&1 || oc adm new-project $namespace
+    oc adm policy add-scc-to-user anyuid -z default -n $namespace || true
+    oc adm policy add-scc-to-user privileged -z default -n $namespace || true
+
+else
+    kubectl get ns $namespace || kubectl create ns $namespace
 fi
 
 # Post-renderer to redirect hardcoded redis/rabbitmq images to the mirror registry
@@ -81,5 +96,3 @@ helm upgrade -i $chart_name \
   --post-renderer "$post_renderer" \
   --namespace "$namespace" .
 echo "Installed helm chart '$chart_name' in namespace '$namespace'"
-
-rm -f "$post_renderer"

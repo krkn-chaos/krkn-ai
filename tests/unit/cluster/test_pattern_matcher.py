@@ -4,7 +4,7 @@ PatternMatcher unit tests
 
 import pytest
 
-from krkn_ai.utils.pattern_matcher import PatternMatcher, PatternValidationError
+from krkn_ai.cluster import PatternMatcher, PatternValidationError
 
 
 class TestPatternMatcherCreation:

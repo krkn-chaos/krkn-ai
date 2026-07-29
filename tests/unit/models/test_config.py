@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from krkn_ai.models.config import (
     ConfigFile,
+    GeneticAlgorithmConfig,
     FitnessFunction,
     FitnessFunctionType,
     FitnessFunctionItem,
@@ -60,8 +61,8 @@ class TestConfigFile:
         )
         assert config_min.kubeconfig_file_path == "/path/to/kubeconfig"
         assert config_min.fitness_function.query == "test_query"
-        assert config_min.generations == 20
-        assert config_min.population_size == 10
+        assert config_min.genetic.generations == 20
+        assert config_min.genetic.population_size == 10
         assert config_min.parameters == {}
         assert isinstance(config_min.scenario, ScenarioConfig)
         assert isinstance(config_min.health_checks, HealthCheckConfig)
@@ -80,8 +81,7 @@ class TestConfigFile:
         config = ConfigFile(
             kubeconfig_file_path="/path/to/kubeconfig",
             parameters={"key1": ParameterValue(value="value1")},
-            generations=50,
-            population_size=20,
+            genetic=GeneticAlgorithmConfig(generations=50, population_size=20),
             fitness_function=fitness,
             scenario=scenario_config,
             health_checks=HealthCheckConfig(
@@ -95,8 +95,8 @@ class TestConfigFile:
             output=OutputConfig(result_name_fmt="gen_%g_scenario_%s.yaml"),
             cluster_components=cluster_full,
         )
-        assert config.generations == 50
-        assert config.population_size == 20
+        assert config.genetic.generations == 50
+        assert config.genetic.population_size == 20
         assert config.parameters["key1"].value == "value1"
         assert config.scenario.pod_scenarios.enable is True
         assert len(config.health_checks.applications) == 1
@@ -181,14 +181,18 @@ class TestHealthCheckConfig:
         # Test HealthCheckConfig defaults
         config = HealthCheckConfig()
         assert config.stop_watcher_on_failure is False
+        assert config.stop_timeout == 5.0
         assert config.applications == []
+
+        custom_config = HealthCheckConfig(stop_timeout=0.25)
+        assert custom_config.stop_timeout == 0.25
 
         # Test HealthCheckApplicationConfig with defaults and custom values
         app = HealthCheckApplicationConfig(
             name="test-app", url="http://localhost:8080/health"
         )
         assert app.name == "test-app"
-        assert app.url == "http://localhost:8080/health"
+        assert str(app.url) == "http://localhost:8080/health"
         assert app.status_code == 200
         assert app.timeout == 4
         assert app.interval == 2
@@ -235,6 +239,26 @@ class TestOutputConfig:
         assert "%g" in config.result_name_fmt
         assert "%s" in config.result_name_fmt
 
+    @pytest.mark.parametrize(
+        "field_name",
+        ["result_name_fmt", "graph_name_fmt", "log_name_fmt"],
+    )
+    def test_output_config_rejects_fmt_without_scenario_id(self, field_name):
+        """Format strings without %s must be rejected so scenarios don't collide on filenames"""
+        with pytest.raises(ValidationError, match="%s"):
+            OutputConfig(**{field_name: "gen_%g_scenario.yaml"})
+
+    def test_output_config_accepts_fmt_with_scenario_id(self):
+        """Format strings containing %s are accepted regardless of other placeholders"""
+        config = OutputConfig(
+            result_name_fmt="gen_%g_%s.yaml",
+            graph_name_fmt="%s.png",
+            log_name_fmt="%c_%s.log",
+        )
+        assert config.result_name_fmt == "gen_%g_%s.yaml"
+        assert config.graph_name_fmt == "%s.png"
+        assert config.log_name_fmt == "%c_%s.log"
+
 
 class TestStoppingCriteria:
     """Test StoppingCriteria model"""
@@ -270,12 +294,14 @@ class TestStoppingCriteria:
             kubeconfig_file_path="/path/to/kubeconfig",
             fitness_function=FitnessFunction(query="test_query"),
             cluster_components=cluster,
-            stopping_criteria=StoppingCriteria(
-                fitness_threshold=150.0, generation_saturation=3
+            genetic=GeneticAlgorithmConfig(
+                stopping_criteria=StoppingCriteria(
+                    fitness_threshold=150.0, generation_saturation=3
+                ),
             ),
         )
-        assert config.stopping_criteria.fitness_threshold == 150.0
-        assert config.stopping_criteria.generation_saturation == 3
+        assert config.genetic.stopping_criteria.fitness_threshold == 150.0
+        assert config.genetic.stopping_criteria.generation_saturation == 3
 
     def test_config_file_stopping_criteria_default(self):
         """Test that ConfigFile has default StoppingCriteria"""
@@ -285,6 +311,24 @@ class TestStoppingCriteria:
             fitness_function=FitnessFunction(query="test_query"),
             cluster_components=cluster,
         )
-        assert isinstance(config.stopping_criteria, StoppingCriteria)
-        assert config.stopping_criteria.fitness_threshold is None
-        assert config.stopping_criteria.generation_saturation is None
+        assert isinstance(config.genetic.stopping_criteria, StoppingCriteria)
+        assert config.genetic.stopping_criteria.fitness_threshold is None
+        assert config.genetic.stopping_criteria.generation_saturation is None
+
+    def test_backward_compat_flat_ga_fields(self):
+        """Test that old-format flat GA fields are auto-migrated"""
+        data = {
+            "kubeconfig_file_path": "/path/to/kubeconfig",
+            "fitness_function": {"query": "test_query"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "generations": 50,
+            "population_size": 20,
+            "mutation_rate": 0.8,
+            "stopping_criteria": {"fitness_threshold": 100.0},
+        }
+        config = ConfigFile.model_validate(data)
+        assert config.algorithm.value == "genetic"
+        assert config.genetic.generations == 50
+        assert config.genetic.population_size == 20
+        assert config.genetic.mutation_rate == 0.8
+        assert config.genetic.stopping_criteria.fitness_threshold == 100.0

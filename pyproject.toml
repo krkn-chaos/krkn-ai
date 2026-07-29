@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "krkn_ai"
-version = "0.0.3"
+dynamic = ["version"]
 description = "Krkn-AI"
 readme = "README.md"
 requires-python = ">=3.11,<4.0"
@@ -21,8 +21,9 @@ dependencies = [
   "seaborn",
   "plotly>=6.6.0",
   "streamlit>=1.55.0",
-  # VCS dependency
-  "krkn-lib @ git+https://github.com/krkn-chaos/krkn-lib",
+  "kubernetes>=34.1.0,<36",
+  "krkn-lib @ git+https://github.com/krkn-chaos/krkn-lib@a89b299b1789eeb8f8ed07213eccd77414f03283",
+  "setuptools"
 ]
 
 [project.scripts]
@@ -30,17 +31,21 @@ krkn_ai = "krkn_ai.cli:main"
 
 [project.optional-dependencies]
 dev = [
-  "pre-commit",
-  "ruff",
-  "mypy",
+  "pre-commit==4.3.0",
+  "ruff==0.14.14",
+  "mypy==1.19.1",
   "pytest",
   "coverage",
   "notebook",
   "jupyterlab",
+  "beautifulsoup4",
 ]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
 
 [tool.setuptools.packages.find]
 include = ["krkn_ai*"]
 
 [tool.setuptools.package-data]
-"krkn_ai" = ["templates/*", "templates/**/*"]
+"krkn_ai" = ["templates/*", "templates/**/*", "utils/*.yaml"]

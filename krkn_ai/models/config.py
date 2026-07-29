@@ -329,7 +329,21 @@ class ConfigFile(BaseModel):
     def validate_fitness_plugins(cls, value: List[str]) -> List[str]:
         for path in value:
             try:
-                importlib.import_module(path)
+                if ":" in path:
+                    mod_name, cls_name = path.split(":", 1)
+                    mod = importlib.import_module(mod_name)
+                    getattr(mod, cls_name)
+                elif "." in path:
+                    mod_name, cls_name = path.rsplit(".", 1)
+                    try:
+                        mod = importlib.import_module(path)
+                    except ImportError:
+                        mod = importlib.import_module(mod_name)
+                        getattr(mod, cls_name)
+                else:
+                    importlib.import_module(path)
+            except (ImportError, AttributeError) as e:
+                raise ValueError(f"Cannot import or resolve fitness plugin '{path}': {e}")
             except Exception as e:
                 raise ValueError(f"Cannot import fitness plugin '{path}': {e}")
         return value
@@ -353,7 +367,9 @@ class ConfigFile(BaseModel):
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
     # New optional fields for fitness plugins and telemetry
-    fitness_plugins: List[str] = []  # dotted paths to FitnessPlugin implementations
+    fitness_plugins: List[str] = Field(
+        default_factory=list
+    )  # dotted paths to FitnessPlugin implementations
     enable_telemetry: bool = False
     telemetry_endpoint: Optional[str] = None
 

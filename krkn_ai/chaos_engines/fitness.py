@@ -98,8 +98,14 @@ class FitnessCalculator:
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
+        if fitness_type not in (FitnessFunctionType.point, FitnessFunctionType.range):
+            raise FitnessFunctionConfigurationError(
+                f"Unsupported fitness function type: {fitness_type}"
+            )
+
         retries = 3
         retry_delay = 10
+        last_error = None
         for retry in range(retries):
             try:
                 if fitness_type == FitnessFunctionType.point:
@@ -109,6 +115,7 @@ class FitnessCalculator:
             except FitnessFunctionConfigurationError:
                 raise
             except Exception as error:
+                last_error = error
                 logger.error(f"Fitness function calculation failed: {error}")
                 if retry < retries - 1:
                     logger.info(
@@ -117,7 +124,7 @@ class FitnessCalculator:
                     time.sleep(retry_delay)
 
         logger.warning(
-            f"Fitness calculation for query '{query}' failed after {retries} retries due to connection/timeout error. "
+            f"Fitness calculation for query '{query}' failed after {retries} retries ({last_error}). "
             "Assigning default fallback fitness score of 0.0 to prevent experiment freeze."
         )
         return 0.0

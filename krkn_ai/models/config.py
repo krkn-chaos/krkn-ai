@@ -343,6 +343,10 @@ class ConfigFile(BaseModel):
         const.WAIT_DURATION
     )  # Time to wait after each scenario run (Default: 120 seconds)
 
+    prometheus_timeout: float = Field(
+        default=10.0, ge=1.0
+    )  # Timeout in seconds for Prometheus queries (Default: 10.0s)
+
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 

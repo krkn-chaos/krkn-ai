@@ -110,13 +110,17 @@ class FitnessCalculator:
                 raise
             except Exception as error:
                 logger.error(f"Fitness function calculation failed: {error}")
-                logger.info(
-                    f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
-                )
-                time.sleep(retry_delay)
-        raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
+                if retry < retries - 1:
+                    logger.info(
+                        f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
+                    )
+                    time.sleep(retry_delay)
+
+        logger.warning(
+            f"Fitness calculation for query '{query}' failed after {retries} retries due to connection/timeout error. "
+            "Assigning default fallback fitness score of 0.0 to prevent experiment freeze."
         )
+        return 0.0
 
     def calculate_fitness_score_for_items(self, start, end):
         """Compute fitness scores when multiple SLOs are defined."""

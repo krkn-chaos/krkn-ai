@@ -370,7 +370,7 @@ class TestCalculateFitnessValueRetries:
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
     @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
-    def test_calculate_fitness_value_raises_after_retries_exhausted(
+    def test_calculate_fitness_value_fallback_after_retries_exhausted(
         self, mock_env, mock_sleep, mock_prom_client
     ):
         fitness_function = FitnessFunction(
@@ -384,13 +384,12 @@ class TestCalculateFitnessValueRetries:
         start = datetime.datetime(2024, 1, 1, 12, 0, 0)
         end = datetime.datetime(2024, 1, 1, 12, 5, 0)
 
-        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
-            calc.calculate_fitness_value(
-                start,
-                end,
-                "sum(kube_pod_container_status_restarts_total)",
-                FitnessFunctionType.point,
-            )
+        score = calc.calculate_fitness_value(
+            start,
+            end,
+            "sum(kube_pod_container_status_restarts_total)",
+            FitnessFunctionType.point,
+        )
 
-        assert "failed after 3 retries" in str(exc_info.value)
+        assert score == 0.0
         assert mock_prom_client.process_prom_query_in_range.call_count == 3

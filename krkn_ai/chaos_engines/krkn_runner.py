@@ -36,7 +36,10 @@ class KrknRunner:
         runner_type: KrknRunnerType = None,
     ):
         self.config = config
-        self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
+        self.prom_client = create_prometheus_client(
+            self.config.kubeconfig_file_path,
+            timeout=getattr(self.config, "prometheus_timeout", 10.0),
+        )
         self.fitness_calculator = FitnessCalculator(
             self.prom_client, config.fitness_function
         )

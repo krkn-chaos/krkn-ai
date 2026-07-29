@@ -274,6 +274,8 @@ class GeneticAlgorithm(BaseEngine):
                 self.current_scenario_mutation_rate,
             )
 
+        self.stagnant_generations = 0
+
     def create_population(self, population_size) -> List[BaseScenario]:
         logger.info("Creating population of size %d", population_size)
 

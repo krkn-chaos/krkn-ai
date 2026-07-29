@@ -187,7 +187,6 @@ class GeneticAlgorithm(BaseEngine):
                 format_duration(elapsed_time),
             )
             self.completed_generations = cur_generation
-            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 

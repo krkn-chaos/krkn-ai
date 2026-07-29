@@ -41,6 +41,18 @@ class DisruptionCountParameter(BaseParameter):
     value: int = 1
 
 
+class DeleteCountParameter(BaseParameter):
+    krknhub_name: str = "DELETE_COUNT"
+    krknctl_name: str = "delete-count"
+    value: int = 1
+
+
+class RunsParameter(BaseParameter):
+    krknhub_name: str = "RUNS"
+    krknctl_name: str = "runs"
+    value: int = 1
+
+
 class KillTimeoutParameter(BaseParameter):
     krknhub_name: str = "KILL_TIMEOUT"
     krknctl_name: str = "kill-timeout"

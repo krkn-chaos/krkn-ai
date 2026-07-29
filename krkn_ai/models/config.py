@@ -72,6 +72,10 @@ class StorageThrottleScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class ServiceDisruptionScenarioConfig(BaseModel):
+    enable: bool = False
+
+
 class BaselineConfig(BaseModel):
     enable: bool = True
     duration: int = 60 * 2  # 2 minutes
@@ -116,6 +120,9 @@ class ScenarioConfig(BaseModel):
     )
     storage_throttle: Optional[StorageThrottleScenarioConfig] = Field(
         alias="storage-throttle", default=None
+    )
+    service_disruption: Optional[ServiceDisruptionScenarioConfig] = Field(
+        alias="service-disruption", default=None
     )
 
 
@@ -330,6 +337,12 @@ class ConfigFile(BaseModel):
 
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
+
+    # Opt-in gate for scenarios with a cluster-critical blast radius (e.g.
+    # service disruption, which deletes whole namespaces). Such scenarios are
+    # skipped unless this is explicitly set to true, even when their own
+    # ``enable`` flag is on.
+    allow_dangerous_scenarios: bool = False
 
     output: OutputConfig = OutputConfig()
 

@@ -83,6 +83,11 @@ def main():
     help="Port to run Streamlit server on when monitoring is enabled.",
     default=8501,
 )
+@click.option(
+    "--allow-dangerous-scenarios",
+    is_flag=True,
+    help="Allow scenarios with a cluster-critical blast radius (e.g. service disruption).",
+)
 @click.pass_context
 def run(
     ctx,
@@ -96,6 +101,7 @@ def run(
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
     port: int = 8501,
+    allow_dangerous_scenarios: bool = False,
 ):
     run_uuid = str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid)
@@ -124,6 +130,10 @@ def run(
     # Override seed from CLI if provided
     if seed is not None:
         parsed_config.seed = seed
+
+    # CLI flag overrides config file (flag is additive, never disables)
+    if allow_dangerous_scenarios:
+        parsed_config.allow_dangerous_scenarios = True
 
     # Convert user-friendly string to enum if provided
     enum_runner_type = None

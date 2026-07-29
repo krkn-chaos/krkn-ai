@@ -27,6 +27,9 @@ from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_kubevirt import KubevirtDisruptionScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_service_disruption import (
+    ServiceDisruptionScenario,
+)
 
 logger = get_logger(__name__)
 
@@ -56,19 +59,32 @@ scenario_specs = [
     ("pvc_scenarios", PVCScenario),
     ("kubevirt_scenarios", KubevirtDisruptionScenario),
     ("storage_throttle", StorageThrottleScenario),
+    ("service_disruption", ServiceDisruptionScenario),
 ]
+
+# Scenarios with a cluster-critical blast radius (e.g. namespace deletion).
+# Gated behind ``allow_dangerous_scenarios`` — their own ``enable`` flag is
+# not sufficient on its own.
+DANGEROUS_SCENARIOS = {"service_disruption"}
 
 
 class ScenarioFactory:
     @staticmethod
     def list_scenarios(config: ConfigFile) -> List[Tuple[str, type[Scenario]]]:
-        # List all scenarios that are set in config
-        candidates = [
-            (attr, factory)
-            for attr, factory in scenario_specs
-            if getattr(config.scenario, attr) is not None
-            and getattr(config.scenario, attr).enable
-        ]
+        candidates = []
+        for attr, factory in scenario_specs:
+            scenario_cfg = getattr(config.scenario, attr)
+            if scenario_cfg is None or not scenario_cfg.enable:
+                continue
+            if attr in DANGEROUS_SCENARIOS and not config.allow_dangerous_scenarios:
+                logger.warning(
+                    "Scenario '%s' is enabled but requires "
+                    "'--allow-dangerous-scenarios' (CLI) or "
+                    "'allow_dangerous_scenarios: true' (config). Skipping.",
+                    attr.replace("_", "-"),
+                )
+                continue
+            candidates.append((attr, factory))
         return candidates
 
     @staticmethod
@@ -80,7 +96,6 @@ class ScenarioFactory:
 
         Returns a list of valid scenarios.
         """
-        # Get all scenarios that are set in config
         candidates = ScenarioFactory.list_scenarios(config)
 
         if len(candidates) == 0:

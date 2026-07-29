@@ -138,6 +138,11 @@ health_checks:
 #     url: "$HOST/ratings/api/fetch/Watson"
 {% endif %}
 
+# Cluster-critical scenarios (e.g. service-disruption, which deletes whole
+# namespaces) are skipped unless this is set to true, even when their own
+# `enable` flag is on. Leave it false unless you really intend to run them.
+allow_dangerous_scenarios: false
+
 scenario:
 {%- for name, enabled in scenario_enables.items() %}
   {{ name | replace("_", "-") }}:

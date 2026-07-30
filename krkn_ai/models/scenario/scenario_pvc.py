@@ -1,6 +1,3 @@
-from typing import List, Tuple
-from krkn_ai.models.custom_errors import ScenarioParameterInitError
-from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
     FillPercentageParameter,
@@ -9,7 +6,6 @@ from krkn_ai.models.scenario.parameters import (
     PVCNameParameter,
     StandardDurationParameter,
 )
-from krkn_ai.models.cluster_components import Namespace, PVC
 from krkn_ai.cluster import get_pvc_usage_percentage
 from krkn_ai.utils.logger import get_logger
 
@@ -46,28 +42,7 @@ class PVCScenario(Scenario):
         return params
 
     def mutate(self):
-        if len(self._cluster_components.namespaces) == 0:
-            raise ScenarioParameterInitError(
-                "No namespaces found in cluster components"
-            )
-
-        namespace_pvc_tuple: List[Tuple[Namespace, PVC]] = [
-            (namespace, pvc)
-            for namespace in self._cluster_components.namespaces
-            for pvc in namespace.pvcs
-        ]
-
-        # The PVC scenario always targets a PersistentVolumeClaim. krkn's
-        # pod-name mode still requires the pod to have a PVC mounted, and
-        # discovery does not track pod->PVC mounts, so a namespace with pods but
-        # no PVCs is not a valid target -- do not fall back to an arbitrary pod
-        # (which would trigger the scenario and then fail at runtime). (#384)
-        if not namespace_pvc_tuple:
-            raise ScenarioParameterInitError(
-                "No PVCs found in cluster components for PVC scenario"
-            )
-
-        namespace, pvc = rng.choice(namespace_pvc_tuple)
+        namespace, pvc = self._select_namespace_pvc("PVC")
         self.namespace.value = namespace.name
         self.pvc_name.value = pvc.name
         self.pod_name.value = ""  # Leave empty when using pvc-name

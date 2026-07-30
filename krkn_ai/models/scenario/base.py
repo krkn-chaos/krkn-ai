@@ -1,7 +1,9 @@
 from enum import Enum
 from pydantic import BaseModel, PrivateAttr
-from krkn_ai.models.cluster_components import ClusterComponents
-from typing import Any
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace, PVC
+from krkn_ai.models.custom_errors import ScenarioParameterInitError
+from krkn_ai.utils.rng import rng
+from typing import Any, List, Tuple
 
 
 class BaseParameter(BaseModel):
@@ -36,6 +38,33 @@ class Scenario(BaseScenario):
 
     def scenario_wait_duration(self, config_wait_duration: int) -> int:
         return config_wait_duration
+
+    def _select_namespace_pvc(self, scenario_name: str) -> Tuple[Namespace, PVC]:
+        """Pick a random (namespace, PVC) pair from the discovered components.
+
+        PVC-based scenarios always target a PersistentVolumeClaim. krkn's pod-name
+        mode still requires the pod to have a PVC mounted, and discovery does not
+        track pod->PVC mounts, so a namespace with pods but no PVCs is not a valid
+        target -- we do not fall back to an arbitrary pod (which would trigger the
+        scenario and then fail at runtime). Raises ScenarioParameterInitError when
+        no namespaces or no PVCs are available. (#384)
+        """
+        if len(self._cluster_components.namespaces) == 0:
+            raise ScenarioParameterInitError(
+                "No namespaces found in cluster components"
+            )
+
+        namespace_pvc_pairs: List[Tuple[Namespace, PVC]] = [
+            (namespace, pvc)
+            for namespace in self._cluster_components.namespaces
+            for pvc in namespace.pvcs
+        ]
+        if not namespace_pvc_pairs:
+            raise ScenarioParameterInitError(
+                f"No PVCs found in cluster components for {scenario_name} scenario"
+            )
+
+        return rng.choice(namespace_pvc_pairs)
 
     def __str__(self):
         param_value = ", ".join([str(x.value) for x in self.parameters])

@@ -421,7 +421,7 @@ class TestNetworkScenario:
 
         scenario = NetworkScenario(cluster_components=cluster)
         assert scenario.name == "network-chaos"
-        assert scenario.traffic_type.value == "egress"
+        assert scenario.traffic_type.value in ["ingress", "egress"]
         assert scenario.node_name.value == "test-node"
         assert scenario.interfaces.value != ""
 

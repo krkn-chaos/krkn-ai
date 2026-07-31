@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from krkn_ai.models.config import AdaptiveMutation
 from krkn_ai.models.app import FitnessResult
@@ -164,21 +165,12 @@ class TestAdaptMutationRateUpdate:
         )
         assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.35)
 
-    def test_raises_when_min_exceeds_max(self, genetic_algorithm):
-        """Should reject invalid adaptive mutation bounds"""
-        genetic_algorithm.algo_config.adaptive_mutation = AdaptiveMutation(
-            enable=True, threshold=0.5, generations=1, min=0.8, max=0.2
-        )
-        genetic_algorithm.current_scenario_mutation_rate = 0.3
-        genetic_algorithm.best_of_generation = [
-            make_generation_result(10.0),
-            make_generation_result(10.1),
-        ]
-
-        with pytest.raises(ValueError, match="Invalid adaptive mutation configuration"):
-            genetic_algorithm.adapt_mutation_rate()
-
-        assert genetic_algorithm.current_scenario_mutation_rate == pytest.approx(0.3)
+    def test_raises_when_min_exceeds_max(self):
+        """Should reject invalid adaptive mutation bounds at construction time"""
+        with pytest.raises(ValidationError, match="must be less than"):
+            AdaptiveMutation(
+                enable=True, threshold=0.5, generations=1, min=0.8, max=0.2
+            )
 
     def test_save_config_uses_original_rate_after_adaptation(self, genetic_algorithm):
         """Saving config after adaptive mutation should keep the configured rate"""

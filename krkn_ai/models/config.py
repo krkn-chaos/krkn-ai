@@ -74,7 +74,7 @@ class StorageThrottleScenarioConfig(BaseModel):
 
 class BaselineConfig(BaseModel):
     enable: bool = True
-    duration: int = 60 * 2  # 2 minutes
+    duration: int = Field(default=60 * 2, gt=0)
 
 
 class ScenarioConfig(BaseModel):
@@ -250,10 +250,19 @@ class HealthCheckResult(BaseModel):
 
 class AdaptiveMutation(BaseModel):
     enable: bool = False
-    min: float = 0.05
-    max: float = 0.9
+    min: float = Field(default=0.05, ge=0.0, le=1.0)
+    max: float = Field(default=0.9, ge=0.0, le=1.0)
     threshold: float = 0.1
-    generations: int = 5
+    generations: int = Field(default=5, gt=0)
+
+    @model_validator(mode="after")
+    def validate_min_less_than_max(self):
+        if self.enable and self.min >= self.max:
+            raise ValueError(
+                f"adaptive_mutation.min ({self.min}) must be less than "
+                f"adaptive_mutation.max ({self.max})"
+            )
+        return self
 
 
 class StoppingCriteria(BaseModel):
@@ -302,17 +311,32 @@ class AlgorithmType(str, Enum):
 class GeneticAlgorithmConfig(BaseModel):
     generations: Optional[int] = 20
     duration: Optional[int] = None
-    population_size: int = 10
-    mutation_rate: float = const.MUTATION_RATE
-    scenario_mutation_rate: float = const.SCENARIO_MUTATION_RATE
-    crossover_rate: float = const.CROSSOVER_RATE
-    composition_rate: float = 0
+    population_size: int = Field(default=10, ge=2)
+    mutation_rate: float = Field(default=const.MUTATION_RATE, ge=0.0, le=1.0)
+    scenario_mutation_rate: float = Field(
+        default=const.SCENARIO_MUTATION_RATE, ge=0.0, le=1.0
+    )
+    crossover_rate: float = Field(default=const.CROSSOVER_RATE, ge=0.0, le=1.0)
+    composition_rate: float = Field(default=0, ge=0.0, le=1.0)
     selection_strategy: SelectionStrategy = SelectionStrategy.roulette
-    tournament_size: int = 3
-    population_injection_rate: float = const.POPULATION_INJECTION_RATE
-    population_injection_size: int = const.POPULATION_INJECTION_SIZE
+    tournament_size: int = Field(default=3, ge=1)
+    population_injection_rate: float = Field(
+        default=const.POPULATION_INJECTION_RATE, ge=0.0, le=1.0
+    )
+    population_injection_size: int = Field(
+        default=const.POPULATION_INJECTION_SIZE, ge=1
+    )
     adaptive_mutation: AdaptiveMutation = AdaptiveMutation()
     stopping_criteria: StoppingCriteria = StoppingCriteria()
+
+    @field_validator("generations", "duration", mode="after")
+    @classmethod
+    def validate_positive_when_set(cls, value: Optional[int], info) -> Optional[int]:
+        if value is not None and value <= 0:
+            raise ValueError(
+                f"{info.field_name} must be a positive integer when set, got {value}"
+            )
+        return value
 
 
 class ConfigFile(BaseModel):
@@ -321,8 +345,8 @@ class ConfigFile(BaseModel):
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
 
-    wait_duration: int = (
-        const.WAIT_DURATION
+    wait_duration: int = Field(
+        default=const.WAIT_DURATION, ge=0
     )  # Time to wait after each scenario run (Default: 120 seconds)
 
     fitness_function: FitnessFunction

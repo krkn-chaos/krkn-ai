@@ -10,7 +10,7 @@ from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.constants import STATUS_IN_PROGRESS
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
-from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
+from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -39,9 +39,6 @@ class GeneticAlgorithm(BaseEngine):
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
     ):
-        if config.genetic.population_size < 2:
-            raise PopulationSizeError("Population size should be at least 2")
-
         if config.genetic.population_size % 2 != 0:
             logger.debug(
                 "Population size is odd, making it even for the genetic algorithm."
@@ -253,12 +250,6 @@ class GeneticAlgorithm(BaseEngine):
         else:
             self.stagnant_generations = 0
             rate_factor = 0.9
-
-        if cfg.min > cfg.max:
-            raise ValueError(
-                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
-                f"must be less than or equal to max ({cfg.max})"
-            )
 
         # Increase rate when stagnating, decrease when improving
         old_rate = self.current_scenario_mutation_rate

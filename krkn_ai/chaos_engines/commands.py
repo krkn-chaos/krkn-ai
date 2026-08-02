@@ -17,7 +17,7 @@ def build_scenario_command(
     if runner_type == KrknRunnerType.HUB_RUNNER:
         env_list = ""
         for parameter in scenario.parameters:
-            env_list += f' -e {parameter.get_name(return_krknhub_name=True)}="{parameter.get_value()}" '
+            env_list += f' -e {parameter.get_name(return_krknhub_name=True)}="{parameter.get_value(return_krknhub_name=True)}" '
 
         command = PODMAN_TEMPLATE.format(
             wait_duration=scenario.scenario_wait_duration(config.wait_duration),

@@ -176,10 +176,8 @@ def _validate_and_create_client(url: str, token: str, timeout: float = 10.0) -> 
 
     try:
         client = KrknPrometheus(url.strip(), token.strip())
-        if hasattr(client, "prometheus_api_client") and hasattr(
-            client.prometheus_api_client, "timeout"
-        ):
-            client.prometheus_api_client.timeout = timeout
+        if hasattr(client, "prom_cli") and client.prom_cli is not None:
+            client.prom_cli._timeout = timeout
 
         # Connection test: run a dummy query unless in mock mode
         if not env_is_truthy("MOCK_FITNESS"):

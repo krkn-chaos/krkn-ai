@@ -324,30 +324,6 @@ class GeneticAlgorithmConfig(BaseModel):
 
 
 class ConfigFile(BaseModel):
-    @field_validator("fitness_plugins", mode="after")
-    @classmethod
-    def validate_fitness_plugins(cls, value: List[str]) -> List[str]:
-        for path in value:
-            try:
-                if ":" in path:
-                    mod_name, cls_name = path.split(":", 1)
-                    mod = importlib.import_module(mod_name)
-                    getattr(mod, cls_name)
-                elif "." in path:
-                    mod_name, cls_name = path.rsplit(".", 1)
-                    try:
-                        mod = importlib.import_module(path)
-                    except ImportError:
-                        mod = importlib.import_module(mod_name)
-                        getattr(mod, cls_name)
-                else:
-                    importlib.import_module(path)
-            except (ImportError, AttributeError) as e:
-                raise ValueError(f"Cannot import or resolve fitness plugin '{path}': {e}")
-            except Exception as e:
-                raise ValueError(f"Cannot import fitness plugin '{path}': {e}")
-        return value
-
     kubeconfig_file_path: str  # Path to kubeconfig
     parameters: Dict[str, ParameterValue] = {}
 
@@ -361,15 +337,15 @@ class ConfigFile(BaseModel):
         default=10.0, ge=1.0
     )  # Timeout in seconds for Prometheus queries (Default: 10.0s)
 
+    prometheus_fallback_value: float = Field(
+        default=0.0
+    )  # Fallback fitness score when Prometheus query times out or fails (Default: 0.0)
+
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
-    # New optional fields for fitness plugins and telemetry
-    fitness_plugins: List[str] = Field(
-        default_factory=list
-    )  # dotted paths to FitnessPlugin implementations
     enable_telemetry: bool = False
     telemetry_endpoint: Optional[str] = None
 

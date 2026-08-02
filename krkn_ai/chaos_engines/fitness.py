@@ -16,9 +16,10 @@ logger = get_logger(__name__)
 
 
 class FitnessCalculator:
-    def __init__(self, prom_client, fitness_function):
+    def __init__(self, prom_client, fitness_function, fallback_value: float = 0.0):
         self.prom_client = prom_client
         self.fitness_function = fitness_function
+        self.fallback_value = fallback_value
 
     def preflight_check(self) -> None:
         """Validate all fitness queries return data before the experiment starts."""
@@ -112,9 +113,11 @@ class FitnessCalculator:
                     return self.calculate_point_fitness(start, end, query)
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
-            except FitnessFunctionConfigurationError:
+            except (FitnessFunctionConfigurationError, FitnessFunctionCalculationError):
                 raise
             except Exception as error:
+                if isinstance(error, (TypeError, AttributeError, SystemError, KeyboardInterrupt)):
+                    raise
                 last_error = error
                 logger.error(f"Fitness function calculation failed: {error}")
                 if retry < retries - 1:
@@ -125,9 +128,9 @@ class FitnessCalculator:
 
         logger.warning(
             f"Fitness calculation for query '{query}' failed after {retries} retries ({last_error}). "
-            "Assigning default fallback fitness score of 0.0 to prevent experiment freeze."
+            f"Assigning default fallback fitness score of {self.fallback_value} to prevent experiment freeze."
         )
-        return 0.0
+        return self.fallback_value
 
     def calculate_fitness_score_for_items(self, start, end):
         """Compute fitness scores when multiple SLOs are defined."""

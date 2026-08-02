@@ -43,7 +43,11 @@ class ElasticSearchClient:
                     password=self.config.password,
                     verify_certs=self.config.verify_certs,
                 )
-                self.__test_connection()
+                if not self.__test_connection():
+                    raise ConnectionError(
+                        "Elasticsearch connection test failed:"
+                        " ping returned no version info"
+                    )
                 logger.info(
                     "Elasticsearch client initialized: %s:%s",
                     self.config.server,

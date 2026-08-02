@@ -4,9 +4,10 @@ GeneticAlgorithm core functionality tests
 
 import pytest
 from unittest.mock import Mock, patch
+from pydantic import ValidationError
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
-from krkn_ai.models.custom_errors import PopulationSizeError
+from krkn_ai.models.config import GeneticAlgorithmConfig
 
 
 class TestGeneticAlgorithmInitialization:
@@ -49,22 +50,10 @@ class TestGeneticAlgorithmInitialization:
 
                 assert first.run_uuid != second.run_uuid
 
-    def test_init_with_population_size_less_than_2(
-        self, minimal_config, temp_output_dir
-    ):
-        """Test raises error when population size is less than 2"""
-        minimal_config.genetic.population_size = 1
-        with patch("krkn_ai.algorithm.base.KrknRunner"):
-            with patch(
-                "krkn_ai.algorithm.base.ScenarioFactory.generate_valid_scenarios"
-            ) as mock_gen:
-                mock_gen.return_value = [("pod_scenarios", Mock)]
-                with pytest.raises(
-                    PopulationSizeError, match="Population size should be at least 2"
-                ):
-                    GeneticAlgorithm(
-                        config=minimal_config, output_dir=temp_output_dir, format="yaml"
-                    )
+    def test_init_with_population_size_less_than_2(self):
+        """Test raises ValidationError when population size is less than 2"""
+        with pytest.raises(ValidationError, match="population_size"):
+            GeneticAlgorithmConfig(population_size=1)
 
     def test_init_with_odd_population_size(self, minimal_config, temp_output_dir):
         """Test odd population size is adjusted to even"""

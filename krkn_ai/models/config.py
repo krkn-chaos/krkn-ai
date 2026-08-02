@@ -140,8 +140,8 @@ auto_id = id_generator()
 
 
 class FitnessFunctionItem(BaseModel):
-    id: int = Field(default_factory=lambda: next(auto_id))  # Auto-increment ID
-    query: str  # PromQL
+    id: int = Field(default_factory=lambda: next(auto_id))
+    query: str
     type: FitnessFunctionType = FitnessFunctionType.point
     weight: float = 1.0
 
@@ -154,7 +154,7 @@ class FitnessFunctionItem(BaseModel):
 
 
 class FitnessFunction(BaseModel):
-    query: Union[str, None] = None  # PromQL
+    query: Union[str, None] = None
     type: FitnessFunctionType = FitnessFunctionType.point
     include_krkn_failure: bool = True
     include_health_check_failure: bool = True
@@ -163,7 +163,6 @@ class FitnessFunction(BaseModel):
 
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
-        """Validates whether there is at least one fitness function is defined."""
         if self.query is None and len(self.items) == 0:
             raise ValueError(
                 "Please define at least one fitness function in query or items."
@@ -172,36 +171,22 @@ class FitnessFunction(BaseModel):
 
 
 class HealthCheckApplicationConfig(BaseModel):
-    """
-    Health check configuration for the application.
-    This is used to check the health of the application.
-    """
-
     name: str
     url: AnyHttpUrl
-    status_code: int = 200  # Expected status code
-    timeout: int = 4  # in seconds
-    interval: int = 2  # in seconds
+    status_code: int = 200
+    timeout: int = 4
+    interval: int = 2
     headers: Optional[Dict[str, str]] = None
 
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
-    stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
+    stop_timeout: float = Field(default=5.0, ge=0)
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
 
 
 class OutputConfig(BaseModel):
-    """
-    Configuration for output file naming formats.
-
-    Supports parameterized string values:
-    - %g: Generation ID
-    - %s: Scenario ID
-    - %c: Scenario Name (e.g: pod_scenarios)
-    """
-
     result_name_fmt: str = "scenario_%s.yaml"
     graph_name_fmt: str = "scenario_%s.png"
     log_name_fmt: str = "scenario_%s.log"
@@ -221,20 +206,13 @@ class OutputConfig(BaseModel):
 
 
 class ElasticConfig(BaseModel):
-    """
-    Configuration for Elasticsearch integration.
-    Stores Krkn-AI run results, fitness scores, and genetic algorithm configuration.
-    """
-
-    enable: bool = False  # Enable Elasticsearch integration
-    server: Optional[AnyHttpUrl] = (
-        None  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
-    )
-    port: int = 9200  # Elasticsearch port
-    username: str = ""  # Elasticsearch username
-    password: str = Field(exclude=True, default="")  # Elasticsearch password
-    index: str = "krkn-ai-metrics"  # Index name for storing Krkn-AI results
-    verify_certs: bool = True  # Verify SSL certificates
+    enable: bool = False
+    server: Optional[AnyHttpUrl] = None
+    port: int = 9200
+    username: str = ""
+    password: str = Field(exclude=True, default="")
+    index: str = "krkn-ai-metrics"
+    verify_certs: bool = True
 
     @model_validator(mode="after")
     def server_required_when_enabled(self) -> "ElasticConfig":
@@ -249,10 +227,10 @@ class ElasticConfig(BaseModel):
 class HealthCheckResult(BaseModel):
     name: str
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now().isoformat())
-    response_time: float  # in seconds
-    status_code: int  # actual status code
-    success: bool  # True if status code is as expected
-    error: Optional[str] = None  # Error message if the status code is not as expected
+    response_time: float
+    status_code: int
+    success: bool
+    error: Optional[str] = None
 
 
 class AdaptiveMutation(BaseModel):
@@ -273,31 +251,10 @@ class AdaptiveMutation(BaseModel):
 
 
 class StoppingCriteria(BaseModel):
-    """
-    Configuration for stopping criteria that control when the genetic algorithm terminates.
-
-    Multiple criteria can be set simultaneously - the algorithm stops when ANY criterion is met.
-
-    Attributes:
-        fitness_threshold: Stop when best fitness score reaches or exceeds this value.
-            Set to None to disable this criterion.
-        generation_saturation: Stop if the best fitness score does not improve for this
-            many consecutive generations. Set to None to disable this criterion.
-        exploration_saturation: Stop if no new unique scenarios are discovered for this
-            many consecutive generations (limit of exploration reached).
-            Set to None to disable this criterion.
-    """
-
-    fitness_threshold: Optional[float] = None  # Stop when fitness score >= threshold
-    generation_saturation: Optional[int] = (
-        None  # Stop if no improvement for N generations
-    )
-    exploration_saturation: Optional[int] = (
-        None  # Stop if no new scenarios for N generations
-    )
-    saturation_threshold: float = (
-        0.0001  # Minimum improvement threshold for generation saturation
-    )
+    fitness_threshold: Optional[float] = None
+    generation_saturation: Optional[int] = None
+    exploration_saturation: Optional[int] = None
+    saturation_threshold: float = 0.0001
 
     @field_validator("generation_saturation", "exploration_saturation", mode="after")
     @classmethod
@@ -319,6 +276,7 @@ class GeneticAlgorithmConfig(BaseModel):
     generations: Optional[int] = 20
     duration: Optional[int] = None
     population_size: int = Field(default=10, ge=2)
+    elitism_count: int = Field(default=1, ge=0)
     mutation_rate: float = Field(default=const.MUTATION_RATE, ge=0.0, le=1.0)
     scenario_mutation_rate: float = Field(
         default=const.SCENARIO_MUTATION_RATE, ge=0.0, le=1.0
@@ -345,51 +303,37 @@ class GeneticAlgorithmConfig(BaseModel):
             )
         return value
 
+    @model_validator(mode="after")
+    def validate_elitism_count(self):
+        if self.elitism_count > self.population_size:
+            raise ValueError("elitism_count cannot exceed population_size")
+        return self
+
 
 class ConfigFile(BaseModel):
-    kubeconfig_file_path: str  # Path to kubeconfig
+    kubeconfig_file_path: str
     parameters: Dict[str, ParameterValue] = {}
-
-    seed: Optional[int] = None  # Optional: Random seed for reproducible runs
-
-    wait_duration: int = Field(
-        default=const.WAIT_DURATION, ge=0
-    )  # Time to wait after each scenario run (Default: 120 seconds)
-
+    seed: Optional[int] = None
+    wait_duration: int = Field(default=const.WAIT_DURATION, ge=0)
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
-
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
-
-    # Opt-in gate for scenarios with a cluster-critical blast radius (e.g.
-    # service disruption, which deletes whole namespaces). Such scenarios are
-    # skipped unless this is explicitly set to true, even when their own
-    # ``enable`` flag is on.
     allow_dangerous_scenarios: bool = False
-
     output: OutputConfig = OutputConfig()
-
-    elastic: Optional[ElasticConfig] = Field(
-        default_factory=ElasticConfig
-    )  # Elasticsearch configuration
-
+    elastic: Optional[ElasticConfig] = Field(default_factory=ElasticConfig)
     cluster_components: ClusterComponents
-
-    # Algorithm selector + per-algorithm config section
     algorithm: AlgorithmType = AlgorithmType.genetic
     genetic: GeneticAlgorithmConfig = GeneticAlgorithmConfig()
 
     @model_validator(mode="before")
     @classmethod
     def migrate_flat_algorithm_fields(cls, data):
-        """Backward compat: auto-migrate old flat GA fields into genetic: section."""
         if not isinstance(data, dict):
             return data
         if "algorithm" not in data:
             data["algorithm"] = "genetic"
         if "genetic" not in data:
-            # Collect any flat GA fields and move them under genetic:
             ga_data = {}
             for field in GeneticAlgorithmConfig.model_fields:
                 if field in data:

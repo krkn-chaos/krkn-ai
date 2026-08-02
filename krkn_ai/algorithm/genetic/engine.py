@@ -10,7 +10,7 @@ from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.constants import STATUS_IN_PROGRESS
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
-from krkn_ai.models.custom_errors import UniqueScenariosError
+from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -39,6 +39,9 @@ class GeneticAlgorithm(BaseEngine):
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
     ):
+        if config.genetic.population_size < 2:
+            raise PopulationSizeError("Population size should be at least 2")
+
         if config.genetic.population_size % 2 != 0:
             logger.debug(
                 "Population size is odd, making it even for the genetic algorithm."
@@ -138,7 +141,18 @@ class GeneticAlgorithm(BaseEngine):
 
             # Repopulate: each pair of parents produces 2 offspring
             self.population = []
-            for _ in range(self.algo_config.population_size // 2):
+
+            # Elitism: carry over the best scenarios
+            num_elites = min(self.algo_config.elitism_count, len(fitness_scores))
+            for i in range(num_elites):
+                self.population.append(copy.deepcopy(fitness_scores[i].scenario))
+                logger.debug(
+                    "Elitism: carrying over scenario %s", fitness_scores[i].scenario
+                )
+
+            # Fill the rest of the population
+            remaining_slots = self.algo_config.population_size - len(self.population)
+            for _ in range(remaining_slots // 2):
                 parent1, parent2 = self.select_parents(fitness_scores)
                 child1, child2 = None, None
                 if rng.random() < self.algo_config.composition_rate:
@@ -165,6 +179,15 @@ class GeneticAlgorithm(BaseEngine):
                     self.population.append(child1)
                     self.population.append(child2)
 
+            # If population is still not full, add one more child from a crossover
+            if len(self.population) < self.algo_config.population_size:
+                parent1, parent2 = self.select_parents(fitness_scores)
+                child1, _ = self.crossover(
+                    copy.deepcopy(parent1), copy.deepcopy(parent2)
+                )
+                child1 = self.mutate(child1)
+                self.population.append(child1)
+
             # Inject random members to diversify the gene pool
             if rng.random() < self.algo_config.population_injection_rate:
                 self.population.extend(
@@ -184,6 +207,7 @@ class GeneticAlgorithm(BaseEngine):
                 format_duration(elapsed_time),
             )
             self.completed_generations = cur_generation
+            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
@@ -250,6 +274,12 @@ class GeneticAlgorithm(BaseEngine):
             self.stagnant_generations = 0
             rate_factor = 0.9
 
+        if cfg.min > cfg.max:
+            raise ValueError(
+                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
+                f"must be less than or equal to max ({cfg.max})"
+            )
+
         # Increase rate when stagnating, decrease when improving
         old_rate = self.current_scenario_mutation_rate
         self.current_scenario_mutation_rate *= rate_factor
@@ -264,6 +294,8 @@ class GeneticAlgorithm(BaseEngine):
                 "Adaptive mutation triggered | scenario_mutation_rate=%.4f",
                 self.current_scenario_mutation_rate,
             )
+
+        self.stagnant_generations = 0
 
     def create_population(self, population_size) -> List[BaseScenario]:
         logger.info("Creating population of size %d", population_size)

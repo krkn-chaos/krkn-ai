@@ -352,3 +352,107 @@ def discover(
         fitness_queries=fitness_queries,
         health_checks=health_checks,
     )
+
+
+@main.command(help="Validate a Krkn-AI config file without running chaos experiments")
+@click.option(
+    "--config",
+    "-c",
+    required=True,
+    help="Path to krkn-ai config file.",
+)
+@click.option(
+    "--kubeconfig",
+    "-k",
+    help="Path to kubeconfig; overrides value in config file.",
+    envvar="KUBECONFIG",
+)
+@click.option(
+    "--param",
+    "-p",
+    multiple=True,
+    help="Config parameters in key=value format.",
+)
+@click.option(
+    "--check-connectivity",
+    is_flag=True,
+    help="Also verify cluster and Prometheus connectivity.",
+)
+@click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.pass_context
+def validate(
+    ctx,
+    config: str,
+    kubeconfig: str = None,
+    param: tuple[str, ...] = (),
+    check_connectivity: bool = False,
+    verbose: int = 0,
+):
+    """Validate config schema and optionally check cluster/Prometheus connectivity.
+
+    Offline by default: only loads and Pydantic-validates the config. Use
+    --check-connectivity to also verify kubeconfig reachability and Prometheus
+    resolution. Exits non-zero on validation or connectivity failure so it is
+    safe to use in CI.
+    """
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
+
+    if not config or not os.path.exists(config):
+        logger.error("Config file not found: %s", config or "(empty)")
+        sys.exit(1)
+
+    try:
+        parsed_config = read_config_from_file(config, param, kubeconfig)
+    except KeyError as err:
+        logger.error("Config validation failed due to missing key: %s", err)
+        sys.exit(1)
+    except (ValueError, ValidationError) as err:
+        logger.error("Config validation failed: %s", err)
+        sys.exit(1)
+    except Exception as err:
+        logger.error("Unable to load config file: %s", err)
+        sys.exit(1)
+
+    logger.info("Config schema validation passed: %s", config)
+    logger.info("Algorithm: %s", parsed_config.algorithm.value)
+
+    if check_connectivity:
+        kube_path = (
+            kubeconfig
+            if kubeconfig and os.path.exists(kubeconfig)
+            else parsed_config.kubeconfig_file_path
+        )
+        if not kube_path or not os.path.exists(kube_path):
+            logger.error(
+                "Connectivity check requires a valid kubeconfig "
+                "(pass -k or set kubeconfig_file_path in the config)."
+            )
+            sys.exit(1)
+
+        try:
+            cluster_manager = ClusterManager(kube_path)
+            # Lightweight reachability probe against the API server
+            cluster_manager.core_api.list_namespace(limit=1)
+            logger.info("Cluster connectivity check passed.")
+        except ApiException as e:
+            logger.error("Cluster connectivity check failed (API error): %s", e)
+            sys.exit(1)
+        except MaxRetryError as e:
+            logger.error("Cluster connectivity check failed (connection error): %s", e)
+            sys.exit(1)
+        except Exception as e:
+            logger.error("Cluster connectivity check failed: %s", e)
+            sys.exit(1)
+
+        try:
+            create_prometheus_client(kube_path)
+            logger.info("Prometheus connectivity check passed.")
+        except PrometheusConnectionError as e:
+            logger.error("Prometheus connectivity check failed: %s", e)
+            sys.exit(1)
+        except Exception as e:
+            logger.error("Prometheus connectivity check failed: %s", e)
+            sys.exit(1)
+
+    click.echo("Config is valid.")

@@ -325,11 +325,8 @@ class TestNodeMemoryHogScenario:
         scenario = NodeMemoryHogScenario(cluster_components=cluster)
         param = scenario.node_memory_percentage
 
-        # For krknctl (CLI runner), get_value(return_krknhub_name=False) returns an unadorned integer value
-        assert param.get_value(return_krknhub_name=False) == param.value
-        assert "%" not in str(param.get_value(return_krknhub_name=False))
-
-        # For krknhub (container runner), get_value(return_krknhub_name=True) returns value with % suffix
+        # Both runners return the value with % suffix
+        assert param.get_value(return_krknhub_name=False) == f"{param.value}%"
         assert param.get_value(return_krknhub_name=True) == f"{param.value}%"
 
     def test_node_memory_hog_command_building_runner_formatting(self):
@@ -349,11 +346,8 @@ class TestNodeMemoryHogScenario:
 
         cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
         assert (
-            f'--memory-consumption "{scenario.node_memory_percentage.value}"' in cli_cmd
-        )
-        assert (
             f'--memory-consumption "{scenario.node_memory_percentage.value}%"'
-            not in cli_cmd
+            in cli_cmd
         )
 
         hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)

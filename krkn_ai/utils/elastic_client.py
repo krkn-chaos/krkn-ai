@@ -43,7 +43,11 @@ class ElasticSearchClient:
                     password=self.config.password,
                     verify_certs=self.config.verify_certs,
                 )
-                self.__test_connection()
+                if not self.__test_connection():
+                    raise ConnectionError(
+                        "Elasticsearch connection test failed:"
+                        " ping returned no version info"
+                    )
                 logger.info(
                     "Elasticsearch client initialized: %s:%s",
                     self.config.server,
@@ -165,6 +169,7 @@ class ElasticSearchClient:
                 "fitness_result",
                 "health_check_results",
                 "run_uuid",
+                "resiliency_score",
             },
         )
         result_data["krkn_ai_run_uuid"] = run_uuid  # Link to parent config for the test

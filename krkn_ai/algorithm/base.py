@@ -159,4 +159,4 @@ class BaseEngine(ABC):
             if self.format == "json":
                 json.dump(result, file_handler, indent=4)
             elif self.format == "yaml":
-                yaml.dump(result, file_handler, sort_keys=False)
+                yaml.dump(result, file_handler, sort_keys=False, width=float("inf"))

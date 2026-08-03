@@ -67,5 +67,5 @@ class GenerationsReporter:
             if self.format == "json":
                 json.dump(results, f, indent=4)
             elif self.format == "yaml":
-                yaml.dump(results, f, sort_keys=False)
+                yaml.dump(results, f, sort_keys=False, width=float("inf"))
             logger.debug("Best generation report saved to %s", save_path)

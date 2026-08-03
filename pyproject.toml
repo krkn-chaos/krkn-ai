@@ -48,4 +48,4 @@ fallback_version = "0.0.0"
 include = ["krkn_ai*"]
 
 [tool.setuptools.package-data]
-"krkn_ai" = ["templates/*", "templates/**/*"]
+"krkn_ai" = ["templates/*", "templates/**/*", "utils/*.yaml"]

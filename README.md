@@ -226,4 +226,12 @@ pre-commit run --all-files
 # or individually: ruff check/format, mypy, hadolint
 ```
 
-4. Open a pull request against `main`
+4. Run the test suite and make sure all tests pass:
+
+```bash
+pytest
+```
+
+See [tests/README.md](./tests/README.md) for details on running specific modules, writing new tests, and fixture usage.
+
+5. Open a pull request against `main`

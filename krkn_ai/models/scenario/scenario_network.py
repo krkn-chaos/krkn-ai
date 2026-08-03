@@ -86,10 +86,7 @@ class NetworkScenario(Scenario):
                 "No nodes found with interfaces in cluster components"
             )
 
-        # TODO: ingress verification broken on ROSA/OVNKubernetes — krkn's debug pod
-        # returns `ip` help text instead of interface list; re-enable once fixed upstream
-        # https://github.com/krkn-chaos/krkn/issues/1380
-        self.traffic_type.value = "egress"
+        self.traffic_type.mutate()
         self.execution.mutate()
 
         node = rng.choice(nodes)

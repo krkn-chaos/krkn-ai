@@ -22,6 +22,9 @@ from krkn_ai.models.custom_errors import (
     UniqueScenariosError,
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
+from krkn_ai.utils.prometheus import create_prometheus_client
+from krkn_ai.utils.catalog import recommend_fitness_queries
+from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
 
@@ -80,6 +83,11 @@ def main():
     help="Port to run Streamlit server on when monitoring is enabled.",
     default=8501,
 )
+@click.option(
+    "--allow-dangerous-scenarios",
+    is_flag=True,
+    help="Allow scenarios with a cluster-critical blast radius (e.g. service disruption).",
+)
 @click.pass_context
 def run(
     ctx,
@@ -93,6 +101,7 @@ def run(
     verbose: int = 0,  # Default to INFO level
     monitoring: bool = False,
     port: int = 8501,
+    allow_dangerous_scenarios: bool = False,
 ):
     run_uuid = str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid)
@@ -103,24 +112,28 @@ def run(
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
-        exit(1)
+        sys.exit(1)
     if not os.path.exists(config):
         logger.error("Config file not found.")
-        exit(1)
+        sys.exit(1)
 
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
         logger.info("Initialized config: %s", config)
     except KeyError as err:
         logger.error("Unable to parse config file due to missing key: %s", err)
-        exit(1)
+        sys.exit(1)
     except (ValueError, ValidationError) as err:
         logger.error("Unable to parse config file: %s", err)
-        exit(1)
+        sys.exit(1)
 
     # Override seed from CLI if provided
     if seed is not None:
         parsed_config.seed = seed
+
+    # CLI flag overrides config file (flag is additive, never disables)
+    if allow_dangerous_scenarios:
+        parsed_config.allow_dangerous_scenarios = True
 
     # Convert user-friendly string to enum if provided
     enum_runner_type = None
@@ -159,7 +172,7 @@ def run(
                 )
             else:
                 logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
-                exit(1)
+                sys.exit(1)
 
             engine.simulate()
 
@@ -171,13 +184,13 @@ def run(
             UniqueScenariosError,
         ) as e:
             logger.error("%s", e)
-            exit(1)
+            sys.exit(1)
         except FitnessFunctionCalculationError as e:
             logger.error("Unable to calculate fitness function score: %s", e)
-            exit(1)
+            sys.exit(1)
         except Exception as e:
             logger.exception("Something went wrong: %s", e)
-            exit(1)
+            sys.exit(1)
         finally:
             if not run_success:
                 try:
@@ -255,9 +268,15 @@ def monitor(ctx, output: str, port: int):
 )
 @click.option(
     "--save-strategy",
+    "-S",
     type=click.Choice(["skip", "overwrite", "merge"], case_sensitive=False),
     default="skip",
     help="How to save: skip, overwrite (replace), or merge (add new components, keep your edits). Note: merge does not preserve comments.",
+)
+@click.option(
+    "--learned-weights",
+    help="Path to a learned_weights.json from a previous run, to prioritize fitness queries.",
+    default=None,
 )
 @click.pass_context
 def discover(
@@ -270,6 +289,7 @@ def discover(
     verbose: int = 0,
     skip_pod_name: str = None,
     save_strategy: str = "skip",
+    learned_weights: str = None,
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
@@ -309,11 +329,27 @@ def discover(
         if fresh_write
         else None
     )
+    # recommend fitness queries on fresh writes and merges; else keep the static default.
+    recommend_fitness = fresh_write or save_strategy.lower() == "merge"
+    fitness_queries = None
+    if recommend_fitness:
+        try:
+            prom_client = create_prometheus_client(kubeconfig)
+            fitness_queries = recommend_fitness_queries(
+                cluster_components,
+                prom_client,
+                load_learned_weights(learned_weights),
+            )
+        except PrometheusConnectionError as e:
+            logger.info("Prometheus unavailable; using static fitness default (%s).", e)
+        except Exception as e:
+            logger.warning("Fitness query recommendation failed: %s", e)
     save_discovery(
         output,
         save_strategy,
         cluster_components,
         kubeconfig,
         scenario_enables=scenario_enables,
+        fitness_queries=fitness_queries,
         health_checks=health_checks,
     )

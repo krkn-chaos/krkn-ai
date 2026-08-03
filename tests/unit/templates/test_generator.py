@@ -55,6 +55,12 @@ class TestScenarioRendering:
         assert "enable: True" not in rendered
         yaml.safe_load(rendered)  # does not raise
 
+    def test_dangerous_scenario_opt_in_flag_is_rendered(self):
+        """The generated config surfaces the allow_dangerous_scenarios gate (#13)."""
+        rendered = create_krkn_ai_template(KUBECONFIG, DATA, None)
+        doc = yaml.safe_load(rendered)
+        assert doc["allow_dangerous_scenarios"] is False
+
 
 def _health_checks(rendered: str):
     """Return the health_checks mapping from rendered YAML (None if commented)."""

@@ -65,12 +65,34 @@ elastic:
 
 
 fitness_function:
-  # Use an aggregate query that returns one Prometheus series.
-  query: 'sum(kube_pod_container_status_restarts_total)'
-  type: point
   include_krkn_failure: true
   include_health_check_failure: true
   include_health_check_response_time: true
+{%- set enabled_ff = fitness_queries | default([]) | selectattr('enabled') | list %}
+{%- set disabled_ff = fitness_queries | default([]) | rejectattr('enabled') | list %}
+{%- if enabled_ff %}
+  # Fitness queries validated against the cluster's Prometheus.
+  items:
+{%- for f in enabled_ff %}
+  # {{ f.name }}
+  - query: '{{ f.query }}'
+    type: {{ f.type }}
+    weight: {{ f.weight }}
+{%- endfor %}
+{%- for f in disabled_ff %}
+  # {{ f.name }} ({{ f.reason }})
+  # - query: '{{ f.query }}'
+  #   type: {{ f.type }}
+{%- endfor %}
+{%- else %}
+  # Aggregate query returning one Prometheus series.
+  query: 'sum(kube_pod_container_status_restarts_total)'
+  type: point
+{%- for f in disabled_ff %}
+  # {{ f.name }} ({{ f.reason }}): {{ f.query }}
+{%- endfor %}
+{%- endif %}
+
 {%- set enabled_apps = health_check_apps | default([]) | selectattr('probe') | selectattr('active') | list -%}
 {%- set disabled_apps = health_check_apps | default([]) | rejectattr('probe') | list + health_check_apps | default([]) | selectattr('probe') | rejectattr('active') | list %}
 {% if enabled_apps %}
@@ -115,6 +137,11 @@ health_checks:
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
 {% endif %}
+
+# Cluster-critical scenarios (e.g. service-disruption, which deletes whole
+# namespaces) are skipped unless this is set to true, even when their own
+# `enable` flag is on. Leave it false unless you really intend to run them.
+allow_dangerous_scenarios: false
 
 scenario:
 {%- for name, enabled in scenario_enables.items() %}

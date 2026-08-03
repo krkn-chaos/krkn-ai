@@ -10,7 +10,7 @@ from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.constants import STATUS_IN_PROGRESS
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
-from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
+from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -23,6 +23,9 @@ from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
+from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
+
+LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
 logger = get_logger(__name__)
 
@@ -36,9 +39,6 @@ class GeneticAlgorithm(BaseEngine):
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
     ):
-        if config.genetic.population_size < 2:
-            raise PopulationSizeError("Population size should be at least 2")
-
         if config.genetic.population_size % 2 != 0:
             logger.debug(
                 "Population size is odd, making it even for the genetic algorithm."
@@ -184,7 +184,6 @@ class GeneticAlgorithm(BaseEngine):
                 format_duration(elapsed_time),
             )
             self.completed_generations = cur_generation
-            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
@@ -209,10 +208,24 @@ class GeneticAlgorithm(BaseEngine):
         )
         summary_reporter.save(self.output_dir)
 
+        self._save_learned_weights()
+
         if self.elastic_client is not None:
             self.elastic_client.index_run_summary(
                 summary_reporter.generate_summary(), self.run_uuid
             )
+
+    def _save_learned_weights(self):
+        """Learn per-query weights from this run's scenarios for future runs to seed."""
+        items = self.config.fitness_function.items
+        if not items:
+            return
+        weights = learn_weights(self.seen_population.values(), items)
+        if not weights:
+            return
+        path = os.path.join(self.output_dir, LEARNED_WEIGHTS_FILE)
+        save_learned_weights(weights, path)
+        logger.info("Saved learned fitness weights to %s", path)
 
     def adapt_mutation_rate(self):
         cfg = self.algo_config.adaptive_mutation
@@ -236,12 +249,6 @@ class GeneticAlgorithm(BaseEngine):
         else:
             self.stagnant_generations = 0
             rate_factor = 0.9
-
-        if cfg.min > cfg.max:
-            raise ValueError(
-                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
-                f"must be less than or equal to max ({cfg.max})"
-            )
 
         # Increase rate when stagnating, decrease when improving
         old_rate = self.current_scenario_mutation_rate

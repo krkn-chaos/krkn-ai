@@ -144,8 +144,28 @@ def merge_components(
     return ClusterComponents(namespaces=list(namespaces.values()), nodes=nodes)
 
 
+def _merge_fitness_items(raw: dict, fitness_queries: list = None) -> None:
+    """Add newly recommended enabled fitness items, keeping the user's existing ones."""
+    if not fitness_queries:
+        return
+    ff = raw.setdefault("fitness_function", {})
+    items = ff.get("items") or []
+    seen = {item.get("query") for item in items}
+    for f in fitness_queries:
+        if f.get("enabled") and f["query"] not in seen:
+            items.append(
+                {"query": f["query"], "type": f["type"], "weight": f["weight"]}
+            )
+            seen.add(f["query"])
+    if items:
+        ff["items"] = items
+
+
 def _build_merged_config(
-    output: str, discovered: ClusterComponents, kubeconfig: str
+    output: str,
+    discovered: ClusterComponents,
+    kubeconfig: str,
+    fitness_queries: list = None,
 ) -> Union[str, None]:
     """Merge discovered components into the existing config, keeping the user's
     edits."""
@@ -165,6 +185,7 @@ def _build_merged_config(
     raw["cluster_components"] = merged.model_dump(
         mode="json", warnings="none", exclude_defaults=True
     )
+    _merge_fitness_items(raw, fitness_queries)
     return yaml.safe_dump(
         raw, default_flow_style=False, sort_keys=False, allow_unicode=True
     )
@@ -175,12 +196,17 @@ def _write_fresh(
     components: ClusterComponents,
     kubeconfig: str,
     scenario_enables: dict = None,
+    fitness_queries: list = None,
     health_checks: list = None,
 ):
     """Write fresh config from discovered components."""
     data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
     template = create_krkn_ai_template(
-        kubeconfig, data, scenario_enables, health_checks
+        kubeconfig,
+        data,
+        scenario_enables,
+        health_checks=health_checks,
+        fitness_queries=fitness_queries,
     )
     with open(output, "w", encoding="utf-8") as f:
         f.write(template)
@@ -193,6 +219,7 @@ def save_discovery(
     components: ClusterComponents,
     kubeconfig: str,
     scenario_enables: dict = None,
+    fitness_queries: list = None,
     health_checks: list = None,
 ):
     """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new)."""
@@ -208,7 +235,7 @@ def save_discovery(
         return
 
     if exists and strategy == "merge":
-        text = _build_merged_config(output, components, kubeconfig)
+        text = _build_merged_config(output, components, kubeconfig, fitness_queries)
         if text is None:
             return
         with open(output, "w", encoding="utf-8") as f:
@@ -219,4 +246,11 @@ def save_discovery(
     if exists and strategy == "overwrite":
         logger.warning("Overwriting existing %s", output)
 
-    _write_fresh(output, components, kubeconfig, scenario_enables, health_checks)
+    _write_fresh(
+        output,
+        components,
+        kubeconfig,
+        scenario_enables,
+        fitness_queries,
+        health_checks,
+    )

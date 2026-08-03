@@ -468,18 +468,69 @@ class TestClusterManager:
         assert nodes[0].interfaces == []  # Empty on failure
 
     def test_list_node_interfaces_filters_network_interfaces(self, cluster_manager):
-        """Test list_node_interfaces filters and returns only ens/eth interfaces"""
+        """list_node_interfaces keeps physical/bridge NICs and drops virtual ones (#294)."""
         with patch(
             "krkn_ai.cluster.cluster_manager.run_shell",
-            return_value=("eth0\nens5\nlo\novs-system\nbr-ex\n", 0),
+            return_value=(
+                "eth0\nens5\neno1\nbond0\nbr-ex\n"
+                "br-int\nlo\novs-system\nveth1a2b\npodman0\nppp0\n",
+                0,
+            ),
         ):
             interfaces = cluster_manager.list_node_interfaces("test-node")
 
-        assert len(interfaces) == 2
-        assert "eth0" in interfaces
-        assert "ens5" in interfaces
-        assert "lo" not in interfaces
-        assert "ovs-system" not in interfaces
+        # Physical / bond / external-bridge interfaces are targetable.
+        assert interfaces == ["eth0", "ens5", "eno1", "bond0", "br-ex"]
+        # Virtual / internal interfaces are excluded, including the OVS/OVN
+        # integration bridge and PPP links.
+        for excluded in ("br-int", "lo", "ovs-system", "veth1a2b", "podman0", "ppp0"):
+            assert excluded not in interfaces
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "eth0",
+            "ens5",
+            "eno1",
+            "enp0s3",
+            "enx001122334455",
+            "em1",
+            "p2p1",
+            "bond0",
+            "br-ex",
+            "br0",
+            "bridge0",
+            "ib0",
+            "wlan0",
+        ],
+    )
+    def test_is_targetable_interface_accepts_physical_nics(self, name):
+        """Physical, bond, bridge, InfiniBand and wireless NICs are targetable (#294)."""
+        assert ClusterManager._is_targetable_interface(name) is True
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "lo",
+            "veth1a2b",
+            "ovs-system",
+            "br-int",  # OVN integration bridge (shares the "br" prefix)
+            "br-tun",  # OVS tunnel bridge (shares the "br" prefix)
+            "docker0",
+            "podman0",  # would match a bare "p" prefix but must be excluded
+            "ppp0",  # PPP link: not a biosdevname PCI NIC
+            "cni0",
+            "flannel.1",
+            "cali1234abcd",
+            "tunl0",
+            "vxlan.calico",
+            "dummy0",
+            "",
+        ],
+    )
+    def test_is_targetable_interface_rejects_virtual_interfaces(self, name):
+        """Virtual/internal interfaces are excluded even when they share a prefix (#294)."""
+        assert ClusterManager._is_targetable_interface(name) is False
 
     def test_list_node_interfaces_returns_empty_list_on_shell_error(
         self, cluster_manager

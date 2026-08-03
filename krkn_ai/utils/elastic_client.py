@@ -169,6 +169,7 @@ class ElasticSearchClient:
                 "fitness_result",
                 "health_check_results",
                 "run_uuid",
+                "resiliency_score",
             },
         )
         result_data["krkn_ai_run_uuid"] = run_uuid  # Link to parent config for the test

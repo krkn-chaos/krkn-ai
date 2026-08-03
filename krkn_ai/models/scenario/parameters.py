@@ -217,7 +217,7 @@ class ActionTimeParameter(BaseParameter):
 
 
 class NetworkScenarioTypeParameter(BaseParameter):
-    krknhub_name: str = "NETWORK_SCENARIO_TYPE"
+    krknhub_name: str = "TRAFFIC_TYPE"
     krknctl_name: str = "traffic-type"
     value: str = "ingress"
 

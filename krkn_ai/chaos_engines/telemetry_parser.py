@@ -1,18 +1,19 @@
 """
 Telemetry extraction from Krkn run logs.
 
-Extracts exit_status and run_uuid from the "Chaos data:" JSON telemetry
-block emitted by Krkn at the end of a run.
+Extracts exit_status, run_uuid, and resiliency_score from the "Chaos data:"
+JSON telemetry block emitted by Krkn at the end of a run.
 
 Fallback chain:
   1. JSON decode via raw_decode (handles ANSI codes, trailing garbage)
-  2. Regex pattern matching for exit_status / run_uuid keys
+  2. Regex pattern matching for exit_status / run_uuid / resiliency_score keys
   3. Return caller-supplied default
 """
 
 import json
 import re
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional
 
 from krkn_ai.utils.logger import get_logger
 
@@ -22,8 +23,16 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 _EXIT_STATUS_RE = re.compile(r'"exit_status"\s*:\s*(-?\d+)')
 _RUN_UUID_RE = re.compile(r'"run_uuid"\s*:\s*"([^"]+)"')
+_RESILIENCY_SCORE_RE = re.compile(r'"resiliency_score"\s*:\s*(\d+(?:\.\d+)?)')
 
 CHAOS_DATA_MARKER = "Chaos data:"
+
+
+@dataclass
+class TelemetryResult:
+    exit_status: int
+    run_uuid: Optional[str] = None
+    resiliency_score: Optional[float] = None
 
 
 def strip_ansi(text: str) -> str:
@@ -31,25 +40,23 @@ def strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
-def extract_telemetry_from_log(
-    log: str, default_returncode: int
-) -> Tuple[int, Optional[str]]:
+def extract_telemetry_from_log(log: str, default_returncode: int) -> TelemetryResult:
     """
-    Extract Krkn return code and run_uuid from a run log.
+    Extract Krkn return code, run_uuid, and resiliency_score from a run log.
 
     Fallback chain:
       1. Locate "Chaos data:" marker, strip ANSI, then use JSONDecoder.raw_decode
          to find a valid telemetry JSON object.
-      2. If JSON decode fails, use regex to find exit_status and run_uuid values.
+      2. If JSON decode fails, use regex to find values directly.
       3. Return default_returncode if nothing is found.
 
     Returns:
-        (exit_status, run_uuid) or (default_returncode, None) on failure.
+        TelemetryResult with extracted values.
     """
     marker_idx = log.find(CHAOS_DATA_MARKER)
     if marker_idx == -1:
         logger.warning("Could not find '%s' in log", CHAOS_DATA_MARKER)
-        return default_returncode, None
+        return TelemetryResult(exit_status=default_returncode)
 
     after_marker = log[marker_idx + len(CHAOS_DATA_MARKER) :]
 
@@ -62,12 +69,12 @@ def extract_telemetry_from_log(
         return result
 
     logger.warning("No exit_status found in telemetry data")
-    return default_returncode, None
+    return TelemetryResult(exit_status=default_returncode)
 
 
 def _try_json_extraction(
     text: str, default_returncode: int
-) -> Optional[Tuple[int, Optional[str]]]:
+) -> Optional[TelemetryResult]:
     """
     Attempt JSON-based extraction using raw_decode after stripping ANSI codes.
     Scans for valid JSON objects and validates the telemetry structure.
@@ -106,16 +113,29 @@ def _try_json_extraction(
 
         exit_status = first.get("exit_status", default_returncode)
         run_uuid = telemetry.get("run_uuid", None)
+
+        resiliency_score = None
+        report = telemetry.get("overall_resiliency_report")
+        if isinstance(report, dict):
+            raw = report.get("resiliency_score")
+            if raw is not None:
+                resiliency_score = float(raw)
+
         logger.debug("Extracted exit_status: %s (json)", exit_status)
         logger.debug("Extracted run_uuid: %s (json)", run_uuid)
-        return exit_status, run_uuid
+        logger.debug("Extracted resiliency_score: %s (json)", resiliency_score)
+        return TelemetryResult(
+            exit_status=exit_status,
+            run_uuid=run_uuid,
+            resiliency_score=resiliency_score,
+        )
 
     return None
 
 
-def _try_regex_extraction(text: str) -> Optional[Tuple[int, Optional[str]]]:
+def _try_regex_extraction(text: str) -> Optional[TelemetryResult]:
     """
-    Fallback: use regex to locate exit_status and run_uuid values
+    Fallback: use regex to locate exit_status, run_uuid, and resiliency_score
     directly from the raw (or ANSI-contaminated) text.
     """
     clean_text = strip_ansi(text)
@@ -128,6 +148,14 @@ def _try_regex_extraction(text: str) -> Optional[Tuple[int, Optional[str]]]:
     uuid_match = _RUN_UUID_RE.search(clean_text)
     run_uuid = uuid_match.group(1) if uuid_match else None
 
+    resiliency_match = _RESILIENCY_SCORE_RE.search(clean_text)
+    resiliency_score = float(resiliency_match.group(1)) if resiliency_match else None
+
     logger.debug("Extracted exit_status: %s (regex)", exit_status)
     logger.debug("Extracted run_uuid: %s (regex)", run_uuid)
-    return exit_status, run_uuid
+    logger.debug("Extracted resiliency_score: %s (regex)", resiliency_score)
+    return TelemetryResult(
+        exit_status=exit_status,
+        run_uuid=run_uuid,
+        resiliency_score=resiliency_score,
+    )

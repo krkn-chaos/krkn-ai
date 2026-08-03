@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
+from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
     FitnessFunction,
@@ -110,7 +111,7 @@ class TestKrknRunnerRun:
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
             with patch(
                 "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
-                return_value=(1, None),
+                return_value=TelemetryResult(exit_status=1),
             ):
                 runner = KrknRunner(
                     config=minimal_config,

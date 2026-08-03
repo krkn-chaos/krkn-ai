@@ -84,7 +84,7 @@ class KrknRunner:
         start_time = datetime.datetime.now()
         mono_start = time.monotonic()
 
-        log, returncode, run_uuid = None, None, None
+        log, returncode, run_uuid, resiliency_score = None, None, None, None
         command = ""
         if isinstance(scenario, CompositeScenario):
             command = build_graph_command(
@@ -114,7 +114,10 @@ class KrknRunner:
                 if isinstance(scenario, CompositeScenario):
                     pass
                 else:
-                    returncode, run_uuid = extract_telemetry_from_log(log, returncode)
+                    telemetry = extract_telemetry_from_log(log, returncode)
+                    returncode = telemetry.exit_status
+                    run_uuid = telemetry.run_uuid
+                    resiliency_score = telemetry.resiliency_score
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
@@ -189,6 +192,7 @@ class KrknRunner:
             fitness_result=fitness_result,
             health_check_results=health_check_results,
             run_uuid=run_uuid,
+            resiliency_score=resiliency_score,
         )
 
     def runner_command(self, scenario: Scenario) -> str:

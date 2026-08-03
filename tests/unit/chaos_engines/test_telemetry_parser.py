@@ -37,7 +37,10 @@ Chaos data:
   }
 }
 """
-        assert extract_telemetry_from_log(log, 0) == (2, "run-123")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 2
+        assert result.run_uuid == "run-123"
+        assert result.resiliency_score is None
 
     def test_skips_empty_json_before_telemetry(self):
         log = """
@@ -45,7 +48,9 @@ Chaos data:
 {}
 {"telemetry": {"run_uuid": "run-456", "scenarios": [{"exit_status": 2}]}}
 """
-        assert extract_telemetry_from_log(log, 0) == (2, "run-456")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 2
+        assert result.run_uuid == "run-456"
 
     def test_handles_brace_inside_string_value(self):
         log = """
@@ -62,7 +67,9 @@ Chaos data:
   }
 }
 """
-        assert extract_telemetry_from_log(log, 0) == (2, "run-789")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 2
+        assert result.run_uuid == "run-789"
 
     def test_handles_ansi_codes_in_json_block(self):
         log = (
@@ -70,7 +77,9 @@ Chaos data:
             '{"telemetry": {"run_uuid": "abc-123", '
             '"scenarios": [{"exit_status": 1}]}}\x1b[0m\n'
         )
-        assert extract_telemetry_from_log(log, 0) == (1, "abc-123")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 1
+        assert result.run_uuid == "abc-123"
 
     def test_handles_ansi_after_closing_brace(self):
         log = (
@@ -82,32 +91,42 @@ Chaos data:
             "  }\n"
             "}\x1b[0m\n"
         )
-        assert extract_telemetry_from_log(log, 0) == (3, "uuid-ansi")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 3
+        assert result.run_uuid == "uuid-ansi"
 
     def test_no_marker_returns_default(self):
         log = "some random log without the marker"
-        assert extract_telemetry_from_log(log, -1) == (-1, None)
+        result = extract_telemetry_from_log(log, -1)
+        assert result.exit_status == -1
+        assert result.run_uuid is None
 
     def test_truncated_json_falls_back_to_regex(self):
         log = """
 Chaos data:
 {"telemetry": {"run_uuid": "regex-uuid", "scenarios": [{"exit_status": 5}]}
 """
-        assert extract_telemetry_from_log(log, 99) == (5, "regex-uuid")
+        result = extract_telemetry_from_log(log, 99)
+        assert result.exit_status == 5
+        assert result.run_uuid == "regex-uuid"
 
     def test_completely_malformed_returns_default(self):
         log = """
 Chaos data:
 not json at all, just garbage text
 """
-        assert extract_telemetry_from_log(log, 42) == (42, None)
+        result = extract_telemetry_from_log(log, 42)
+        assert result.exit_status == 42
+        assert result.run_uuid is None
 
     def test_exit_status_zero_is_not_confused_with_falsy(self):
         log = """
 Chaos data:
 {"telemetry": {"run_uuid": "zero-run", "scenarios": [{"exit_status": 0}]}}
 """
-        assert extract_telemetry_from_log(log, -1) == (0, "zero-run")
+        result = extract_telemetry_from_log(log, -1)
+        assert result.exit_status == 0
+        assert result.run_uuid == "zero-run"
 
     def test_scenarios_as_non_list_skipped(self):
         """If scenarios is a dict instead of list, skip to next candidate or regex."""
@@ -116,7 +135,9 @@ Chaos data:
 {"telemetry": {"run_uuid": "bad", "scenarios": {"exit_status": 2}}}
 {"telemetry": {"run_uuid": "good", "scenarios": [{"exit_status": 4}]}}
 """
-        assert extract_telemetry_from_log(log, 0) == (4, "good")
+        result = extract_telemetry_from_log(log, 0)
+        assert result.exit_status == 4
+        assert result.run_uuid == "good"
 
     def test_real_world_log_with_ansi(self):
         """Simulates the structure of a real krkn log with ANSI codes throughout."""
@@ -135,10 +156,9 @@ Chaos data:
             "}\x1b[0m\n"
             " _              _\n"
         )
-        assert extract_telemetry_from_log(log, -1) == (
-            0,
-            "24f33551-128f-49c2-b668-1714e937bdde",
-        )
+        result = extract_telemetry_from_log(log, -1)
+        assert result.exit_status == 0
+        assert result.run_uuid == "24f33551-128f-49c2-b668-1714e937bdde"
 
 
 class TestJsonExtraction:
@@ -156,7 +176,8 @@ class TestJsonExtraction:
     def test_uses_default_when_exit_status_missing(self):
         text = '{"telemetry": {"run_uuid": "x", "scenarios": [{"other": 1}]}}'
         result = _try_json_extraction(text, 99)
-        assert result == (99, "x")
+        assert result.exit_status == 99
+        assert result.run_uuid == "x"
 
 
 class TestRegexExtraction:
@@ -164,11 +185,15 @@ class TestRegexExtraction:
 
     def test_finds_exit_status_and_uuid(self):
         text = '"exit_status": 3, "run_uuid": "abc-def"'
-        assert _try_regex_extraction(text) == (3, "abc-def")
+        result = _try_regex_extraction(text)
+        assert result.exit_status == 3
+        assert result.run_uuid == "abc-def"
 
     def test_finds_exit_status_without_uuid(self):
         text = '"exit_status": 7'
-        assert _try_regex_extraction(text) == (7, None)
+        result = _try_regex_extraction(text)
+        assert result.exit_status == 7
+        assert result.run_uuid is None
 
     def test_returns_none_when_no_exit_status(self):
         text = "no relevant keys here"
@@ -176,8 +201,68 @@ class TestRegexExtraction:
 
     def test_handles_negative_exit_status(self):
         text = '"exit_status": -1, "run_uuid": "neg-test"'
-        assert _try_regex_extraction(text) == (-1, "neg-test")
+        result = _try_regex_extraction(text)
+        assert result.exit_status == -1
+        assert result.run_uuid == "neg-test"
 
     def test_handles_ansi_around_values(self):
         text = '\x1b[37m"exit_status"\x1b[0m: 5, "run_uuid": "ansi-uuid"'
-        assert _try_regex_extraction(text) == (5, "ansi-uuid")
+        result = _try_regex_extraction(text)
+        assert result.exit_status == 5
+        assert result.run_uuid == "ansi-uuid"
+
+    def test_extracts_resiliency_score(self):
+        text = '"exit_status": 0, "run_uuid": "u1", "resiliency_score": 85.5'
+        result = _try_regex_extraction(text)
+        assert result.resiliency_score == 85.5
+
+    def test_resiliency_score_none_when_absent(self):
+        text = '"exit_status": 0, "run_uuid": "u2"'
+        result = _try_regex_extraction(text)
+        assert result.resiliency_score is None
+
+
+class TestResiliencyScoreExtraction:
+    """Tests for resiliency score extraction from telemetry."""
+
+    def test_json_extracts_resiliency_score(self):
+        log = """
+Chaos data:
+{
+  "telemetry": {
+    "run_uuid": "r1",
+    "scenarios": [{"exit_status": 0}],
+    "overall_resiliency_report": {
+      "resiliency_score": 100,
+      "passed_slos": 27,
+      "total_slos": 27
+    }
+  }
+}
+"""
+        result = extract_telemetry_from_log(log, -1)
+        assert result.exit_status == 0
+        assert result.run_uuid == "r1"
+        assert result.resiliency_score == 100.0
+
+    def test_json_resiliency_score_none_when_report_absent(self):
+        log = """
+Chaos data:
+{"telemetry": {"run_uuid": "r2", "scenarios": [{"exit_status": 0}]}}
+"""
+        result = extract_telemetry_from_log(log, -1)
+        assert result.resiliency_score is None
+
+    def test_json_resiliency_score_fractional(self):
+        log = """
+Chaos data:
+{
+  "telemetry": {
+    "run_uuid": "r3",
+    "scenarios": [{"exit_status": 0}],
+    "overall_resiliency_report": {"resiliency_score": 72.5}
+  }
+}
+"""
+        result = extract_telemetry_from_log(log, -1)
+        assert result.resiliency_score == 72.5

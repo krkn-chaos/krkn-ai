@@ -33,7 +33,7 @@ def is_openshift(kubeconfig: str) -> bool:
         return False
 
 
-def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
+def create_prometheus_client(kubeconfig: str, timeout: float = 10.0) -> KrknPrometheus:
     """
     Creates a Prometheus client with intelligent discovery and fallback logic.
 
@@ -45,6 +45,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
 
     Args:
         kubeconfig: Path to the Kubernetes configuration file.
+        timeout: Query HTTP request timeout in seconds.
 
     Returns:
         A configured KrknPrometheus client instance.
@@ -57,7 +58,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
 
     # Case 1: Both environment variables provided
     if url and token:
-        return _validate_and_create_client(url, token)
+        return _validate_and_create_client(url, token, timeout=timeout)
 
     is_ocp = is_openshift(kubeconfig)
 
@@ -94,7 +95,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
             "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
         )
 
-    return _validate_and_create_client(url, token)
+    return _validate_and_create_client(url, token, timeout=timeout)
 
 
 def _discover_openshift_prometheus_url(kubeconfig: str) -> str:
@@ -152,13 +153,14 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         return ""
 
 
-def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
+def _validate_and_create_client(url: str, token: str, timeout: float = 10.0) -> KrknPrometheus:
     """
     Validates connection parameters and initializes the Prometheus client.
 
     Args:
         url: The Prometheus API endpoint URL.
         token: Authentication token.
+        timeout: Query HTTP request timeout in seconds.
 
     Returns:
         An initialized KrknPrometheus client.
@@ -170,10 +172,13 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
 
-    logger.debug("Initializing Prometheus client: %s", url)
+    logger.debug("Initializing Prometheus client: %s (timeout=%.1fs)", url, timeout)
 
     try:
         client = KrknPrometheus(url.strip(), token.strip())
+        if hasattr(client, "prom_cli") and client.prom_cli is not None:
+            client.prom_cli._timeout = timeout
+
         # Connection test: run a dummy query unless in mock mode
         if not env_is_truthy("MOCK_FITNESS"):
             client.process_query("1")

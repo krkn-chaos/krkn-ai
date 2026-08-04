@@ -1,4 +1,5 @@
 import datetime
+import importlib
 from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import (
@@ -356,11 +357,21 @@ class ConfigFile(BaseModel):
         default=const.WAIT_DURATION, ge=0
     )  # Time to wait after each scenario run (Default: 120 seconds)
 
+    prometheus_timeout: float = Field(
+        default=10.0, ge=1.0
+    )  # Timeout in seconds for Prometheus queries (Default: 10.0s)
+
+    prometheus_fallback_value: float = Field(
+        default=0.0
+    )  # Fallback fitness score when Prometheus query times out or fails (Default: 0.0)
+
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
+    enable_telemetry: bool = False
+    telemetry_endpoint: Optional[str] = None
 
     # Opt-in gate for scenarios with a cluster-critical blast radius (e.g.
     # service disruption, which deletes whole namespaces). Such scenarios are

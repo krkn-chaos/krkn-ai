@@ -350,8 +350,8 @@ class TestCalculateFitnessValueRetries:
         calc = FitnessCalculator(mock_prom_client, fitness_function)
 
         mock_prom_client.process_prom_query_in_range.side_effect = [
-            [{"values": []}],
-            [{"values": []}],
+            ConnectionError("Temporary network issue"),
+            ConnectionError("Temporary network issue"),
             [{"values": [[1000, "5"]]}],
             [{"values": [[2000, "10"]]}],
         ]
@@ -370,7 +370,33 @@ class TestCalculateFitnessValueRetries:
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
     @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
-    def test_calculate_fitness_value_raises_after_retries_exhausted(
+    def test_calculate_fitness_value_fallback_after_retries_exhausted(
+        self, mock_env, mock_sleep, mock_prom_client
+    ):
+        fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+        calc = FitnessCalculator(mock_prom_client, fitness_function, fallback_value=-5.0)
+
+        mock_prom_client.process_prom_query_in_range.side_effect = TimeoutError("HTTP Connection Timeout")
+
+        start = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        end = datetime.datetime(2024, 1, 1, 12, 5, 0)
+
+        score = calc.calculate_fitness_value(
+            start,
+            end,
+            "sum(kube_pod_container_status_restarts_total)",
+            FitnessFunctionType.point,
+        )
+
+        assert score == -5.0
+        assert mock_prom_client.process_prom_query_in_range.call_count == 3
+
+    @patch("krkn_ai.chaos_engines.fitness.time.sleep")
+    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
+    def test_calculate_fitness_value_raises_on_calculation_error(
         self, mock_env, mock_sleep, mock_prom_client
     ):
         fitness_function = FitnessFunction(
@@ -384,13 +410,10 @@ class TestCalculateFitnessValueRetries:
         start = datetime.datetime(2024, 1, 1, 12, 0, 0)
         end = datetime.datetime(2024, 1, 1, 12, 5, 0)
 
-        with pytest.raises(FitnessFunctionCalculationError) as exc_info:
+        with pytest.raises(FitnessFunctionCalculationError):
             calc.calculate_fitness_value(
                 start,
                 end,
                 "sum(kube_pod_container_status_restarts_total)",
                 FitnessFunctionType.point,
             )
-
-        assert "failed after 3 retries" in str(exc_info.value)
-        assert mock_prom_client.process_prom_query_in_range.call_count == 3

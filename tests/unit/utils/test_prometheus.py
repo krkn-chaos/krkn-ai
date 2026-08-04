@@ -38,15 +38,17 @@ class TestPrometheusUtils:
         }
         with patch.dict(os.environ, env):
             mock_client = Mock()
+            mock_client.prom_cli = Mock()
             mock_client.process_query.return_value = None
             mock_prom_class.return_value = mock_client
 
-            client = create_prometheus_client("/tmp/test-kubeconfig")
+            client = create_prometheus_client("/tmp/test-kubeconfig", timeout=15.0)
 
             mock_prom_class.assert_called_once_with(
                 "https://prometheus.example.com", "secret-token"
             )
             assert client == mock_client
+            assert mock_client.prom_cli._timeout == 15.0
 
     @patch("krkn_ai.utils.prometheus.is_openshift", return_value=True)
     @patch("krkn_ai.utils.prometheus.config.load_kube_config")

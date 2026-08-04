@@ -16,9 +16,10 @@ logger = get_logger(__name__)
 
 
 class FitnessCalculator:
-    def __init__(self, prom_client, fitness_function):
+    def __init__(self, prom_client, fitness_function, fallback_value: float = 0.0):
         self.prom_client = prom_client
         self.fitness_function = fitness_function
+        self.fallback_value = fallback_value
 
     def preflight_check(self) -> None:
         """Validate all fitness queries return data before the experiment starts."""
@@ -98,25 +99,38 @@ class FitnessCalculator:
         if env_is_truthy("MOCK_FITNESS"):
             return rng.random()
 
+        if fitness_type not in (FitnessFunctionType.point, FitnessFunctionType.range):
+            raise FitnessFunctionConfigurationError(
+                f"Unsupported fitness function type: {fitness_type}"
+            )
+
         retries = 3
         retry_delay = 10
+        last_error = None
         for retry in range(retries):
             try:
                 if fitness_type == FitnessFunctionType.point:
                     return self.calculate_point_fitness(start, end, query)
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
-            except FitnessFunctionConfigurationError:
+            except (FitnessFunctionConfigurationError, FitnessFunctionCalculationError):
                 raise
             except Exception as error:
+                if isinstance(error, (TypeError, AttributeError, SystemError, KeyboardInterrupt)):
+                    raise
+                last_error = error
                 logger.error(f"Fitness function calculation failed: {error}")
-                logger.info(
-                    f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
-                )
-                time.sleep(retry_delay)
-        raise FitnessFunctionCalculationError(
-            f"Fitness function calculation failed after {retries} retries"
+                if retry < retries - 1:
+                    logger.info(
+                        f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
+                    )
+                    time.sleep(retry_delay)
+
+        logger.warning(
+            f"Fitness calculation for query '{query}' failed after {retries} retries ({last_error}). "
+            f"Assigning default fallback fitness score of {self.fallback_value} to prevent experiment freeze."
         )
+        return self.fallback_value
 
     def calculate_fitness_score_for_items(self, start, end):
         """Compute fitness scores when multiple SLOs are defined."""

@@ -45,8 +45,9 @@ def create_krkn_ai_template(
     if scenario_enables is None:
         scenario_enables = {name: False for name, _ in scenario_specs}
 
+    safe_kubeconfig_path = kubeconfig_file_path.replace("\\", "\\\\")
     return template.render(
-        kubeconfig_file_path=kubeconfig_file_path,
+        kubeconfig_file_path=safe_kubeconfig_path,
         cluster_components=cluster_components_indented,
         scenario_enables=scenario_enables,
         fitness_queries=fitness_queries,

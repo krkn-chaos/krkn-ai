@@ -1,6 +1,7 @@
 import math
 import datetime
 import time
+from typing import Iterable, List
 
 from krkn_ai.models.app import FitnessResult, FitnessScoreResult
 from krkn_ai.models.config import FitnessFunctionType
@@ -13,6 +14,27 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
 
 logger = get_logger(__name__)
+
+
+def normalize_weights(weights: Iterable[float]) -> List[float]:
+    """Convert relative fitness coefficients into weights summing to one.
+
+    Users can now choose readable coefficients such as ``8`` and ``2`` in YAML
+    without changing the scale of the overall fitness score.  An all-zero set
+    is treated as equal weighting so a disabled-looking configuration does not
+    silently discard every fitness signal.
+    """
+    values = [float(weight) for weight in weights]
+    if not values:
+        return []
+    if any(not math.isfinite(weight) or weight < 0 for weight in values):
+        raise FitnessFunctionConfigurationError(
+            "Fitness query weights must be finite non-negative numbers"
+        )
+    total = sum(values)
+    if total == 0:
+        return [1.0 / len(values)] * len(values)
+    return [weight / total for weight in values]
 
 
 class FitnessCalculator:
@@ -122,14 +144,17 @@ class FitnessCalculator:
         """Compute fitness scores when multiple SLOs are defined."""
         results = []
         overall_score = 0
-        for fitness_item in self.fitness_function.items:
+        weights = normalize_weights(
+            fitness_item.weight for fitness_item in self.fitness_function.items
+        )
+        for fitness_item, weight in zip(self.fitness_function.items, weights):
             raw_score = self.calculate_fitness_value(
                 start=start,
                 end=end,
                 query=fitness_item.query,
                 fitness_type=fitness_item.type,
             )
-            fitness_value = fitness_item.weight * raw_score
+            fitness_value = weight * raw_score
             overall_score += fitness_value
 
             results.append(

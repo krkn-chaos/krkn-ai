@@ -151,21 +151,18 @@ class TestFitnessFunction:
             FitnessFunction()
 
     def test_fitness_function_item_weight_validation(self):
-        """Test FitnessFunctionItem weight must be between 0 and 1"""
+        """Weights are non-negative coefficients, not percentages."""
         # Valid weights
         item1 = FitnessFunctionItem(query="test", weight=0.0)
         item2 = FitnessFunctionItem(query="test", weight=1.0)
-        item3 = FitnessFunctionItem(query="test", weight=0.5)
+        item3 = FitnessFunctionItem(query="test", weight=8.0)
         assert item1.weight == 0.0
         assert item2.weight == 1.0
-        assert item3.weight == 0.5
+        assert item3.weight == 8.0
 
         # Invalid weights
-        with pytest.raises(ValidationError, match="outside the range"):
+        with pytest.raises(ValidationError, match="finite non-negative"):
             FitnessFunctionItem(query="test", weight=-0.1)
-
-        with pytest.raises(ValidationError, match="outside the range"):
-            FitnessFunctionItem(query="test", weight=1.1)
 
     def test_fitness_function_item_auto_id(self):
         """Test that FitnessFunctionItem gets auto-incremented IDs"""

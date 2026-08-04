@@ -1,4 +1,5 @@
 import datetime
+import math
 from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import (
@@ -147,9 +148,10 @@ class FitnessFunctionItem(BaseModel):
 
     @field_validator("weight", mode="after")
     @classmethod
-    def is_percent(cls, value: float) -> float:
-        if value < 0 or value > 1:
-            raise ValueError(f"{value} is outside the range [0.0, 1.0]")
+    def is_non_negative_finite(cls, value: float) -> float:
+        """Accept arbitrary non-negative coefficients for relative weighting."""
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{value} must be a finite non-negative weight")
         return value
 
 

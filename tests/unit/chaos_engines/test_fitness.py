@@ -6,7 +6,7 @@ import datetime
 import pytest
 from unittest.mock import Mock, patch
 
-from krkn_ai.chaos_engines.fitness import FitnessCalculator
+from krkn_ai.chaos_engines.fitness import FitnessCalculator, normalize_weights
 from krkn_ai.models.config import (
     FitnessFunction,
     FitnessFunctionType,
@@ -394,3 +394,32 @@ class TestCalculateFitnessValueRetries:
 
         assert "failed after 3 retries" in str(exc_info.value)
         assert mock_prom_client.process_prom_query_in_range.call_count == 3
+
+
+class TestFitnessWeightAllocation:
+    def test_normalize_weights_preserves_relative_coefficients(self):
+        assert normalize_weights([8, 2]) == [0.8, 0.2]
+
+    def test_normalize_zero_weights_falls_back_to_equal_allocation(self):
+        assert normalize_weights([0, 0]) == [0.5, 0.5]
+
+    def test_normalize_weights_rejects_negative_values(self):
+        with pytest.raises(FitnessFunctionConfigurationError, match="non-negative"):
+            normalize_weights([1, -1])
+
+    def test_item_scores_use_normalized_weights(self):
+        fitness_function = FitnessFunction(
+            items=[
+                {"query": "first", "weight": 8},
+                {"query": "second", "weight": 2},
+            ]
+        )
+        calc = FitnessCalculator(Mock(), fitness_function)
+        calc.calculate_fitness_value = Mock(side_effect=[10.0, 20.0])
+
+        result = calc.calculate_fitness_score_for_items(
+            datetime.datetime(2024, 1, 1), datetime.datetime(2024, 1, 1, 0, 5)
+        )
+
+        assert result.fitness_score == 12.0
+        assert [score.weighted_score for score in result.scores] == [8.0, 4.0]

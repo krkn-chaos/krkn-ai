@@ -265,6 +265,10 @@ class GeneticAlgorithm(BaseEngine):
                 self.current_scenario_mutation_rate,
             )
 
+        # Reset after adaptation so the next rate change waits another full
+        # cfg.generations window of stagnation (instead of re-triggering every gen).
+        self.stagnant_generations = 0
+
     def create_population(self, population_size) -> List[BaseScenario]:
         logger.info("Creating population of size %d", population_size)
 

@@ -402,6 +402,12 @@ def validate(
         logger.error("Config file not found: %s", config or "(empty)")
         sys.exit(1)
 
+    # If the user explicitly passed --kubeconfig, require the path to exist.
+    # Do not silently fall back to the config file's kubeconfig_file_path.
+    if kubeconfig and not os.path.exists(kubeconfig):
+        logger.error("Kubeconfig file not found: %s", kubeconfig)
+        sys.exit(1)
+
     try:
         parsed_config = read_config_from_file(config, param, kubeconfig)
     except KeyError as err:
@@ -411,18 +417,18 @@ def validate(
         logger.error("Config validation failed: %s", err)
         sys.exit(1)
     except Exception as err:
-        logger.error("Unable to load config file: %s", err)
+        logger.exception("Unable to load config file: %s", err)
         sys.exit(1)
 
     logger.info("Config schema validation passed: %s", config)
     logger.info("Algorithm: %s", parsed_config.algorithm.value)
 
     if check_connectivity:
-        kube_path = (
-            kubeconfig
-            if kubeconfig and os.path.exists(kubeconfig)
-            else parsed_config.kubeconfig_file_path
-        )
+        if kubeconfig:
+            kube_path = kubeconfig
+        else:
+            kube_path = parsed_config.kubeconfig_file_path
+
         if not kube_path or not os.path.exists(kube_path):
             logger.error(
                 "Connectivity check requires a valid kubeconfig "
@@ -442,7 +448,7 @@ def validate(
             logger.error("Cluster connectivity check failed (connection error): %s", e)
             sys.exit(1)
         except Exception as e:
-            logger.error("Cluster connectivity check failed: %s", e)
+            logger.exception("Cluster connectivity check failed: %s", e)
             sys.exit(1)
 
         try:
@@ -452,7 +458,7 @@ def validate(
             logger.error("Prometheus connectivity check failed: %s", e)
             sys.exit(1)
         except Exception as e:
-            logger.error("Prometheus connectivity check failed: %s", e)
+            logger.exception("Prometheus connectivity check failed: %s", e)
             sys.exit(1)
 
     click.echo("Config is valid.")

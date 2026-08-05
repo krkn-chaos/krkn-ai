@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import time
+import uuid
 from typing import List, Optional
 
 from krkn_ai.algorithm.base import BaseEngine
@@ -16,6 +17,7 @@ from krkn_ai.models.scenario.base import (
     BaseScenario,
     CompositeDependency,
     CompositeScenario,
+    ScenarioOrigin,
 )
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
@@ -140,27 +142,30 @@ class GeneticAlgorithm(BaseEngine):
             self.population = []
             for _ in range(self.algo_config.population_size // 2):
                 parent1, parent2 = self.select_parents(fitness_scores)
-                child1, child2 = None, None
+                parent_ids = [parent1.id, parent2.id]
+
                 if rng.random() < self.algo_config.composition_rate:
-                    # Composition: merge two scenarios into a composite
                     child1 = self.composition(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
                     )
                     child1 = self.mutate(child1)
+                    self._tag_lineage(child1, parent_ids, ScenarioOrigin.COMPOSITION)
                     self.population.append(child1)
 
                     child2 = self.composition(
                         copy.deepcopy(parent2), copy.deepcopy(parent1)
                     )
                     child2 = self.mutate(child2)
+                    self._tag_lineage(child2, parent_ids, ScenarioOrigin.COMPOSITION)
                     self.population.append(child2)
                 else:
-                    # Standard crossover: swap parameters between parents
                     child1, child2 = self.crossover(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
                     )
                     child1 = self.mutate(child1)
                     child2 = self.mutate(child2)
+                    self._tag_lineage(child1, parent_ids, ScenarioOrigin.CROSSOVER)
+                    self._tag_lineage(child2, parent_ids, ScenarioOrigin.CROSSOVER)
 
                     self.population.append(child1)
                     self.population.append(child2)
@@ -282,6 +287,7 @@ class GeneticAlgorithm(BaseEngine):
             )
 
             if scenario and scenario not in already_seen:
+                scenario.origin = ScenarioOrigin.INITIAL
                 population.append(scenario)
                 already_seen.add(scenario)
 
@@ -305,6 +311,16 @@ class GeneticAlgorithm(BaseEngine):
                 population.append(rng.choice(available_scenarios))
 
         return population
+
+    @staticmethod
+    def _tag_lineage(
+        scenario: BaseScenario,
+        parent_ids: List[str],
+        origin: ScenarioOrigin,
+    ):
+        scenario.id = str(uuid.uuid4())
+        scenario.parent_ids = parent_ids
+        scenario.origin = origin
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         if scenario in self.seen_population:

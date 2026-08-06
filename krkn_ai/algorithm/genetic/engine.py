@@ -195,7 +195,10 @@ class GeneticAlgorithm(BaseEngine):
     def save(self):
         self.generations_reporter.save_best_generations(self.best_of_generation)
         self.generations_reporter.save_best_generation_graph(self.best_of_generation)
-        self.health_check_reporter.save_report(self.seen_population.values())
+        health_check_results = list(self.seen_population.values())
+        if self.baseline_result is not None:
+            health_check_results.append(self.baseline_result)
+        self.health_check_reporter.save_report(health_check_results)
         self.health_check_reporter.sort_fitness_result_csv()
 
         summary_reporter = JSONSummaryReporter(

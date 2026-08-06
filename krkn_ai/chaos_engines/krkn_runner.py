@@ -17,7 +17,11 @@ from krkn_ai.models.scenario.base import (
     CompositeScenario,
 )
 from krkn_ai.utils import run_shell
-from krkn_ai.utils.fs import env_is_truthy
+from krkn_ai.utils.mock import (
+    MockType,
+    is_mock_enabled,
+    generate_mock_health_check_results,
+)
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
@@ -41,7 +45,7 @@ class KrknRunner:
             self.prom_client, config.fitness_function
         )
 
-        if not env_is_truthy("MOCK_FITNESS"):
+        if not is_mock_enabled(MockType.FITNESS):
             logger.info("Running pre-flight fitness function validation...")
             self.fitness_calculator.preflight_check()
             logger.info("Pre-flight fitness validation passed.")
@@ -99,7 +103,7 @@ class KrknRunner:
             self.config.health_checks, self.config.parameters
         )
 
-        if env_is_truthy("MOCK_RUN"):
+        if is_mock_enabled(MockType.RUN):
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
@@ -128,7 +132,12 @@ class KrknRunner:
 
         fitness_result: FitnessResult = FitnessResult()
 
-        health_check_results = health_check_watcher.get_results()
+        if is_mock_enabled(MockType.HEALTH_CHECK):
+            health_check_results = generate_mock_health_check_results(
+                self.config.health_checks
+            )
+        else:
+            health_check_results = health_check_watcher.get_results()
 
         if returncode != 0 and returncode != 2:
             logger.warning(

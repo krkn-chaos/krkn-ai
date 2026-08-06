@@ -65,7 +65,7 @@ class TestKrknRunnerInitialization:
 class TestKrknRunnerRun:
     """Test KrknRunner.run method core behavior"""
 
-    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=True)
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=True)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_run_scenario_with_mock_mode(
         self, mock_run_shell, mock_env, minimal_config, temp_output_dir
@@ -92,7 +92,7 @@ class TestKrknRunnerRun:
             assert isinstance(result.start_time, datetime.datetime)
             assert isinstance(result.end_time, datetime.datetime)
 
-    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_run_handles_misconfiguration_failure(
         self, mock_run_shell, mock_env, minimal_config, temp_output_dir

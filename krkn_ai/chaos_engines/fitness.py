@@ -9,7 +9,7 @@ from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
     FitnessFunctionConfigurationError,
 )
-from krkn_ai.utils.fs import env_is_truthy
+from krkn_ai.utils.mock import MockType, is_mock_enabled
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
 
@@ -44,7 +44,7 @@ class FitnessCalculator:
 
     def preflight_check(self) -> None:
         """Validate all fitness queries return data before the experiment starts."""
-        if env_is_truthy("MOCK_FITNESS"):
+        if is_mock_enabled(MockType.FITNESS):
             return
 
         now = datetime.datetime.now()
@@ -117,7 +117,7 @@ class FitnessCalculator:
 
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
-        if env_is_truthy("MOCK_FITNESS"):
+        if is_mock_enabled(MockType.FITNESS):
             return rng.random()
 
         retries = 3

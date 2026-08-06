@@ -34,6 +34,33 @@ class TestTagLineage:
 
         assert s1.id != s2.id
 
+    def test_tag_lineage_copies_parent_ids(self, genetic_algorithm):
+        s1 = DummyScenario(cluster_components=ClusterComponents())
+        s2 = DummyScenario(cluster_components=ClusterComponents())
+        shared_ids = ["parent-a", "parent-b"]
+
+        GeneticAlgorithm._tag_lineage(s1, shared_ids, ScenarioOrigin.CROSSOVER)
+        GeneticAlgorithm._tag_lineage(s2, shared_ids, ScenarioOrigin.CROSSOVER)
+
+        assert s1.parent_ids is not s2.parent_ids
+        assert s1.parent_ids == s2.parent_ids
+
+    def test_tag_lineage_preserves_mutation_origin(self, genetic_algorithm):
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        scenario.origin = ScenarioOrigin.TYPE_MUTATION
+
+        GeneticAlgorithm._tag_lineage(scenario, ["p1"], ScenarioOrigin.CROSSOVER)
+
+        assert scenario.origin == ScenarioOrigin.TYPE_MUTATION
+
+    def test_tag_lineage_sets_origin_when_none(self, genetic_algorithm):
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        assert scenario.origin is None
+
+        GeneticAlgorithm._tag_lineage(scenario, ["p1"], ScenarioOrigin.COMPOSITION)
+
+        assert scenario.origin == ScenarioOrigin.COMPOSITION
+
 
 class TestInitialPopulationLineage:
     """Test that create_population tags scenarios with INITIAL origin"""

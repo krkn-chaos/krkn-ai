@@ -1,5 +1,6 @@
 import datetime
 import time
+from typing import Optional
 
 from krkn_ai.chaos_engines.commands import build_scenario_command, inject_es_config
 from krkn_ai.chaos_engines.composite import build_graph_command
@@ -37,7 +38,7 @@ class KrknRunner:
         self,
         config: ConfigFile,
         output_dir: str,
-        runner_type: KrknRunnerType = None,
+        runner_type: Optional[KrknRunnerType] = None,
     ):
         self.config = config
 
@@ -106,6 +107,7 @@ class KrknRunner:
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
+            assert self.runner_type is not None
             if isinstance(scenario, CompositeScenario):
                 command = build_graph_command(
                     scenario, self.config.kubeconfig_file_path, self.output_dir
@@ -202,7 +204,9 @@ class KrknRunner:
         return CommandRunResult(
             generation_id=generation_id,
             scenario=scenario,
-            cmd=inject_es_config(command, self.config, self.runner_type, False),
+            cmd=inject_es_config(command, self.config, self.runner_type, False)
+            if self.runner_type is not None
+            else "",
             log=log,
             returncode=returncode,
             start_time=start_time,
@@ -215,9 +219,11 @@ class KrknRunner:
         )
 
     def runner_command(self, scenario: Scenario) -> str:
+        assert self.runner_type is not None
         return build_scenario_command(scenario, self.config, self.runner_type)
 
     def process_es_env_string(self, command: str, enable: bool) -> str:
+        assert self.runner_type is not None
         return inject_es_config(command, self.config, self.runner_type, enable)
 
     def graph_command(self, scenario: CompositeScenario) -> str:

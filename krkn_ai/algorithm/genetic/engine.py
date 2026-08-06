@@ -322,8 +322,9 @@ class GeneticAlgorithm(BaseEngine):
         origin: ScenarioOrigin,
     ):
         scenario.id = str(uuid.uuid4())
-        scenario.parent_ids = parent_ids
-        scenario.origin = origin
+        scenario.parent_ids = list(parent_ids)
+        if scenario.origin is None:
+            scenario.origin = origin
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         if scenario in self.seen_population:
@@ -350,10 +351,12 @@ class GeneticAlgorithm(BaseEngine):
         if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
+                new_scenario.origin = ScenarioOrigin.TYPE_MUTATION
                 return new_scenario
 
         if hasattr(scenario, "mutate"):
             scenario.mutate()
+            scenario.origin = ScenarioOrigin.PARAMETER_MUTATION
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario

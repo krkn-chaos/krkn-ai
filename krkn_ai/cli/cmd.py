@@ -211,7 +211,7 @@ def run(
 @click.option("--port", "-p", help="Port to run Streamlit server on.", default=8501)
 @click.pass_context
 def monitor(ctx, output: str, port: int):
-    init_logger(output, False)
+    init_logger(None, False)
     logger = get_logger(__name__)
     logger.info(
         "Starting monitoring dashboard on port %s for output directory: %s",

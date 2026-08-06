@@ -40,18 +40,25 @@ class KrknRunner:
         runner_type: KrknRunnerType = None,
     ):
         self.config = config
-        self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
-        self.fitness_calculator = FitnessCalculator(
-            self.prom_client, config.fitness_function
-        )
 
-        if not is_mock_enabled(MockType.FITNESS):
+        if is_mock_enabled(MockType.FITNESS):
+            self.prom_client = None
+            self.fitness_calculator = FitnessCalculator(None, config.fitness_function)
+        else:
+            self.prom_client = create_prometheus_client(
+                self.config.kubeconfig_file_path
+            )
+            self.fitness_calculator = FitnessCalculator(
+                self.prom_client, config.fitness_function
+            )
             logger.info("Running pre-flight fitness function validation...")
             self.fitness_calculator.preflight_check()
             logger.info("Pre-flight fitness validation passed.")
 
         self.output_dir = output_dir
-        if runner_type is None:
+        if is_mock_enabled(MockType.RUN):
+            self.runner_type = runner_type
+        elif runner_type is None:
             self.runner_type = self.__check_runner_availability()
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
@@ -90,14 +97,6 @@ class KrknRunner:
 
         log, returncode, run_uuid, resiliency_score = None, None, None, None
         command = ""
-        if isinstance(scenario, CompositeScenario):
-            command = build_graph_command(
-                scenario, self.config.kubeconfig_file_path, self.output_dir
-            )
-        elif isinstance(scenario, Scenario):
-            command = build_scenario_command(scenario, self.config, self.runner_type)
-        else:
-            raise NotImplementedError("Scenario unable to run")
 
         health_check_watcher = HealthCheckWatcher(
             self.config.health_checks, self.config.parameters
@@ -107,6 +106,17 @@ class KrknRunner:
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
+            if isinstance(scenario, CompositeScenario):
+                command = build_graph_command(
+                    scenario, self.config.kubeconfig_file_path, self.output_dir
+                )
+            elif isinstance(scenario, Scenario):
+                command = build_scenario_command(
+                    scenario, self.config, self.runner_type
+                )
+            else:
+                raise NotImplementedError("Scenario unable to run")
+
             try:
                 health_check_watcher.run()
 

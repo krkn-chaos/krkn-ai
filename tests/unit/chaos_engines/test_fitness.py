@@ -307,7 +307,7 @@ class TestCalculateFitnessValueRetries:
     """Test calculate_fitness_value retry behavior with empty Prometheus data"""
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)
     def test_calculate_fitness_value_does_not_retry_multi_series_error(
         self, mock_env, mock_sleep, mock_prom_client
     ):
@@ -339,7 +339,7 @@ class TestCalculateFitnessValueRetries:
         mock_sleep.assert_not_called()
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)
     def test_calculate_fitness_value_retries_on_empty_data(
         self, mock_env, mock_sleep, mock_prom_client
     ):
@@ -369,7 +369,7 @@ class TestCalculateFitnessValueRetries:
         assert mock_prom_client.process_prom_query_in_range.call_count == 4
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy", return_value=False)
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)
     def test_calculate_fitness_value_raises_after_retries_exhausted(
         self, mock_env, mock_sleep, mock_prom_client
     ):

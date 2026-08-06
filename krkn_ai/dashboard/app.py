@@ -18,6 +18,7 @@ from krkn_ai.dashboard.data_loader import (
     load_health_check_csv,
     load_detailed_scenarios_data,
     load_logs,
+    load_population_lineage,
 )
 from krkn_ai.dashboard.tabs.dashboard import (
     render_summary,
@@ -33,6 +34,7 @@ from krkn_ai.dashboard.tabs.detailed_scenarios import render_detailed_scenarios
 from krkn_ai.dashboard.tabs.logs import render_logs
 from krkn_ai.dashboard.tabs.config import render_config
 from krkn_ai.dashboard.tabs.anomalies import render_anomalies
+from krkn_ai.dashboard.tabs.lineage import render_lineage
 from krkn_ai.dashboard.report_generator import generate_html_report
 
 logger = logging.getLogger(__name__)
@@ -136,12 +138,14 @@ def main():
         health_file_found, df_health = load_health_check_csv.__wrapped__(output_dir)
         df_details = load_detailed_scenarios_data.__wrapped__(output_dir)
         df_logs = load_logs.__wrapped__(output_dir)
+        df_lineage = load_population_lineage.__wrapped__(output_dir)
     else:
         results_file_found, df_results = load_results_csv(output_dir)
         config_data = load_config_yaml(output_dir)
         health_file_found, df_health = load_health_check_csv(output_dir)
         df_details = load_detailed_scenarios_data(output_dir)
         df_logs = load_logs(output_dir)
+        df_lineage = load_population_lineage(output_dir)
 
     # fully unfiltered copy (baseline row included) for anomaly detection
     df_results_all = df_results.copy() if df_results is not None else None
@@ -451,18 +455,21 @@ def main():
             use_container_width=True,
         )
 
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
-        [
-            "Dashboard",
-            "Health Checks",
-            "Detailed Scenarios",
-            "Anomalies",
-            "Logs",
-            "Configuration",
-            "Failed Scenarios",
-        ]
-    )
+    # Tabs — include Lineage only when data exists
+    has_lineage = df_lineage is not None and not df_lineage.empty
+    tab_names = [
+        "Dashboard",
+        "Health Checks",
+        "Detailed Scenarios",
+        "Anomalies",
+        "Logs",
+        "Configuration",
+        "Failed Scenarios",
+    ]
+    if has_lineage:
+        tab_names.append("Lineage")
+    tabs = st.tabs(tab_names)
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = tabs[:7]
 
     with tab1:
         if not has_any_data:
@@ -557,6 +564,10 @@ def main():
 
     with tab7:
         render_generation_details(df_failed, title="Failed Scenarios")
+
+    if has_lineage:
+        with tabs[7]:
+            render_lineage(df_lineage)
 
     # Refresh mechanism
     if auto_refresh:

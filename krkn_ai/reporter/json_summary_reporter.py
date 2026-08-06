@@ -120,6 +120,7 @@ class JSONSummaryReporter:
             },
             "best_scenarios": best_scenarios,
             "fitness_progression": fitness_progression,
+            "population_lineage": self._build_population_lineage(),
         }
 
         if self.baseline_result is not None:
@@ -180,6 +181,23 @@ class JSONSummaryReporter:
                 }
             )
         return best_scenarios
+
+    def _build_population_lineage(self) -> List[Dict[str, Any]]:
+        """Build evolutionary lineage from scenario provenance in seen_population."""
+        lineage = []
+        for result in self.seen_population.values():
+            scenario = result.scenario
+            lineage.append(
+                {
+                    "scenario_id": result.scenario_id,
+                    "scenario_uuid": getattr(scenario, "id", None),
+                    "generation": result.generation_id,
+                    "fitness_score": result.fitness_result.fitness_score,
+                    "parent_ids": getattr(scenario, "parent_ids", []),
+                    "origin": getattr(scenario, "origin", None),
+                }
+            )
+        return lineage
 
     def save(self, output_dir: str):
         """

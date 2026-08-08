@@ -8,6 +8,7 @@ import datetime
 
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
+from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 
 

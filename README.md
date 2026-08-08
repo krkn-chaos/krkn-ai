@@ -117,8 +117,14 @@ genetic:
   population_injection_rate: 0.1
 
 fitness_function:
-  query: 'sum(kube_pod_container_status_restarts_total{namespace="robot-shop"})'
-  type: point               # or 'range'
+  items:
+    # Coefficients are normalized proportionally (8:2 becomes 0.8:0.2).
+    - query: 'sum(kube_pod_container_status_restarts_total{namespace="robot-shop"})'
+      type: point
+      weight: 8
+    - query: 'avg(node_memory_Active_bytes)'
+      type: range
+      weight: 2
   include_krkn_failure: true
 
 health_checks:
@@ -231,4 +237,12 @@ pre-commit run --all-files
 # or individually: ruff check/format, mypy, hadolint
 ```
 
-4. Open a pull request against `main`
+4. Run the test suite and make sure all tests pass:
+
+```bash
+pytest
+```
+
+See [tests/README.md](./tests/README.md) for details on running specific modules, writing new tests, and fixture usage.
+
+5. Open a pull request against `main`

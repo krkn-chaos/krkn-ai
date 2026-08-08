@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Union
 import requests
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
+from kubernetes.client.rest import ApiException
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
@@ -403,6 +404,19 @@ class ClusterManager:
                 "Discovered %d PVCs in namespace %s", len(pvc_list), namespace.name
             )
             return pvc_list
+        except ApiException as e:
+            if e.status == 403:
+                logger.warning(
+                    "RBAC denied listing PVCs in namespace %s, skipping",
+                    namespace.name,
+                )
+            else:
+                logger.warning(
+                    "Failed to list PVCs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
         except Exception as e:
             logger.warning(
                 "Failed to list PVCs in namespace %s: %s", namespace.name, str(e)
@@ -430,7 +444,7 @@ class ClusterManager:
                 logger.debug(
                     "Found %d vmis in namespace %s",
                     len(vmis),
-                    vmis[0]["metadata"]["name"],
+                    namespace.name,
                 )
             else:
                 logger.debug("No VMIs found in namespace %s", namespace.name)
@@ -442,9 +456,28 @@ class ClusterManager:
                 "Filtered %d vmis in namespace %s", len(vmi_list), namespace.name
             )
             return vmi_list
+        except ApiException as e:
+            if e.status == 404:
+                logger.debug(
+                    "KubeVirt CRDs not installed, skipping VMI discovery in namespace %s",
+                    namespace.name,
+                )
+            elif e.status == 403:
+                logger.warning(
+                    "RBAC denied listing virtualmachineinstances in namespace %s, skipping. "
+                    "Grant kubevirt.io list permission to the ServiceAccount.",
+                    namespace.name,
+                )
+            else:
+                logger.warning(
+                    "Failed to list VMIs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
         except Exception as e:
             logger.warning(
-                "Unable to find VMIs in namespace %s: %s",
+                "Failed to list VMIs in namespace %s: %s",
                 namespace.name,
                 e,
                 exc_info=True,

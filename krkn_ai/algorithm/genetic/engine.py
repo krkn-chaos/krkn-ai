@@ -11,12 +11,13 @@ from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.constants import STATUS_IN_PROGRESS
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
-from krkn_ai.models.custom_errors import PopulationSizeError, UniqueScenariosError
+from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
     CompositeDependency,
     CompositeScenario,
+    ScenarioOrigin,
 )
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
@@ -40,9 +41,6 @@ class GeneticAlgorithm(BaseEngine):
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
     ):
-        if config.genetic.population_size < 2:
-            raise PopulationSizeError("Population size should be at least 2")
-
         if config.genetic.population_size % 2 != 0:
             logger.debug(
                 "Population size is odd, making it even for the genetic algorithm."
@@ -144,27 +142,30 @@ class GeneticAlgorithm(BaseEngine):
             self.population = []
             for _ in range(self.algo_config.population_size // 2):
                 parent1, parent2 = self.select_parents(fitness_scores)
-                child1, child2 = None, None
+                parent_ids = [parent1.id, parent2.id]
+
                 if rng.random() < self.algo_config.composition_rate:
-                    # Composition: merge two scenarios into a composite
                     child1 = self.composition(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
                     )
                     child1 = self.mutate(child1)
+                    self._tag_lineage(child1, parent_ids, ScenarioOrigin.COMPOSITION)
                     self.population.append(child1)
 
                     child2 = self.composition(
                         copy.deepcopy(parent2), copy.deepcopy(parent1)
                     )
                     child2 = self.mutate(child2)
+                    self._tag_lineage(child2, parent_ids, ScenarioOrigin.COMPOSITION)
                     self.population.append(child2)
                 else:
-                    # Standard crossover: swap parameters between parents
                     child1, child2 = self.crossover(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
                     )
                     child1 = self.mutate(child1)
                     child2 = self.mutate(child2)
+                    self._tag_lineage(child1, parent_ids, ScenarioOrigin.CROSSOVER)
+                    self._tag_lineage(child2, parent_ids, ScenarioOrigin.CROSSOVER)
 
                     self.population.append(child1)
                     self.population.append(child2)
@@ -188,14 +189,16 @@ class GeneticAlgorithm(BaseEngine):
                 format_duration(elapsed_time),
             )
             self.completed_generations = cur_generation
-            self.end_time = datetime.datetime.now(datetime.timezone.utc)
             return True
         return False
 
     def save(self):
         self.generations_reporter.save_best_generations(self.best_of_generation)
         self.generations_reporter.save_best_generation_graph(self.best_of_generation)
-        self.health_check_reporter.save_report(self.seen_population.values())
+        health_check_results = list(self.seen_population.values())
+        if self.baseline_result is not None:
+            health_check_results.append(self.baseline_result)
+        self.health_check_reporter.save_report(health_check_results)
         self.health_check_reporter.sort_fitness_result_csv()
 
         summary_reporter = JSONSummaryReporter(
@@ -256,12 +259,6 @@ class GeneticAlgorithm(BaseEngine):
             self.stagnant_generations = 0
             rate_factor = 0.9
 
-        if cfg.min > cfg.max:
-            raise ValueError(
-                f"Invalid adaptive mutation configuration: min ({cfg.min}) "
-                f"must be less than or equal to max ({cfg.max})"
-            )
-
         # Increase rate when stagnating, decrease when improving
         old_rate = self.current_scenario_mutation_rate
         self.current_scenario_mutation_rate *= rate_factor
@@ -294,6 +291,7 @@ class GeneticAlgorithm(BaseEngine):
             )
 
             if scenario and scenario not in already_seen:
+                scenario.origin = ScenarioOrigin.INITIAL
                 population.append(scenario)
                 already_seen.add(scenario)
 
@@ -317,6 +315,17 @@ class GeneticAlgorithm(BaseEngine):
                 population.append(rng.choice(available_scenarios))
 
         return population
+
+    @staticmethod
+    def _tag_lineage(
+        scenario: BaseScenario,
+        parent_ids: List[str],
+        origin: ScenarioOrigin,
+    ):
+        scenario.id = str(uuid.uuid4())
+        scenario.parent_ids = list(parent_ids)
+        if scenario.origin is None:
+            scenario.origin = origin
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         if scenario in self.seen_population:
@@ -348,6 +357,7 @@ class GeneticAlgorithm(BaseEngine):
                 new_scenario.parent_uuids = [scenario.id]
                 new_scenario.mutation_type = "scenario_mutation"
                 new_scenario.mutated_parameters = []
+                new_scenario.origin = ScenarioOrigin.TYPE_MUTATION
                 return new_scenario
 
         if hasattr(scenario, "mutate"):
@@ -366,6 +376,7 @@ class GeneticAlgorithm(BaseEngine):
                 scenario.id = str(uuid.uuid4())
                 scenario.mutation_type = "parameter_mutation"
                 scenario.mutated_parameters = changed
+            scenario.origin = ScenarioOrigin.PARAMETER_MUTATION
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario

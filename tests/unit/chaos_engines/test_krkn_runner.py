@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
+from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
     FitnessFunction,
@@ -64,18 +65,14 @@ class TestKrknRunnerInitialization:
 class TestKrknRunnerRun:
     """Test KrknRunner.run method core behavior"""
 
-    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=True)
-    @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
-    def test_run_scenario_with_mock_mode(
-        self, mock_run_shell, mock_env, minimal_config, temp_output_dir
-    ):
+    def test_run_scenario_with_mock_mode(self, minimal_config, temp_output_dir):
         """Test running scenario in mock mode returns successful result"""
         minimal_config.fitness_function = FitnessFunction(
             query="test_query", type=FitnessFunctionType.point
         )
         minimal_config.health_checks = HealthCheckConfig()
 
-        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+        with patch.dict(os.environ, {"MOCK": "true"}):
             runner = KrknRunner(
                 config=minimal_config,
                 output_dir=temp_output_dir,
@@ -91,7 +88,7 @@ class TestKrknRunnerRun:
             assert isinstance(result.start_time, datetime.datetime)
             assert isinstance(result.end_time, datetime.datetime)
 
-    @patch("krkn_ai.chaos_engines.krkn_runner.env_is_truthy", return_value=False)
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_run_handles_misconfiguration_failure(
         self, mock_run_shell, mock_env, minimal_config, temp_output_dir
@@ -110,7 +107,7 @@ class TestKrknRunnerRun:
         with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
             with patch(
                 "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
-                return_value=(1, None),
+                return_value=TelemetryResult(exit_status=1),
             ):
                 runner = KrknRunner(
                     config=minimal_config,

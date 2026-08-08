@@ -38,6 +38,24 @@ def load_results_json(output_dir: str):
     except Exception:
         logging.exception("Failed to read %s", json_path)
         return {}
+def load_population_lineage(output_dir: str):
+    """Load population_lineage from results.json. Returns a DataFrame or None."""
+    results_path = os.path.join(output_dir, "results.json")
+    if not os.path.exists(results_path):
+        return None
+    try:
+        with open(results_path, "r") as f:
+            data = json.load(f)
+        lineage = data.get("population_lineage")
+        if not lineage:
+            return None
+        df = pd.DataFrame(lineage)
+        if df.empty or "origin" not in df.columns:
+            return None
+        return df
+    except Exception as e:
+        logging.error(f"Failed to load lineage from {results_path}: {e}")
+        return None
 
 
 @st.cache_data(ttl=300)

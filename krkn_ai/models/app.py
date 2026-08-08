@@ -47,6 +47,7 @@ class CommandRunResult(BaseModel):
     run_uuid: Optional[str] = (
         None  # Unique identifier generated from krkn engine during scenario execution
     )
+    resiliency_score: Optional[float] = None
 
 
 class KrknRunnerType(str, Enum):

@@ -1,10 +1,18 @@
 import uuid
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr
+
 from krkn_ai.models.cluster_components import ClusterComponents
-from typing import Any
+
+
+class ScenarioOrigin(str, Enum):
+    INITIAL = "initial"
+    CROSSOVER = "crossover"
+    COMPOSITION = "composition"
+    PARAMETER_MUTATION = "parameter_mutation"
+    TYPE_MUTATION = "type_mutation"
 
 
 class BaseParameter(BaseModel):
@@ -18,7 +26,7 @@ class BaseParameter(BaseModel):
             return self.krknhub_name
         return self.krknctl_name
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         return self.value
 
 
@@ -30,6 +38,8 @@ class BaseScenario(BaseModel):
     parent_uuids: List[str] = Field(default_factory=list)
     mutation_type: Optional[str] = None
     mutated_parameters: List[str] = Field(default_factory=list)
+    parent_ids: List[str] = Field(default_factory=list)
+    origin: Optional[ScenarioOrigin] = None
 
 
 class Scenario(BaseScenario):

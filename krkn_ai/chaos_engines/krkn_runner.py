@@ -1,5 +1,6 @@
 import datetime
 import time
+from typing import Optional
 
 from krkn_ai.chaos_engines.commands import build_scenario_command, inject_es_config
 from krkn_ai.chaos_engines.composite import build_graph_command
@@ -17,7 +18,11 @@ from krkn_ai.models.scenario.base import (
     CompositeScenario,
 )
 from krkn_ai.utils import run_shell
-from krkn_ai.utils.fs import env_is_truthy
+from krkn_ai.utils.mock import (
+    MockType,
+    is_mock_enabled,
+    generate_mock_health_check_results,
+)
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
@@ -33,21 +38,28 @@ class KrknRunner:
         self,
         config: ConfigFile,
         output_dir: str,
-        runner_type: KrknRunnerType = None,
+        runner_type: Optional[KrknRunnerType] = None,
     ):
         self.config = config
-        self.prom_client = create_prometheus_client(self.config.kubeconfig_file_path)
-        self.fitness_calculator = FitnessCalculator(
-            self.prom_client, config.fitness_function
-        )
 
-        if not env_is_truthy("MOCK_FITNESS"):
+        if is_mock_enabled(MockType.FITNESS):
+            self.prom_client = None
+            self.fitness_calculator = FitnessCalculator(None, config.fitness_function)
+        else:
+            self.prom_client = create_prometheus_client(
+                self.config.kubeconfig_file_path
+            )
+            self.fitness_calculator = FitnessCalculator(
+                self.prom_client, config.fitness_function
+            )
             logger.info("Running pre-flight fitness function validation...")
             self.fitness_calculator.preflight_check()
             logger.info("Pre-flight fitness validation passed.")
 
         self.output_dir = output_dir
-        if runner_type is None:
+        if is_mock_enabled(MockType.RUN):
+            self.runner_type = runner_type
+        elif runner_type is None:
             self.runner_type = self.__check_runner_availability()
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
@@ -84,25 +96,29 @@ class KrknRunner:
         start_time = datetime.datetime.now()
         mono_start = time.monotonic()
 
-        log, returncode, run_uuid = None, None, None
+        log, returncode, run_uuid, resiliency_score = None, None, None, None
         command = ""
-        if isinstance(scenario, CompositeScenario):
-            command = build_graph_command(
-                scenario, self.config.kubeconfig_file_path, self.output_dir
-            )
-        elif isinstance(scenario, Scenario):
-            command = build_scenario_command(scenario, self.config, self.runner_type)
-        else:
-            raise NotImplementedError("Scenario unable to run")
 
         health_check_watcher = HealthCheckWatcher(
             self.config.health_checks, self.config.parameters
         )
 
-        if env_is_truthy("MOCK_RUN"):
+        if is_mock_enabled(MockType.RUN):
             time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
+            assert self.runner_type is not None
+            if isinstance(scenario, CompositeScenario):
+                command = build_graph_command(
+                    scenario, self.config.kubeconfig_file_path, self.output_dir
+                )
+            elif isinstance(scenario, Scenario):
+                command = build_scenario_command(
+                    scenario, self.config, self.runner_type
+                )
+            else:
+                raise NotImplementedError("Scenario unable to run")
+
             try:
                 health_check_watcher.run()
 
@@ -114,7 +130,10 @@ class KrknRunner:
                 if isinstance(scenario, CompositeScenario):
                     pass
                 else:
-                    returncode, run_uuid = extract_telemetry_from_log(log, returncode)
+                    telemetry = extract_telemetry_from_log(log, returncode)
+                    returncode = telemetry.exit_status
+                    run_uuid = telemetry.run_uuid
+                    resiliency_score = telemetry.resiliency_score
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
@@ -125,7 +144,12 @@ class KrknRunner:
 
         fitness_result: FitnessResult = FitnessResult()
 
-        health_check_results = health_check_watcher.get_results()
+        if is_mock_enabled(MockType.HEALTH_CHECK):
+            health_check_results = generate_mock_health_check_results(
+                self.config.health_checks
+            )
+        else:
+            health_check_results = health_check_watcher.get_results()
 
         if returncode != 0 and returncode != 2:
             logger.warning(
@@ -180,7 +204,9 @@ class KrknRunner:
         return CommandRunResult(
             generation_id=generation_id,
             scenario=scenario,
-            cmd=inject_es_config(command, self.config, self.runner_type, False),
+            cmd=inject_es_config(command, self.config, self.runner_type, False)
+            if self.runner_type is not None
+            else "",
             log=log,
             returncode=returncode,
             start_time=start_time,
@@ -189,12 +215,15 @@ class KrknRunner:
             fitness_result=fitness_result,
             health_check_results=health_check_results,
             run_uuid=run_uuid,
+            resiliency_score=resiliency_score,
         )
 
     def runner_command(self, scenario: Scenario) -> str:
+        assert self.runner_type is not None
         return build_scenario_command(scenario, self.config, self.runner_type)
 
     def process_es_env_string(self, command: str, enable: bool) -> str:
+        assert self.runner_type is not None
         return inject_es_config(command, self.config, self.runner_type, enable)
 
     def graph_command(self, scenario: CompositeScenario) -> str:

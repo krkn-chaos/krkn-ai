@@ -13,7 +13,7 @@ class TestPreflightCheck:
 
         self.mock_prom_client = MagicMock()
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_mock_fitness_skips_preflight(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = True
         fitness_function = FitnessFunction(query="up")
@@ -23,7 +23,7 @@ class TestPreflightCheck:
 
         self.mock_prom_client.process_prom_query_in_range.assert_not_called()
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_valid_query_passes_preflight(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = [
@@ -40,7 +40,7 @@ class TestPreflightCheck:
         assert args[0] == "up"
         assert kwargs["granularity"] == 100
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_range_variable_substituted(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = [
@@ -55,7 +55,7 @@ class TestPreflightCheck:
         args, _ = self.mock_prom_client.process_prom_query_in_range.call_args
         assert args[0] == "sum(rate(up[5m]))"
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_empty_results_raises_error(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = []
@@ -68,7 +68,7 @@ class TestPreflightCheck:
 
         assert self.mock_prom_client.process_prom_query_in_range.call_count == 3
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_multiple_series_raises_error(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = [
@@ -84,7 +84,7 @@ class TestPreflightCheck:
         ):
             calculator.preflight_check()
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_validates_multiple_items(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = [
@@ -101,7 +101,7 @@ class TestPreflightCheck:
 
         assert self.mock_prom_client.process_prom_query_in_range.call_count == 2
 
-    @patch("krkn_ai.chaos_engines.fitness.env_is_truthy")
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_empty_query_fails_preflight(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = []

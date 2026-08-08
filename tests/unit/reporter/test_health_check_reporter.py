@@ -126,10 +126,13 @@ class TestHealthCheckReporter:
             )
         ]
 
-        with caplog.at_level(
-            logging.WARNING, logger="krkn_ai.reporter.health_check_reporter"
-        ):
-            reporter.save_report(fitness_results)
+        target_logger = logging.getLogger("krkn-ai")
+        target_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.WARNING):
+                reporter.save_report(fitness_results)
+        finally:
+            target_logger.removeHandler(caplog.handler)
 
         report_path = os.path.join(
             temp_output_dir, "reports", "health_check_report.csv"
@@ -236,6 +239,35 @@ class TestHealthCheckReporter:
             reporter.plot_report(result)
 
             # Should not call savefig for empty results
+            mock_plt.savefig.assert_not_called()
+
+    def test_plot_report_with_empty_sample_lists_in_health_check_results(
+        self, temp_output_dir
+    ):
+        """Test that health_check_results with empty sample lists does not cause KeyError."""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        now = datetime.datetime.now()
+
+        result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="test-cmd",
+            log="test-log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=10.0),
+            health_check_results={
+                "http://broken-app/api": [],
+                "http://unreachable/ping": [],
+            },
+        )
+
+        with patch("krkn_ai.reporter.health_check_reporter.plt") as mock_plt:
+            # Should not raise KeyError: 'timestamp'
+            reporter.plot_report(result)
             mock_plt.savefig.assert_not_called()
 
     def test_write_fitness_result_creates_and_appends_csv(self, temp_output_dir):

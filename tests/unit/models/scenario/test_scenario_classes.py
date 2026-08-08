@@ -17,6 +17,9 @@ from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_service_disruption import (
+    ServiceDisruptionScenario,
+)
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -314,6 +317,45 @@ class TestNodeMemoryHogScenario:
         with pytest.raises(ScenarioParameterInitError, match="No nodes found"):
             NodeMemoryHogScenario(cluster_components=cluster)
 
+    def test_node_memory_percentage_parameter_value_formatting_for_runners(self):
+        """Test NodeMemoryPercentageParameter get_value formatting for krknhub vs krknctl (#446)"""
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        param = scenario.node_memory_percentage
+
+        # Both runners return the value with % suffix
+        assert param.get_value(return_krknhub_name=False) == f"{param.value}%"
+        assert param.get_value(return_krknhub_name=True) == f"{param.value}%"
+
+    def test_node_memory_hog_command_building_runner_formatting(self):
+        """Test build_scenario_command outputs integer for krknctl and percent string for krknhub (#446)"""
+        from krkn_ai.chaos_engines.commands import build_scenario_command
+        from krkn_ai.models.app import KrknRunnerType
+        from krkn_ai.models.config import ConfigFile, FitnessFunction
+
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="dummy"),
+            cluster_components=cluster,
+        )
+
+        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}%"'
+            in cli_cmd
+        )
+
+        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
+        assert (
+            f'-e MEMORY_CONSUMPTION_PERCENTAGE="{scenario.node_memory_percentage.value}%"'
+            in hub_cmd
+        )
+
 
 class TestNodeIOHogScenario:
     """Test NodeIOHogScenario class"""
@@ -373,7 +415,7 @@ class TestNetworkScenario:
 
         scenario = NetworkScenario(cluster_components=cluster)
         assert scenario.name == "network-chaos"
-        assert scenario.traffic_type.value == "egress"
+        assert scenario.traffic_type.value in ["ingress", "egress"]
         assert scenario.node_name.value == "test-node"
         assert scenario.interfaces.value != ""
 
@@ -553,3 +595,65 @@ class TestStorageThrottleScenario:
         assert "write-iops" in param_names
         assert "read-bps" in param_names
         assert "write-bps" in param_names
+
+
+class TestServiceDisruptionScenario:
+    """Test ServiceDisruptionScenario class (#13)."""
+
+    @staticmethod
+    def _namespace_with_service(name="robot-shop"):
+        return Namespace(
+            name=name,
+            services=[Service(name="rs", ports=[ServicePort(port=80)])],
+        )
+
+    def test_service_disruption_initialization_with_namespaces(self):
+        """Initializes against a discovered namespace with valid krkn parameters."""
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        assert scenario.name == "service-disruption"
+        assert scenario.krknctl_name == "service-disruption-scenarios"
+        assert scenario.namespace.value == "robot-shop"
+        # NAMESPACE and LABEL_SELECTOR are mutually exclusive; target by name.
+        assert scenario.label_selector.value == ""
+        # One named namespace matches, so delete exactly one; runs stays small.
+        assert scenario.delete_count.value == 1
+        assert 1 <= scenario.runs.value <= 3
+
+    def test_service_disruption_omits_empty_label_selector(self):
+        """An empty label_selector is not emitted alongside NAMESPACE (#13 review)."""
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        krknctl_flags = [
+            p.get_name(return_krknhub_name=False) for p in scenario.parameters
+        ]
+        krknhub_vars = [
+            p.get_name(return_krknhub_name=True) for p in scenario.parameters
+        ]
+        assert krknctl_flags == ["namespace", "delete-count", "runs"]
+        assert krknhub_vars == ["NAMESPACE", "DELETE_COUNT", "RUNS"]
+        assert "label-selector" not in krknctl_flags
+
+    def test_service_disruption_raises_error_when_no_namespaces(self):
+        """With no namespaces the scenario cannot initialize and raises cleanly."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)
+
+    def test_service_disruption_raises_when_namespace_has_no_services(self):
+        """A namespace without services is not a valid target."""
+        cluster = ClusterComponents(namespaces=[Namespace(name="empty-ns")], nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)

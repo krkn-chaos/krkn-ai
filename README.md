@@ -100,6 +100,10 @@ krkn_ai discover -k ./tmp/kubeconfig.yaml -o ./tmp/krkn-ai.yaml --save-strategy 
 
 `merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components. Note: comments inside `cluster_components` are not preserved after a merge.
 
+Besides `cluster_components`, `discover` also works out which scenarios your cluster can run, builds health check URLs from LoadBalancer services, and recommends fitness queries validated against your Prometheus. Scenarios and health checks are only regenerated on a fresh write or `overwrite`.
+
+On OpenShift, the Prometheus URL and token are discovered from the cluster's Thanos route, so no setup is needed. On other clusters, set `PROMETHEUS_URL` (and `PROMETHEUS_TOKEN` if your Prometheus requires auth), otherwise a single default fitness query is written instead of the recommendations.
+
 Key config options:
 
 ```yaml
@@ -159,7 +163,7 @@ krkn_ai run \
 
 | Command | Key Options |
 |---------|-------------|
-| `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `--skip-pod-name`, `--save-strategy` |
+| `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
 | `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
 | `monitor` | `-o` results dir, `-p` port |
 
@@ -202,6 +206,7 @@ results/
     ├── run.log
     ├── krkn-ai.yaml
     ├── results.json
+    ├── learned_weights.json   # only when using fitness_function.items
     ├── reports/
     │   ├── health_check_report.csv
     │   ├── all.csv
@@ -212,6 +217,8 @@ results/
     │   └── generation_1/
     └── logs/
 ```
+
+`learned_weights.json` scores each fitness query by how much its value varied across scenarios. Pass it to the next `discover` with `--learned-weights` to prioritize the queries that actually distinguish scenarios. It is written only when the config uses `fitness_function.items` and at least one query varied across the run.
 
 > You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).
 

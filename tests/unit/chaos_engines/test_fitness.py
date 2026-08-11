@@ -6,15 +6,23 @@ import datetime
 import pytest
 from unittest.mock import Mock, patch
 
-from krkn_ai.chaos_engines.fitness import FitnessCalculator, normalize_weights
+from krkn_ai.chaos_engines.fitness import (
+    FitnessCalculator,
+    normalize_generation_scores,
+    normalize_weights,
+)
+from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
 from krkn_ai.models.config import (
     FitnessFunction,
+    FitnessFunctionItem,
     FitnessFunctionType,
 )
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
     FitnessFunctionConfigurationError,
 )
+from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 
 
 @pytest.fixture
@@ -423,3 +431,133 @@ class TestFitnessWeightAllocation:
 
         assert result.fitness_score == 12.0
         assert [score.weighted_score for score in result.scores] == [8.0, 4.0]
+
+
+def _make_result(
+    scores: list,
+    hc_failure: float = 0.0,
+    hc_response: float = 0.0,
+    krkn: float = 0.0,
+    fitness: float = 0.0,
+) -> CommandRunResult:
+    """Helper to build a CommandRunResult with given per-SLO scores."""
+    fitness_result = FitnessResult(
+        scores=[
+            FitnessScoreResult(id=s[0], fitness_score=s[1], weighted_score=s[2])
+            for s in scores
+        ],
+        health_check_failure_score=hc_failure,
+        health_check_response_time_score=hc_response,
+        krkn_failure_score=krkn,
+        fitness_score=fitness,
+    )
+    return CommandRunResult(
+        generation_id=0,
+        scenario=DummyScenario(cluster_components=ClusterComponents()),
+        cmd="",
+        log="",
+        returncode=0,
+        start_time=datetime.datetime(2024, 1, 1),
+        end_time=datetime.datetime(2024, 1, 1, 0, 5),
+        fitness_result=fitness_result,
+        health_check_results={},
+    )
+
+
+class TestNormalizeGenerationScores:
+    """Tests for log + min-max normalization of Prometheus scores."""
+
+    def test_equalizes_scales_across_items(self):
+        """Weight 0.8 item should dominate weight 0.2 item regardless of raw scale."""
+        items = [
+            FitnessFunctionItem(id=1, query="q1", weight=8),
+            FitnessFunctionItem(id=2, query="q2", weight=2),
+        ]
+        # Scenario A: item1=3 (small), item2=500_000_000 (huge)
+        # Scenario B: item1=1 (smaller), item2=100_000_000 (less huge)
+        r_a = _make_result([(1, 3.0, 0.0), (2, 500_000_000.0, 0.0)], fitness=0.0)
+        r_b = _make_result([(1, 1.0, 0.0), (2, 100_000_000.0, 0.0)], fitness=0.0)
+
+        normalize_generation_scores([r_a, r_b], items)
+
+        # After normalization, item 1 (weight 0.8) should contribute most
+        score_a = r_a.fitness_result.fitness_score
+        score_b = r_b.fitness_result.fitness_score
+        # r_a has higher item1 (weight 0.8) and higher item2 (weight 0.2)
+        assert score_a > score_b
+
+        # The 0.8-weighted item's contribution should exceed the 0.2-weighted
+        item1_contribution_a = r_a.fitness_result.scores[0].weighted_score
+        item2_contribution_a = r_a.fitness_result.scores[1].weighted_score
+        assert item1_contribution_a > item2_contribution_a
+
+    def test_preserves_raw_fitness_score(self):
+        """Raw fitness_score on FitnessScoreResult should not be modified."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r_a = _make_result([(1, 42.0, 42.0)], fitness=42.0)
+        r_b = _make_result([(1, 10.0, 10.0)], fitness=10.0)
+
+        normalize_generation_scores([r_a, r_b], items)
+
+        assert r_a.fitness_result.scores[0].fitness_score == 42.0
+        assert r_b.fitness_result.scores[0].fitness_score == 10.0
+
+    def test_sets_normalized_score(self):
+        """normalized_score should be set on each FitnessScoreResult."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r_a = _make_result([(1, 100.0, 0.0)], fitness=0.0)
+        r_b = _make_result([(1, 10.0, 0.0)], fitness=0.0)
+
+        normalize_generation_scores([r_a, r_b], items)
+
+        assert r_a.fitness_result.scores[0].normalized_score == 1.0
+        assert r_b.fitness_result.scores[0].normalized_score == 0.0
+
+    def test_skips_misconfiguration_results(self):
+        """Results with fitness_score == -1.0 should be untouched."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r_good = _make_result([(1, 50.0, 0.0)], fitness=50.0)
+        r_bad = _make_result([(1, 99.0, 0.0)], fitness=-1.0)
+
+        normalize_generation_scores([r_good, r_bad], items)
+
+        assert r_bad.fitness_result.fitness_score == -1.0
+        assert r_bad.fitness_result.scores[0].normalized_score is None
+
+    def test_single_result_is_noop(self):
+        """With only one valid result, normalization is skipped."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r = _make_result([(1, 42.0, 42.0)], fitness=42.0)
+
+        normalize_generation_scores([r], items)
+
+        assert r.fitness_result.scores[0].normalized_score is None
+        assert r.fitness_result.fitness_score == 42.0
+
+    def test_identical_values_normalize_to_midpoint(self):
+        """When all scenarios return the same raw score, normalize to 0.5."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r_a = _make_result([(1, 7.0, 0.0)], fitness=0.0)
+        r_b = _make_result([(1, 7.0, 0.0)], fitness=0.0)
+
+        normalize_generation_scores([r_a, r_b], items)
+
+        assert r_a.fitness_result.scores[0].normalized_score == 0.5
+        assert r_b.fitness_result.scores[0].normalized_score == 0.5
+
+    def test_recomputes_overall_fitness_with_other_scores(self):
+        """Overall fitness_score should be normalized_prometheus + other sub-scores."""
+        items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+        r_a = _make_result(
+            [(1, 100.0, 0.0)], hc_failure=3.0, hc_response=2.0, krkn=1.0, fitness=0.0
+        )
+        r_b = _make_result(
+            [(1, 10.0, 0.0)], hc_failure=0.0, hc_response=0.0, krkn=0.0, fitness=0.0
+        )
+
+        normalize_generation_scores([r_a, r_b], items)
+
+        # r_a: normalized prometheus = 1.0 * 1.0 = 1.0, + 3 + 2 + 1 = 7.0
+        assert r_a.fitness_result.fitness_score == pytest.approx(7.0)
+        # r_b: normalized prometheus = 0.0 * 1.0 = 0.0, + 0 + 0 + 0 = 0.0
+        assert r_b.fitness_result.fitness_score == pytest.approx(0.0)

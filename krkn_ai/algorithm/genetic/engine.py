@@ -26,6 +26,7 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
+from krkn_ai.chaos_engines.fitness import normalize_generation_scores
 
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
@@ -117,6 +118,14 @@ class GeneticAlgorithm(BaseEngine):
                 self.calculate_fitness(member, cur_generation)
                 for member in self.population
             ]
+
+            if len(self.config.fitness_function.items) > 0:
+                normalize_generation_scores(
+                    fitness_scores, self.config.fitness_function.items
+                )
+                self.health_check_reporter.update_normalized_scores(fitness_scores)
+                self.update_scenario_results(fitness_scores)
+
             fitness_scores = sorted(
                 fitness_scores,
                 key=lambda x: x.fitness_result.fitness_score,

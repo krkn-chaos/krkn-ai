@@ -378,11 +378,15 @@ def render_generation_details(df, title="Generation & Scenario Details"):
         # Default sort-- best fitness first (user can click column headers to re-sort)
         gen_scenarios = gen_scenarios.sort_values(by="fitness_score", ascending=False)
 
+        # Detect SLO columns dynamically from CSV data
+        slo_cols = sorted(c for c in gen_scenarios.columns if c.startswith("slo_"))
+
         display_cols = [
             "generation_id",
             "scenario_id",
             "scenario",
             "duration_seconds",
+            *slo_cols,
             "health_check_failure_score",
             "health_check_response_time_score",
             "krkn_failure_score",
@@ -415,6 +419,14 @@ def render_generation_details(df, title="Generation & Scenario Details"):
             ),
             "parameters": st.column_config.TextColumn("Parameters"),
         }
+        for col in slo_cols:
+            if col.endswith("_normalized"):
+                label = col.replace("slo_", "SLO ").replace("_normalized", " (Norm)")
+            elif col.endswith("_weighted"):
+                label = col.replace("slo_", "SLO ").replace("_weighted", " (Weighted)")
+            else:
+                label = col.replace("slo_", "SLO ") + " (Raw)"
+            column_cfg[col] = st.column_config.NumberColumn(label, format="%.4f")
         st.dataframe(
             view,
             column_config=column_cfg,

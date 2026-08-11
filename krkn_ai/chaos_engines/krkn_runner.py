@@ -1,6 +1,6 @@
 import datetime
 import time
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from krkn_ai.chaos_engines.commands import build_scenario_command, inject_es_config
 from krkn_ai.chaos_engines.composite import build_graph_command
@@ -56,6 +56,8 @@ class KrknRunner:
             self.fitness_calculator.preflight_check()
             logger.info("Pre-flight fitness validation passed.")
 
+        self._baseline_response_stats: Optional[Dict[str, Tuple[float, float]]] = None
+
         self.output_dir = output_dir
         if is_mock_enabled(MockType.RUN):
             self.runner_type = runner_type
@@ -89,6 +91,11 @@ class KrknRunner:
         if podman_available:
             logger.debug("Using krknhub as runner.")
             return KrknRunnerType.HUB_RUNNER
+
+    def set_baseline_response_stats(
+        self, stats: Dict[str, Tuple[float, float]]
+    ) -> None:
+        self._baseline_response_stats = stats
 
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)
@@ -178,7 +185,11 @@ class KrknRunner:
                 )
 
             if self.config.fitness_function.include_krkn_failure:
-                if returncode == 2:
+                if resiliency_score is not None:
+                    fitness_result.krkn_failure_score = (
+                        100.0 - resiliency_score
+                    ) / 10.0
+                elif returncode == 2:
                     fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
 
             if self.config.fitness_function.include_health_check_failure:
@@ -187,7 +198,10 @@ class KrknRunner:
                 )
             if self.config.fitness_function.include_health_check_response_time:
                 fitness_result.health_check_response_time_score = (
-                    health_check_watcher.summarize_response_time(health_check_results)
+                    health_check_watcher.summarize_response_time(
+                        health_check_results,
+                        baseline_stats=self._baseline_response_stats,
+                    )
                 )
 
             logger.debug("Fitness result: %s", fitness_result)

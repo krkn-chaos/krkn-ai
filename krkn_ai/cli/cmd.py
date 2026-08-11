@@ -199,11 +199,10 @@ def run(
                 except Exception as e:
                     logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)
-            if monitoring:
-                logger.info(
-                    "To inspect results interactively, run: krkn-ai monitor -o %s",
-                    output,
-                )
+            logger.info(
+                "To inspect results interactively, run:\n\n  krkn-ai monitor -o %s\n",
+                new_output_path,
+            )
 
 
 @main.command(help="Monitor results from previous completed runs")

@@ -327,8 +327,8 @@ class GeneticAlgorithmConfig(BaseModel):
     )
     crossover_rate: float = Field(default=const.CROSSOVER_RATE, ge=0.0, le=1.0)
     composition_rate: float = Field(default=0, ge=0.0, le=1.0)
-    selection_strategy: SelectionStrategy = SelectionStrategy.roulette
-    tournament_size: int = Field(default=3, ge=1)
+    selection_strategy: SelectionStrategy = SelectionStrategy.tournament
+    tournament_size: int = Field(default=6, ge=1)
     population_injection_rate: float = Field(
         default=const.POPULATION_INJECTION_RATE, ge=0.0, le=1.0
     )

@@ -204,7 +204,6 @@ class KrknRunner:
                     )
                 )
 
-            logger.debug("Fitness result: %s", fitness_result)
             fitness_result.fitness_score = sum(
                 [
                     fitness_result.fitness_score,
@@ -213,7 +212,22 @@ class KrknRunner:
                     fitness_result.health_check_response_time_score,
                 ]
             )
-            logger.info("Fitness score: %s", fitness_result.fitness_score)
+            slo_total = sum(s.weighted_score for s in fitness_result.scores)
+            logger.info(
+                "Fitness: %.3f  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
+                fitness_result.fitness_score,
+                slo_total,
+                fitness_result.health_check_failure_score,
+                fitness_result.health_check_response_time_score,
+                fitness_result.krkn_failure_score,
+            )
+            if fitness_result.scores:
+                logger.debug(
+                    "SLO breakdown: %s",
+                    "  ".join(
+                        f"[{s.id}]={s.fitness_score:.4f}" for s in fitness_result.scores
+                    ),
+                )
 
         return CommandRunResult(
             generation_id=generation_id,

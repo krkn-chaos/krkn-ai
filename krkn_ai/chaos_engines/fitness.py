@@ -119,7 +119,8 @@ class FitnessCalculator:
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
         if is_mock_enabled(MockType.FITNESS):
-            return rng.random()
+            scale = rng.choice([1.0, 1e3, 1e6, 1e9])
+            return rng.random() * scale
 
         retries = 3
         retry_delay = 10

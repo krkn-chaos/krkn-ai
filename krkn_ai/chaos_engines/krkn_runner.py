@@ -30,7 +30,7 @@ from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
 
 logger = get_logger(__name__)
 
-KRKN_HUB_FAILURE_SCORE = 5
+KRKN_HUB_FAILURE_SCORE = 0.5
 
 
 class KrknRunner:
@@ -188,7 +188,7 @@ class KrknRunner:
                 if resiliency_score is not None:
                     fitness_result.krkn_failure_score = (
                         100.0 - resiliency_score
-                    ) / 10.0
+                    ) / 100.0
                 elif returncode == 2:
                     fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
 
@@ -213,9 +213,11 @@ class KrknRunner:
                 ]
             )
             slo_total = sum(s.weighted_score for s in fitness_result.scores)
+            n = self.config.fitness_function.num_components
+            pct = (fitness_result.fitness_score / n * 100) if n else 0.0
             logger.info(
-                "Fitness: %.3f  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
-                fitness_result.fitness_score,
+                "Fitness: %.1f%%  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
+                pct,
                 slo_total,
                 fitness_result.health_check_failure_score,
                 fitness_result.health_check_response_time_score,

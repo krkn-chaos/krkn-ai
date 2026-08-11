@@ -204,7 +204,7 @@ class TestHealthCheckWatcherResults:
         # Should have some failures, score should be > 0
         assert score >= 0
         # Score is (failed / total) * 10
-        assert score <= 10
+        assert score <= 1.0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_returns_zero_for_empty_results(self, mock_get):
@@ -241,7 +241,7 @@ class TestHealthCheckWatcherResults:
 
         # Should detect outliers and return score > 0
         assert score >= 0
-        assert score <= 10
+        assert score <= 1.0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_response_time_returns_zero_with_insufficient_data(

@@ -11,9 +11,16 @@ logger = get_logger(__name__)
 _console = Console(highlight=False)
 
 
+def _to_pct(score: float, num_components: int) -> str:
+    if num_components == 0:
+        return "0.0%"
+    return f"{score / num_components * 100:.1f}%"
+
+
 def print_generation_table(
     generation_id: int,
     results: List[CommandRunResult],
+    num_components: int = 4,
 ) -> None:
     sorted_results = sorted(
         results,
@@ -49,7 +56,7 @@ def print_generation_table(
             f"{fr.health_check_failure_score:.3f}",
             f"{fr.health_check_response_time_score:.3f}",
             f"{fr.krkn_failure_score:.3f}",
-            f"{fr.fitness_score:.3f}",
+            _to_pct(fr.fitness_score, num_components),
             style=style,
         )
 
@@ -57,7 +64,8 @@ def print_generation_table(
 
     if best:
         _console.print(
-            f"  Best: [bold]{best.scenario.name}[/bold] ({best.fitness_result.fitness_score:.3f})\n"
+            f"  Best: [bold]{best.scenario.name}[/bold]"
+            f" ({_to_pct(best.fitness_result.fitness_score, num_components)})\n"
         )
         logger.debug(
             "Generation %d best: %s (%.4f)",
@@ -71,6 +79,7 @@ def print_run_summary(
     best_of_generation: List[CommandRunResult],
     completed_generations: int,
     elapsed_seconds: float,
+    num_components: int = 4,
 ) -> None:
     if not best_of_generation:
         return
@@ -94,7 +103,7 @@ def print_run_summary(
         table.add_row(
             str(i + 1),
             r.scenario.name,
-            f"{r.fitness_result.fitness_score:.3f}",
+            _to_pct(r.fitness_result.fitness_score, num_components),
             style="bold green" if is_best else "",
         )
 
@@ -106,5 +115,5 @@ def print_run_summary(
     )
     _console.print(
         f"  Overall best: [bold green]{overall_best.scenario.name}[/bold green] "
-        f"({overall_best.fitness_result.fitness_score:.3f})\n"
+        f"({_to_pct(overall_best.fitness_result.fitness_score, num_components)})\n"
     )

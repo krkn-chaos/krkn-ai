@@ -166,7 +166,7 @@ class HealthCheckWatcher:
                 current_streak = 0
         streak_ratio = max_streak / total
 
-        score = (failure_rate + streak_ratio) * 5.0
+        score = (failure_rate + streak_ratio) / 2.0
         logger.debug(
             "Health check failure score: %.3f (rate=%.3f, streak=%d/%d)",
             score,
@@ -187,13 +187,13 @@ class HealthCheckWatcher:
         Primary signal (always computed):
           CV  = stddev / mean  (relative variability)
           jitter = mean(|rt[i+1] - rt[i]|) / mean  (oscillation)
-          variability_score = min((CV + jitter) * 2.5, 10)
+          variability_score = min((CV + jitter) * 0.25, 1.0)
 
         Additive bonus (when baseline_stats has data for the URL):
           degradation = (scenario_median - baseline_median) / max(MAD, 0.001)
-          bonus = clamp(degradation, 0, 10)
+          bonus = clamp(degradation, 0, 1)
 
-        Returns the average per-URL score, capped at [0, 10].
+        Returns the average per-URL score, capped at [0, 1].
         """
         url_scores: List[float] = []
 
@@ -213,7 +213,7 @@ class HealthCheckWatcher:
             cv = float(np.std(arr)) / mean_rt
             diffs = np.abs(np.diff(arr))
             jitter = float(np.mean(diffs)) / mean_rt if len(diffs) > 0 else 0.0
-            variability_score = min((cv + jitter) * 2.5, 10.0)
+            variability_score = min((cv + jitter) * 0.25, 1.0)
 
             url_score = variability_score
 
@@ -222,8 +222,8 @@ class HealthCheckWatcher:
                 effective_mad = max(bl_mad, 0.001)
                 scenario_median = float(np.median(arr))
                 degradation = (scenario_median - bl_median) / effective_mad
-                degradation_bonus = min(max(degradation, 0.0), 10.0)
-                url_score = min(variability_score + degradation_bonus, 10.0)
+                degradation_bonus = min(max(degradation, 0.0), 1.0)
+                url_score = min(variability_score + degradation_bonus, 1.0)
 
             url_scores.append(url_score)
 

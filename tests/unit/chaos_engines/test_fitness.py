@@ -549,7 +549,7 @@ class TestNormalizeGenerationScores:
         """Overall fitness_score should be normalized_prometheus + other sub-scores."""
         items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
         r_a = _make_result(
-            [(1, 100.0, 0.0)], hc_failure=3.0, hc_response=2.0, krkn=1.0, fitness=0.0
+            [(1, 100.0, 0.0)], hc_failure=0.3, hc_response=0.2, krkn=0.1, fitness=0.0
         )
         r_b = _make_result(
             [(1, 10.0, 0.0)], hc_failure=0.0, hc_response=0.0, krkn=0.0, fitness=0.0
@@ -557,7 +557,7 @@ class TestNormalizeGenerationScores:
 
         normalize_generation_scores([r_a, r_b], items)
 
-        # r_a: normalized prometheus = 1.0 * 1.0 = 1.0, + 3 + 2 + 1 = 7.0
-        assert r_a.fitness_result.fitness_score == pytest.approx(7.0)
+        # r_a: normalized prometheus = 1.0 * 1.0 = 1.0, + 0.3 + 0.2 + 0.1 = 1.6
+        assert r_a.fitness_result.fitness_score == pytest.approx(1.6)
         # r_b: normalized prometheus = 0.0 * 1.0 = 0.0, + 0 + 0 + 0 = 0.0
         assert r_b.fitness_result.fitness_score == pytest.approx(0.0)

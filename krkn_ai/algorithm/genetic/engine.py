@@ -132,7 +132,11 @@ class GeneticAlgorithm(BaseEngine):
                 reverse=True,
             )
             self.best_of_generation.append(fitness_scores[0])
-            print_generation_table(cur_generation, fitness_scores)
+            print_generation_table(
+                cur_generation,
+                fitness_scores,
+                self.config.fitness_function.num_components,
+            )
 
             self.adapt_mutation_rate()
 
@@ -191,7 +195,12 @@ class GeneticAlgorithm(BaseEngine):
             self.end_time = datetime.datetime.now(datetime.timezone.utc)
             logger.info("Stopping algorithm: %s", reason)
             self.completed_generations = cur_generation
-            print_run_summary(self.best_of_generation, cur_generation, elapsed_time)
+            print_run_summary(
+                self.best_of_generation,
+                cur_generation,
+                elapsed_time,
+                self.config.fitness_function.num_components,
+            )
             return True
         return False
 

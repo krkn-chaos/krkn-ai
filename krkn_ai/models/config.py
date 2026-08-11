@@ -163,6 +163,17 @@ class FitnessFunction(BaseModel):
     include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
 
+    @property
+    def num_components(self) -> int:
+        return sum(
+            [
+                bool(self.query or self.items),
+                self.include_krkn_failure,
+                self.include_health_check_failure,
+                self.include_health_check_response_time,
+            ]
+        )
+
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
         """Validates whether there is at least one fitness function is defined."""

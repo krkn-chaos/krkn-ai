@@ -263,6 +263,7 @@ def _log_transform(x: float) -> float:
 def normalize_generation_scores(
     results: List[CommandRunResult],
     fitness_items: List[FitnessFunctionItem],
+    num_components: int = 4,
 ) -> None:
     """Apply log + per-generation min-max normalization to Prometheus scores.
 
@@ -301,11 +302,14 @@ def normalize_generation_scores(
             s.weighted_score = item_weight.get(s.id, 0.0) * ns
 
         prometheus_score = sum(s.weighted_score for s in r.fitness_result.scores)
-        r.fitness_result.fitness_score = sum(
+        raw_total = sum(
             [
                 prometheus_score,
                 r.fitness_result.krkn_failure_score,
                 r.fitness_result.health_check_failure_score,
                 r.fitness_result.health_check_response_time_score,
             ]
+        )
+        r.fitness_result.fitness_score = (
+            (raw_total / num_components * 100) if num_components else 0.0
         )

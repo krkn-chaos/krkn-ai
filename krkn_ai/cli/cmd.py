@@ -200,7 +200,7 @@ def run(
                     logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)
             logger.info(
-                "To inspect results interactively, run:\n\n  krkn-ai monitor -o %s\n",
+                "To inspect results interactively, run:\n\n  krkn_ai monitor -o %s\n",
                 new_output_path,
             )
 

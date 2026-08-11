@@ -21,8 +21,8 @@ def render_summary(df):
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Generations Completed", generations_completed)
     col2.metric("Scenarios Executed", scenarios_executed)
-    col3.metric("Best Fitness Score", f"{best_fitness:.4f}")
-    col4.metric("Avg Fitness Score", f"{avg_fitness:.4f}")
+    col3.metric("Best Fitness Score", f"{best_fitness:.1f}%")
+    col4.metric("Avg Fitness Score", f"{avg_fitness:.1f}%")
 
 
 def create_fitness_evolution_plot(df):
@@ -62,7 +62,7 @@ def create_fitness_evolution_plot(df):
     fig.update_layout(
         title="Fitness Performance Over Generations",
         xaxis_title="Generation",
-        yaxis_title="Fitness Score",
+        yaxis_title="Fitness Score (%)",
         hovermode="x unified",
         xaxis={"tickmode": "linear", "tick0": 1, "dtick": 1},
     )
@@ -126,7 +126,7 @@ def create_scenario_fitness_variation_plot(df):
     )
     fig.update_layout(
         xaxis_title="Generation",
-        yaxis_title="Best Fitness Score",
+        yaxis_title="Best Fitness Score (%)",
         hovermode="x unified",
         xaxis={"tickmode": "linear", "tick0": 1, "dtick": 1},
     )
@@ -306,7 +306,7 @@ def create_improvement_trend_plot(df_all):
         y=0,
         line_color="#06b6d4",
         line_dash="dash",
-        annotation_text=f"Baseline ({bl_fitness:.3f})",
+        annotation_text=f"Baseline ({bl_fitness:.1f}%)",
     )
 
     fig.update_layout(
@@ -378,15 +378,22 @@ def render_generation_details(df, title="Generation & Scenario Details"):
         # Default sort-- best fitness first (user can click column headers to re-sort)
         gen_scenarios = gen_scenarios.sort_values(by="fitness_score", ascending=False)
 
-        # Detect SLO columns dynamically from CSV data
-        slo_cols = sorted(c for c in gen_scenarios.columns if c.startswith("slo_"))
+        # Compute a single SLO score column (sum of per-item weighted scores)
+        weighted_cols = sorted(
+            (c for c in gen_scenarios.columns if c.endswith("_weighted")),
+            key=lambda c: int(c.split("_")[1]),
+        )
+        if weighted_cols:
+            gen_scenarios["slo_score"] = gen_scenarios[weighted_cols].sum(axis=1)
+        else:
+            gen_scenarios["slo_score"] = 0.0
 
         display_cols = [
             "generation_id",
             "scenario_id",
             "scenario",
             "duration_seconds",
-            *slo_cols,
+            "slo_score",
             "health_check_failure_score",
             "health_check_response_time_score",
             "krkn_failure_score",
@@ -405,28 +412,21 @@ def render_generation_details(df, title="Generation & Scenario Details"):
             "duration_seconds": st.column_config.NumberColumn(
                 "Scenario Execution Time (s)", format="%.1f"
             ),
+            "slo_score": st.column_config.NumberColumn("SLO Score", format="%.4f"),
             "health_check_failure_score": st.column_config.NumberColumn(
-                "Health Check Failure Score", format="%.4f"
+                "HC Failure", format="%.4f"
             ),
             "health_check_response_time_score": st.column_config.NumberColumn(
-                "Health Check Response Score", format="%.4f"
+                "HC Response", format="%.4f"
             ),
             "krkn_failure_score": st.column_config.NumberColumn(
-                "Krkn Failure Score", format="%.4f"
+                "Krkn Failure", format="%.4f"
             ),
             "fitness_score": st.column_config.NumberColumn(
-                "Fitness Score", format="%.4f"
+                "Fitness (%)", format="%.1f%%"
             ),
             "parameters": st.column_config.TextColumn("Parameters"),
         }
-        for col in slo_cols:
-            if col.endswith("_normalized"):
-                label = col.replace("slo_", "SLO ").replace("_normalized", " (Norm)")
-            elif col.endswith("_weighted"):
-                label = col.replace("slo_", "SLO ").replace("_weighted", " (Weighted)")
-            else:
-                label = col.replace("slo_", "SLO ") + " (Raw)"
-            column_cfg[col] = st.column_config.NumberColumn(label, format="%.4f")
         st.dataframe(
             view,
             column_config=column_cfg,

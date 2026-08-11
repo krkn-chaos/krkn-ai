@@ -120,11 +120,17 @@ class GeneticAlgorithm(BaseEngine):
             ]
 
             if len(self.config.fitness_function.items) > 0:
+                to_normalize = list(fitness_scores)
+                if cur_generation == 0 and self.baseline_result is not None:
+                    to_normalize.append(self.baseline_result)
+
                 normalize_generation_scores(
-                    fitness_scores, self.config.fitness_function.items
+                    to_normalize,
+                    self.config.fitness_function.items,
+                    self.config.fitness_function.num_components,
                 )
-                self.health_check_reporter.update_normalized_scores(fitness_scores)
-                self.update_scenario_results(fitness_scores)
+                self.health_check_reporter.update_normalized_scores(to_normalize)
+                self.update_scenario_results(to_normalize)
 
             fitness_scores = sorted(
                 fitness_scores,
@@ -132,11 +138,7 @@ class GeneticAlgorithm(BaseEngine):
                 reverse=True,
             )
             self.best_of_generation.append(fitness_scores[0])
-            print_generation_table(
-                cur_generation,
-                fitness_scores,
-                self.config.fitness_function.num_components,
-            )
+            print_generation_table(cur_generation, fitness_scores)
 
             self.adapt_mutation_rate()
 
@@ -199,7 +201,6 @@ class GeneticAlgorithm(BaseEngine):
                 self.best_of_generation,
                 cur_generation,
                 elapsed_time,
-                self.config.fitness_function.num_components,
             )
             return True
         return False

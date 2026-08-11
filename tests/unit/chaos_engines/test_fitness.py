@@ -555,9 +555,9 @@ class TestNormalizeGenerationScores:
             [(1, 10.0, 0.0)], hc_failure=0.0, hc_response=0.0, krkn=0.0, fitness=0.0
         )
 
-        normalize_generation_scores([r_a, r_b], items)
+        normalize_generation_scores([r_a, r_b], items, num_components=4)
 
-        # r_a: normalized prometheus = 1.0 * 1.0 = 1.0, + 0.3 + 0.2 + 0.1 = 1.6
-        assert r_a.fitness_result.fitness_score == pytest.approx(1.6)
-        # r_b: normalized prometheus = 0.0 * 1.0 = 0.0, + 0 + 0 + 0 = 0.0
+        # r_a: raw = 1.0 + 0.3 + 0.2 + 0.1 = 1.6 → pct = 1.6/4*100 = 40.0
+        assert r_a.fitness_result.fitness_score == pytest.approx(40.0)
+        # r_b: raw = 0.0 + 0 + 0 + 0 = 0.0 → pct = 0.0
         assert r_b.fitness_result.fitness_score == pytest.approx(0.0)

@@ -204,7 +204,8 @@ class KrknRunner:
                     )
                 )
 
-            fitness_result.fitness_score = sum(
+            n = self.config.fitness_function.num_components
+            raw_total = sum(
                 [
                     fitness_result.fitness_score,
                     fitness_result.krkn_failure_score,
@@ -212,12 +213,11 @@ class KrknRunner:
                     fitness_result.health_check_response_time_score,
                 ]
             )
+            fitness_result.fitness_score = (raw_total / n * 100) if n else 0.0
             slo_total = sum(s.weighted_score for s in fitness_result.scores)
-            n = self.config.fitness_function.num_components
-            pct = (fitness_result.fitness_score / n * 100) if n else 0.0
             logger.info(
                 "Fitness: %.1f%%  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
-                pct,
+                fitness_result.fitness_score,
                 slo_total,
                 fitness_result.health_check_failure_score,
                 fitness_result.health_check_response_time_score,

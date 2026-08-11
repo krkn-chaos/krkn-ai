@@ -534,16 +534,16 @@ class TestNormalizeGenerationScores:
         assert r.fitness_result.scores[0].normalized_score is None
         assert r.fitness_result.fitness_score == 42.0
 
-    def test_identical_values_normalize_to_midpoint(self):
-        """When all scenarios return the same raw score, normalize to 0.5."""
+    def test_identical_values_normalize_to_zero(self):
+        """When all scenarios return the same raw score, normalize to 0.0 (no signal)."""
         items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
         r_a = _make_result([(1, 7.0, 0.0)], fitness=0.0)
         r_b = _make_result([(1, 7.0, 0.0)], fitness=0.0)
 
         normalize_generation_scores([r_a, r_b], items)
 
-        assert r_a.fitness_result.scores[0].normalized_score == 0.5
-        assert r_b.fitness_result.scores[0].normalized_score == 0.5
+        assert r_a.fitness_result.scores[0].normalized_score == 0.0
+        assert r_b.fitness_result.scores[0].normalized_score == 0.0
 
     def test_recomputes_overall_fitness_with_other_scores(self):
         """Overall fitness_score should be normalized_prometheus + other sub-scores."""

@@ -289,7 +289,7 @@ def normalize_generation_scores(
 
         for s, lv in zip(score_entries, log_values):
             if hi == lo:
-                s.normalized_score = 0.5
+                s.normalized_score = 0.0
             else:
                 s.normalized_score = (lv - lo) / (hi - lo)
 

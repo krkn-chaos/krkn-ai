@@ -3,7 +3,7 @@ import datetime
 from enum import Enum
 from typing import Dict, List, Optional
 from dataclasses import dataclass
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from krkn_ai.models.scenario.base import BaseScenario
 from krkn_ai.models.config import HealthCheckResult
@@ -19,9 +19,12 @@ class AppContext:
 
 
 class FitnessScoreResult(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     id: int
     fitness_score: float
     weighted_score: float
+    normalized_score: Optional[float] = None
 
 
 class FitnessResult(BaseModel):

@@ -7,6 +7,7 @@ import time
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from krkn_lib.telemetry.k8s import KrknTelemetryKubernetes
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.mock import MockType, is_mock_enabled
 from krkn_lib.utils import SafeLogger
 
 logger = get_logger(__name__)
@@ -60,6 +61,9 @@ def resolve_pod_name(
     Returns:
         Current pod name, or the stored name as fallback
     """
+    if is_mock_enabled(MockType.CLUSTER):
+        return pod_name
+
     kubeconfig_path = kubeconfig or _kubeconfig_path
     if not kubeconfig_path:
         return pod_name
@@ -121,6 +125,9 @@ def get_pvc_usage_percentage(
     Returns:
         Usage percentage (0-100) or None if unable to get
     """
+    if is_mock_enabled(MockType.CLUSTER):
+        return None
+
     # Use provided kubeconfig or fall back to global one
     kubeconfig_path = kubeconfig or _kubeconfig_path
     if not kubeconfig_path:

@@ -457,12 +457,12 @@ def generate_html_report(
     )
     n_sc = len(non_bl)
     best_fit = (
-        f"{non_bl['fitness_score'].max():.4f}"
+        f"{non_bl['fitness_score'].max():.1f}%"
         if "fitness_score" in non_bl.columns and not non_bl.empty
         else "—"
     )
     avg_fit = (
-        f"{non_bl['fitness_score'].mean():.4f}"
+        f"{non_bl['fitness_score'].mean():.1f}%"
         if "fitness_score" in non_bl.columns and not non_bl.empty
         else "—"
     )

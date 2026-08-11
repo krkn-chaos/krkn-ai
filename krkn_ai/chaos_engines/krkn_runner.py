@@ -1,6 +1,6 @@
 import datetime
 import time
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from krkn_ai.chaos_engines.commands import build_scenario_command, inject_es_config
 from krkn_ai.chaos_engines.composite import build_graph_command
@@ -30,7 +30,7 @@ from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
 
 logger = get_logger(__name__)
 
-KRKN_HUB_FAILURE_SCORE = 5
+KRKN_HUB_FAILURE_SCORE = 0.5
 
 
 class KrknRunner:
@@ -55,6 +55,8 @@ class KrknRunner:
             logger.info("Running pre-flight fitness function validation...")
             self.fitness_calculator.preflight_check()
             logger.info("Pre-flight fitness validation passed.")
+
+        self._baseline_response_stats: Optional[Dict[str, Tuple[float, float]]] = None
 
         self.output_dir = output_dir
         if is_mock_enabled(MockType.RUN):
@@ -89,6 +91,11 @@ class KrknRunner:
         if podman_available:
             logger.debug("Using krknhub as runner.")
             return KrknRunnerType.HUB_RUNNER
+
+    def set_baseline_response_stats(
+        self, stats: Dict[str, Tuple[float, float]]
+    ) -> None:
+        self._baseline_response_stats = stats
 
     def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)
@@ -178,7 +185,11 @@ class KrknRunner:
                 )
 
             if self.config.fitness_function.include_krkn_failure:
-                if returncode == 2:
+                if resiliency_score is not None:
+                    fitness_result.krkn_failure_score = (
+                        100.0 - resiliency_score
+                    ) / 100.0
+                elif returncode == 2:
                     fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
 
             if self.config.fitness_function.include_health_check_failure:
@@ -187,11 +198,14 @@ class KrknRunner:
                 )
             if self.config.fitness_function.include_health_check_response_time:
                 fitness_result.health_check_response_time_score = (
-                    health_check_watcher.summarize_response_time(health_check_results)
+                    health_check_watcher.summarize_response_time(
+                        health_check_results,
+                        baseline_stats=self._baseline_response_stats,
+                    )
                 )
 
-            logger.debug("Fitness result: %s", fitness_result)
-            fitness_result.fitness_score = sum(
+            n = self.config.fitness_function.num_components
+            raw_total = sum(
                 [
                     fitness_result.fitness_score,
                     fitness_result.krkn_failure_score,
@@ -199,7 +213,23 @@ class KrknRunner:
                     fitness_result.health_check_response_time_score,
                 ]
             )
-            logger.info("Fitness score: %s", fitness_result.fitness_score)
+            fitness_result.fitness_score = (raw_total / n * 100) if n else 0.0
+            slo_total = sum(s.weighted_score for s in fitness_result.scores)
+            logger.info(
+                "Fitness: %.1f%%  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
+                fitness_result.fitness_score,
+                slo_total,
+                fitness_result.health_check_failure_score,
+                fitness_result.health_check_response_time_score,
+                fitness_result.krkn_failure_score,
+            )
+            if fitness_result.scores:
+                logger.debug(
+                    "SLO breakdown: %s",
+                    "  ".join(
+                        f"[{s.id}]={s.fitness_score:.4f}" for s in fitness_result.scores
+                    ),
+                )
 
         return CommandRunResult(
             generation_id=generation_id,

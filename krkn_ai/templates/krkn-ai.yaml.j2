@@ -1,13 +1,24 @@
 kubeconfig_file_path: "{{ kubeconfig_file_path }}"
 wait_duration: 120
 
+
+# Cluster-critical scenarios (e.g. service-disruption, which deletes whole
+# namespaces) are skipped unless this is set to true, even when their own
+# `enable` flag is on. Leave it false unless you really intend to run them.
+allow_dangerous_scenarios: false
+
+# Random seed for reproducible runs
+# seed: 42
+
 baseline:
   enable: true
   duration: 120
 
-# Optional: Random seed for reproducible runs
-# seed: 42
-
+scenario:
+{%- for name, enabled in scenario_enables.items() %}
+  {{ name | replace("_", "-") }}:
+    enable: {{ "true" if enabled else "false" }}
+{%- endfor %}
 
 # Algorithm selection: "genetic" (default)
 algorithm: genetic
@@ -15,15 +26,16 @@ algorithm: genetic
 # Genetic algorithm configuration
 genetic:
   generations: 2
-  # duration: 600  # Run for 600 seconds (run until time limit is reached, generations will be ignored)
   population_size: 2
   composition_rate: 0
   population_injection_rate: 0
 
-  selection_strategy: "roulette"
+  # Uncomment this to enable overall run timeout
+  # duration: 600
 
-  # selection_strategy: "tournament"
-  # tournament_size: 3
+  selection_strategy: "tournament"
+  tournament_size: 6
+  # selection_strategy: "roulette"
 
   adaptive_mutation:
     enable: false
@@ -93,6 +105,7 @@ fitness_function:
 {%- endfor %}
 {%- endif %}
 
+
 {%- set enabled_apps = health_check_apps | default([]) | selectattr('probe') | selectattr('active') | list -%}
 {%- set disabled_apps = health_check_apps | default([]) | rejectattr('probe') | list + health_check_apps | default([]) | selectattr('probe') | rejectattr('active') | list %}
 {% if enabled_apps %}
@@ -137,17 +150,6 @@ health_checks:
 #   - name: ratings
 #     url: "$HOST/ratings/api/fetch/Watson"
 {% endif %}
-
-# Cluster-critical scenarios (e.g. service-disruption, which deletes whole
-# namespaces) are skipped unless this is set to true, even when their own
-# `enable` flag is on. Leave it false unless you really intend to run them.
-allow_dangerous_scenarios: false
-
-scenario:
-{%- for name, enabled in scenario_enables.items() %}
-  {{ name | replace("_", "-") }}:
-    enable: {{ "true" if enabled else "false" }}
-{%- endfor %}
 
 cluster_components:
 {{ cluster_components }}

@@ -1,7 +1,8 @@
+import os
 from enum import Enum
 from typing import Dict, List
 
-from krkn_ai.utils.fs import env_is_truthy
+from krkn_ai.models.config import HealthCheckResult
 from krkn_ai.utils.rng import rng
 
 
@@ -9,20 +10,23 @@ class MockType(str, Enum):
     RUN = "MOCK_RUN"
     FITNESS = "MOCK_FITNESS"
     HEALTH_CHECK = "MOCK_HEALTH_CHECK"
+    CLUSTER = "MOCK_CLUSTER"
 
 
 _GLOBAL_VAR = "MOCK"
 
 
+def _env_is_truthy(var: str) -> bool:
+    return os.getenv(var, "false").lower().strip() in ("yes", "y", "true", "1")
+
+
 def is_mock_enabled(mock_type: MockType) -> bool:
-    return env_is_truthy(_GLOBAL_VAR) or env_is_truthy(mock_type.value)
+    return _env_is_truthy(_GLOBAL_VAR) or _env_is_truthy(mock_type.value)
 
 
 def generate_mock_health_check_results(
     health_check_config, sample_count: int = 5
 ) -> Dict[str, List]:
-    from krkn_ai.models.config import HealthCheckResult
-
     results: Dict[str, List] = {}
     for app in health_check_config.applications:
         samples = []

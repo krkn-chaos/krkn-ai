@@ -2,7 +2,7 @@
 
 import yaml
 
-from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.fs import read_config_from_file, preprocess_param_string
 
 
 class TestParamParsing:
@@ -36,6 +36,41 @@ class TestParamParsing:
             key, value = p, ""
         assert key == "JUST_A_KEY"
         assert value == ""
+
+
+class TestPreprocessParamString:
+    def test_prefix_collision_does_not_corrupt(self):
+        """HOST must not shadow HOST_PORT regardless of dict ordering."""
+        params = {"HOST": "app.cluster.local", "HOST_PORT": "8443"}
+        result = preprocess_param_string("https://$HOST_PORT/api/$HOST/probe", params)
+        assert result == "https://8443/api/app.cluster.local/probe"
+
+    def test_prefix_collision_reverse_order(self):
+        """Same test with HOST_PORT listed first in the dict."""
+        params = {"HOST_PORT": "8443", "HOST": "app.cluster.local"}
+        result = preprocess_param_string("https://$HOST_PORT/api/$HOST/probe", params)
+        assert result == "https://8443/api/app.cluster.local/probe"
+
+    def test_unresolved_param_left_unchanged(self):
+        """A $TOKEN with no matching key should stay as-is."""
+        params = {"HOST": "app.cluster.local"}
+        result = preprocess_param_string("https://$HOST_PORT/api/$HOST/probe", params)
+        assert result == "https://$HOST_PORT/api/app.cluster.local/probe"
+
+    def test_simple_substitution(self):
+        """Basic single-param replacement still works."""
+        result = preprocess_param_string("http://$HOST/health", {"HOST": "myhost.com"})
+        assert result == "http://myhost.com/health"
+
+    def test_private_param_substitution(self):
+        """Double-underscore private params are valid identifiers."""
+        result = preprocess_param_string("Bearer $__TOKEN", {"__TOKEN": "secret"})
+        assert result == "Bearer secret"
+
+    def test_no_params_returns_unchanged(self):
+        """Empty params dict leaves data unchanged."""
+        result = preprocess_param_string("http://$HOST/health", {})
+        assert result == "http://$HOST/health"
 
 
 class TestReadConfigFromFileHeaders:

@@ -65,8 +65,11 @@ class TestJSONSummaryReporter:
         assert summary["start_time"] == now.isoformat()
         assert summary["duration_seconds"] == 100.0
 
-        assert summary["config"]["generations"] == minimal_config.generations
-        assert summary["config"]["population_size"] == minimal_config.population_size
+        assert summary["config"]["generations"] == minimal_config.genetic.generations
+        assert (
+            summary["config"]["population_size"]
+            == minimal_config.genetic.population_size
+        )
 
         assert summary["summary"]["total_scenarios_executed"] == 6
         assert summary["summary"]["best_fitness_score"] == 60.0

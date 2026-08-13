@@ -7,6 +7,7 @@ import yaml
 from pydantic import ValidationError
 
 from krkn_ai.utils.fs import (
+    preprocess_param_string,
     read_config_from_file,
     save_discovery,
     merge_components,

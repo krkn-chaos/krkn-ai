@@ -8,7 +8,7 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 from krkn_ai.models.app import CommandRunResult
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.constants import STATUS_COMPLETED
 
@@ -27,6 +27,7 @@ class JSONSummaryReporter:
         self,
         run_uuid: str,
         config: ConfigFile,
+        algo_config: GeneticAlgorithmConfig,
         seen_population: Dict[Any, CommandRunResult],
         best_of_generation: List[CommandRunResult],
         baseline_result: Optional[CommandRunResult] = None,
@@ -36,23 +37,9 @@ class JSONSummaryReporter:
         seed: Optional[int] = None,
         scenario_mutation_rate: Optional[float] = None,
     ):
-        """
-        Initialize the JSON summary reporter.
-
-        Args:
-            run_uuid: Unique identifier for this run.
-            config: Configuration used for this run.
-            seen_population: Map of scenarios to their execution results.
-            best_of_generation: List of best results per generation.
-            start_time: When the run started.
-            end_time: When the run ended.
-            completed_generations: Number of generations completed.
-            seed: Random seed used for the run (if any).
-            scenario_mutation_rate: Scenario mutation rate to write in the
-                summary.
-        """
         self.run_uuid = run_uuid
         self.config = config
+        self.algo_config = algo_config
         self.seen_population = seen_population
         self.best_of_generation = best_of_generation
         self.baseline_result = baseline_result
@@ -61,7 +48,7 @@ class JSONSummaryReporter:
         self.completed_generations = completed_generations
         self.seed = seed
         self.scenario_mutation_rate = (
-            config.scenario_mutation_rate
+            algo_config.scenario_mutation_rate
             if scenario_mutation_rate is None
             else scenario_mutation_rate
         )
@@ -116,12 +103,13 @@ class JSONSummaryReporter:
             "duration_seconds": round(duration_seconds, 2),
             "status": self.status,
             "config": {
-                "generations": self.config.generations,
-                "population_size": self.config.population_size,
-                "mutation_rate": self.config.mutation_rate,
+                "algorithm_type": self.config.algorithm.value,
+                "generations": self.algo_config.generations,
+                "population_size": self.algo_config.population_size,
+                "mutation_rate": self.algo_config.mutation_rate,
                 "scenario_mutation_rate": self.scenario_mutation_rate,
-                "crossover_rate": self.config.crossover_rate,
-                "composition_rate": self.config.composition_rate,
+                "crossover_rate": self.algo_config.crossover_rate,
+                "composition_rate": self.algo_config.composition_rate,
             },
             "summary": {
                 "total_scenarios_executed": len(self.seen_population),
@@ -132,6 +120,7 @@ class JSONSummaryReporter:
             },
             "best_scenarios": best_scenarios,
             "fitness_progression": fitness_progression,
+            "population_lineage": self._build_population_lineage(),
         }
 
         if self.baseline_result is not None:
@@ -192,6 +181,23 @@ class JSONSummaryReporter:
                 }
             )
         return best_scenarios
+
+    def _build_population_lineage(self) -> List[Dict[str, Any]]:
+        """Build evolutionary lineage from scenario provenance in seen_population."""
+        lineage = []
+        for result in self.seen_population.values():
+            scenario = result.scenario
+            lineage.append(
+                {
+                    "scenario_id": result.scenario_id,
+                    "scenario_uuid": getattr(scenario, "id", None),
+                    "generation": result.generation_id,
+                    "fitness_score": result.fitness_result.fitness_score,
+                    "parent_ids": getattr(scenario, "parent_ids", []),
+                    "origin": getattr(scenario, "origin", None),
+                }
+            )
+        return lineage
 
     def save(self, output_dir: str):
         """

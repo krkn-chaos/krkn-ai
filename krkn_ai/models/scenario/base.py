@@ -1,7 +1,18 @@
+import uuid
 from enum import Enum
-from pydantic import BaseModel, PrivateAttr
+from typing import Any, List, Optional
+
+from pydantic import BaseModel, Field, PrivateAttr
+
 from krkn_ai.models.cluster_components import ClusterComponents
-from typing import Any
+
+
+class ScenarioOrigin(str, Enum):
+    INITIAL = "initial"
+    CROSSOVER = "crossover"
+    COMPOSITION = "composition"
+    PARAMETER_MUTATION = "parameter_mutation"
+    TYPE_MUTATION = "type_mutation"
 
 
 class BaseParameter(BaseModel):
@@ -15,14 +26,17 @@ class BaseParameter(BaseModel):
             return self.krknhub_name
         return self.krknctl_name
 
-    def get_value(self):
+    def get_value(self, return_krknhub_name: bool = False):
         return self.value
 
 
 class BaseScenario(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     krknctl_name: str  # Name of the scenario in krknctl
     krknhub_image: str  # Image of the scenario in krknhub
+    parent_ids: List[str] = Field(default_factory=list)
+    origin: Optional[ScenarioOrigin] = None
 
 
 class Scenario(BaseScenario):
@@ -33,6 +47,9 @@ class Scenario(BaseScenario):
         cluster_components = data.pop("cluster_components")
         super().__init__(**data)
         self._cluster_components = cluster_components
+
+    def scenario_wait_duration(self, config_wait_duration: int) -> int:
+        return config_wait_duration
 
     def __str__(self):
         param_value = ", ".join([str(x.value) for x in self.parameters])
@@ -74,4 +91,6 @@ class CompositeScenario(BaseScenario):
         return self.name == other.name and hash(other) == hash(self)
 
     def __hash__(self):
-        return hash(tuple([self.scenario_a, self.scenario_b]))
+        # `dependency` changes the execution graph, so it is part of identity.
+        # __eq__ derives from this hash, so including it here fixes both. See #380.
+        return hash((self.scenario_a, self.scenario_b, self.dependency))

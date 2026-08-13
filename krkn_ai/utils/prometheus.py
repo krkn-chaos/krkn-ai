@@ -1,7 +1,7 @@
 import os
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
-from krkn_ai.utils.fs import env_is_truthy
+from krkn_ai.utils.mock import MockType, is_mock_enabled
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import PrometheusConnectionError
 
@@ -86,6 +86,14 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
             "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
         )
 
+    if is_ocp and not token:
+        logger.warning(
+            "Automatic Prometheus token discovery returned empty on OpenShift.\n"
+            "This is expected for exec/certificate-based auth, but if connection fails,\n"
+            "please set the token explicitly:\n"
+            "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
+        )
+
     return _validate_and_create_client(url, token)
 
 
@@ -167,7 +175,7 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
     try:
         client = KrknPrometheus(url.strip(), token.strip())
         # Connection test: run a dummy query unless in mock mode
-        if not env_is_truthy("MOCK_FITNESS"):
+        if not is_mock_enabled(MockType.FITNESS):
             client.process_query("1")
         return client
     except Exception as e:

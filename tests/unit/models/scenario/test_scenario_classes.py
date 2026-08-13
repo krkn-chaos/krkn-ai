@@ -16,6 +16,10 @@ from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
+from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_service_disruption import (
+    ServiceDisruptionScenario,
+)
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
@@ -91,8 +95,118 @@ class TestContainerScenario:
         scenario = ContainerScenario(cluster_components=cluster)
         assert scenario.name == "container-scenarios"
         assert scenario.namespace.value == "test-ns"
-        assert scenario.disruption_count.value >= 1
-        assert scenario.disruption_count.value <= len(pod.containers)
+        # Only one pod matches the label, so disruption_count (number of pods
+        # to disrupt) is 1 regardless of how many containers the pod has (#277).
+        assert scenario.disruption_count.value == 1
+
+    def test_container_scenario_disruption_count_bounded_by_matching_pods(self):
+        """disruption_count counts matching pods, not one pod's containers (#277).
+
+        Each pod has a single container, so the old logic
+        (``rng.randint(1, len(pod.containers))``) could only ever produce 1.
+        With three pods sharing the label, the count must be able to exceed 1.
+        """
+        pods = [
+            Pod(
+                name=f"web-{i}",
+                labels={"app": "web"},
+                containers=[Container(name="c1")],
+            )
+            for i in range(3)
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        seen_counts = set()
+        for _ in range(100):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert 1 <= scenario.disruption_count.value <= 3
+            seen_counts.add(scenario.disruption_count.value)
+        assert max(seen_counts) > 1  # bounded by pods (3), not the single container
+
+    def test_container_scenario_disruption_count_excludes_containerless_pods(self):
+        """Label-matching pods without containers don't inflate the count (#277).
+
+        Three pods share the label but only one has a container, so only one pod
+        is a disruptable target and disruption_count must always be 1.
+        """
+        pods = [
+            Pod(name="web-0", labels={"app": "web"}, containers=[Container(name="c1")]),
+            Pod(name="web-1", labels={"app": "web"}, containers=[]),
+            Pod(name="web-2", labels={"app": "web"}, containers=[]),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.disruption_count.value == 1
+
+    def test_container_scenario_count_excludes_pods_without_target_container(self):
+        """A specific container name limits the count to pods that have it (#277).
+
+        Pods can share a generic label (env=prod) while being different
+        workloads. If nginx is the targeted container, the redis pods must not
+        be counted, otherwise krkn would pick a pod with no nginx container and
+        fail the lookup. When the wildcard is chosen every labelled pod counts.
+        """
+        pods = [
+            Pod(
+                name="nginx-0",
+                labels={"env": "prod"},
+                containers=[Container(name="nginx")],
+            ),
+            Pod(
+                name="redis-0",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+            Pod(
+                name="redis-1",
+                labels={"env": "prod"},
+                containers=[Container(name="redis")],
+            ),
+        ]
+        namespace = Namespace(name="test-ns", pods=pods)
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(200):
+            scenario = ContainerScenario(cluster_components=cluster)
+            target = scenario.container_name.value
+            count = scenario.disruption_count.value
+            if target == ".*":
+                # Wildcard applies to every labelled pod with containers.
+                assert 1 <= count <= 3
+            else:
+                # Only the pods actually running that container may be counted.
+                eligible = sum(
+                    1 for p in pods if any(c.name == target for c in p.containers)
+                )
+                assert 1 <= count <= eligible
+
+    def test_container_scenario_container_name_is_specific_or_wildcard(self):
+        """container_name is a real container or '.*', decoupled from count (#277).
+
+        Even though only one pod matches (so disruption_count is always 1), the
+        container scope must still vary between a specific container and ".*"
+        rather than being forced to ".*" whenever the count is 1 (the old bug).
+        """
+        pod = Pod(
+            name="web",
+            labels={"app": "web"},
+            containers=[Container(name="c1"), Container(name="c2")],
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        valid = {"c1", "c2", ".*"}
+        seen = set()
+        for _ in range(100):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.container_name.value in valid
+            seen.add(scenario.container_name.value)
+        assert ".*" in seen  # wildcard still reachable
+        assert seen & {"c1", "c2"}  # specific-container choice reachable too
 
     def test_container_scenario_raises_error_when_no_pods_with_labels(self):
         """Test that ContainerScenario raises error when no pods have labels"""
@@ -104,6 +218,34 @@ class TestContainerScenario:
             ScenarioParameterInitError, match="No pods found with labels"
         ):
             ContainerScenario(cluster_components=cluster)
+
+    def test_container_scenario_raises_error_when_pod_has_no_containers(self):
+        """Regression test for #237.
+
+        A labeled pod with an empty ``containers`` list must not crash with
+        ``ValueError: low >= high`` (from ``rng.randint(1, 0)``); it should raise the
+        graceful ``ScenarioParameterInitError`` instead.
+        """
+        pod = Pod(name="test-pod", labels={"app": "web"}, containers=[])
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(
+            ScenarioParameterInitError,
+            match="No pods found with labels and containers",
+        ):
+            ContainerScenario(cluster_components=cluster)
+
+    def test_container_scenario_skips_pods_without_containers(self):
+        """A labeled pod without containers is skipped in favour of a valid one."""
+        empty = Pod(name="empty", labels={"app": "web"}, containers=[])
+        good = Pod(name="good", labels={"app": "db"}, containers=[Container(name="c1")])
+        namespace = Namespace(name="test-ns", pods=[empty, good])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        for _ in range(50):
+            scenario = ContainerScenario(cluster_components=cluster)
+            assert scenario.label_selector.value == "app=db"
 
 
 class TestNodeCPUHogScenario:
@@ -175,6 +317,45 @@ class TestNodeMemoryHogScenario:
         with pytest.raises(ScenarioParameterInitError, match="No nodes found"):
             NodeMemoryHogScenario(cluster_components=cluster)
 
+    def test_node_memory_percentage_parameter_value_formatting_for_runners(self):
+        """Test NodeMemoryPercentageParameter get_value formatting for krknhub vs krknctl (#446)"""
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        param = scenario.node_memory_percentage
+
+        # Both runners return the value with % suffix
+        assert param.get_value(return_krknhub_name=False) == f"{param.value}%"
+        assert param.get_value(return_krknhub_name=True) == f"{param.value}%"
+
+    def test_node_memory_hog_command_building_runner_formatting(self):
+        """Test build_scenario_command outputs integer for krknctl and percent string for krknhub (#446)"""
+        from krkn_ai.chaos_engines.commands import build_scenario_command
+        from krkn_ai.models.app import KrknRunnerType
+        from krkn_ai.models.config import ConfigFile, FitnessFunction
+
+        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
+        scenario = NodeMemoryHogScenario(cluster_components=cluster)
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="dummy"),
+            cluster_components=cluster,
+        )
+
+        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
+        assert (
+            f'--memory-consumption "{scenario.node_memory_percentage.value}%"'
+            in cli_cmd
+        )
+
+        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
+        assert (
+            f'-e MEMORY_CONSUMPTION_PERCENTAGE="{scenario.node_memory_percentage.value}%"'
+            in hub_cmd
+        )
+
 
 class TestNodeIOHogScenario:
     """Test NodeIOHogScenario class"""
@@ -234,7 +415,7 @@ class TestNetworkScenario:
 
         scenario = NetworkScenario(cluster_components=cluster)
         assert scenario.name == "network-chaos"
-        assert scenario.traffic_type.value == "egress"
+        assert scenario.traffic_type.value in ["ingress", "egress"]
         assert scenario.node_name.value == "test-node"
         assert scenario.interfaces.value != ""
 
@@ -324,3 +505,155 @@ class TestPVCScenario:
 
         with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
             PVCScenario(cluster_components=cluster)
+
+
+class TestStorageThrottleScenario:
+    """Test StorageThrottleScenario class"""
+
+    def test_storage_throttle_scenario_initialization_with_pvcs(self):
+        """Test that StorageThrottleScenario initializes when PVCs exist"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        assert scenario.name == "storage-throttle"
+        assert scenario.namespace.value == "test-ns"
+        assert scenario.pvc_name.value == "test-pvc"
+        assert scenario.pod_name.value == ""
+        assert scenario.throttle_type.value in ["iops", "bandwidth", "both"]
+
+    def test_storage_throttle_scenario_initialization_with_pods_only(self):
+        """Test that StorageThrottleScenario falls back to pods when no PVCs exist"""
+        pod = Pod(
+            name="test-pod",
+            labels={"app": "web"},
+            containers=[Container(name="c1")],
+        )
+        namespace = Namespace(name="test-ns", pods=[pod])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        assert scenario.name == "storage-throttle"
+        assert scenario.namespace.value == "test-ns"
+        assert scenario.pod_name.value == "test-pod"
+        assert scenario.pvc_name.value == ""
+
+    def test_storage_throttle_scenario_raises_error_when_no_pvcs_or_pods(self):
+        """Test that StorageThrottleScenario raises error when no PVCs or pods exist"""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No namespaces found"):
+            StorageThrottleScenario(cluster_components=cluster)
+
+    def test_storage_throttle_scenario_raises_error_empty_namespace(self):
+        """Test that StorageThrottleScenario raises error when namespace has no PVCs or pods"""
+        namespace = Namespace(name="test-ns")
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        with pytest.raises(ScenarioParameterInitError, match="No PVCs or pods found"):
+            StorageThrottleScenario(cluster_components=cluster)
+
+    def test_storage_throttle_scenario_conditional_parameters_iops(self):
+        """Test that parameters list includes IOPS params when throttle_type is iops"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "iops"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-iops" in param_names
+        assert "write-iops" in param_names
+        assert "read-bps" not in param_names
+        assert "write-bps" not in param_names
+
+    def test_storage_throttle_scenario_conditional_parameters_bandwidth(self):
+        """Test that parameters list includes BPS params when throttle_type is bandwidth"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "bandwidth"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-bps" in param_names
+        assert "write-bps" in param_names
+        assert "read-iops" not in param_names
+        assert "write-iops" not in param_names
+
+    def test_storage_throttle_scenario_conditional_parameters_both(self):
+        """Test that parameters list includes all throttle params when type is both"""
+        pvc = PVC(name="test-pvc", labels={})
+        namespace = Namespace(name="test-ns", pvcs=[pvc])
+        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+
+        scenario = StorageThrottleScenario(cluster_components=cluster)
+        scenario.throttle_type.value = "both"
+        param_names = [p.krknctl_name for p in scenario.parameters]
+        assert "read-iops" in param_names
+        assert "write-iops" in param_names
+        assert "read-bps" in param_names
+        assert "write-bps" in param_names
+
+
+class TestServiceDisruptionScenario:
+    """Test ServiceDisruptionScenario class (#13)."""
+
+    @staticmethod
+    def _namespace_with_service(name="robot-shop"):
+        return Namespace(
+            name=name,
+            services=[Service(name="rs", ports=[ServicePort(port=80)])],
+        )
+
+    def test_service_disruption_initialization_with_namespaces(self):
+        """Initializes against a discovered namespace with valid krkn parameters."""
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        assert scenario.name == "service-disruption"
+        assert scenario.krknctl_name == "service-disruption-scenarios"
+        assert scenario.namespace.value == "robot-shop"
+        # NAMESPACE and LABEL_SELECTOR are mutually exclusive; target by name.
+        assert scenario.label_selector.value == ""
+        # One named namespace matches, so delete exactly one; runs stays small.
+        assert scenario.delete_count.value == 1
+        assert 1 <= scenario.runs.value <= 3
+
+    def test_service_disruption_omits_empty_label_selector(self):
+        """An empty label_selector is not emitted alongside NAMESPACE (#13 review)."""
+        cluster = ClusterComponents(
+            namespaces=[self._namespace_with_service()], nodes=[]
+        )
+
+        scenario = ServiceDisruptionScenario(cluster_components=cluster)
+
+        krknctl_flags = [
+            p.get_name(return_krknhub_name=False) for p in scenario.parameters
+        ]
+        krknhub_vars = [
+            p.get_name(return_krknhub_name=True) for p in scenario.parameters
+        ]
+        assert krknctl_flags == ["namespace", "delete-count", "runs"]
+        assert krknhub_vars == ["NAMESPACE", "DELETE_COUNT", "RUNS"]
+        assert "label-selector" not in krknctl_flags
+
+    def test_service_disruption_raises_error_when_no_namespaces(self):
+        """With no namespaces the scenario cannot initialize and raises cleanly."""
+        cluster = ClusterComponents(namespaces=[], nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)
+
+    def test_service_disruption_raises_when_namespace_has_no_services(self):
+        """A namespace without services is not a valid target."""
+        cluster = ClusterComponents(namespaces=[Namespace(name="empty-ns")], nodes=[])
+        with pytest.raises(
+            ScenarioParameterInitError, match="No namespaces with services"
+        ):
+            ServiceDisruptionScenario(cluster_components=cluster)

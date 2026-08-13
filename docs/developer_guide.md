@@ -32,14 +32,38 @@ uv run krkn_ai --help
 
 We use [Minikube](https://minikube.sigs.k8s.io/docs/start/) to create a local Kubernetes cluster.
 
+### Install Minikube
+
+**Linux:**
 ```bash
-# Install Minikube on Linux
 curl -LO https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
 sudo install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+```
 
-# Create the cluster
+**macOS (Apple Silicon / Intel):**
+```bash
+brew install minikube
+```
+
+### Create the Cluster
+
+**Linux:**
+```bash
 minikube start
+```
 
+**macOS:**
+
+The recommended driver on macOS is [vfkit](https://github.com/crc-org/vfkit), a lightweight hypervisor that avoids Docker driver limitations (port forwarding, multi-node support). See the [minikube vfkit driver docs](https://minikube.sigs.k8s.io/docs/drivers/vfkit/) for more details.
+
+```bash
+brew install vfkit
+minikube start --driver=vfkit
+```
+
+### Configure Cluster Access
+
+```bash
 # Switch to minikube cluster context
 kubectl config use-context minikube
 
@@ -115,9 +139,11 @@ export HOST="http://$(minikube ip):$(kubectl get service rs -o json | jq -r '.sp
 
 ### Discover Cluster Components
 
-Auto-generate an initial Krkn-AI configuration file:
+Auto-generate an initial Krkn-AI configuration file. Export `PROMETHEUS_URL` first—`discover` uses it to validate the fitness queries it recommends:
 
 ```bash
+export PROMETHEUS_URL="http://$(minikube ip):30900"
+
 uv run krkn_ai discover -k ./kubeconfig.yaml \
   -n "robot-shop" \
   -pl "service" \
@@ -126,7 +152,11 @@ uv run krkn_ai discover -k ./kubeconfig.yaml \
   --skip-pod-name "nginx-proxy.*"
 ```
 
-This generates `krkn-ai.yaml` containing cluster component details and boilerplate test configuration. Review and modify the file as needed—add health check endpoints, adjust the fitness function, and enable desired scenarios.
+This generates `krkn-ai.yaml` containing cluster component details and test configuration. Krkn-AI pre-fills the scenarios your cluster can run, health check URLs from LoadBalancer services, and fitness queries validated against Prometheus. Review the file and adjust as needed—queries that were rejected are left in as comments explaining why.
+
+> **Note:** Without `PROMETHEUS_URL`, `discover` still succeeds but falls back to a single default fitness query instead of the recommended ones.
+
+> **Tip:** Re-running `discover` won't overwrite your file by default. Use `--save-strategy merge` to add new components while keeping edits, or `overwrite` to regenerate. Note: `merge` does not preserve comments inside `cluster_components`.
 
 > **Note:** Some scenarios may not work on Minikube due to limited node access or permissions.
 

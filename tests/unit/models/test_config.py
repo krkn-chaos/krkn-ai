@@ -6,7 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from krkn_ai.models.config import (
+    AdaptiveMutation,
+    BaselineConfig,
     ConfigFile,
+    GeneticAlgorithmConfig,
     FitnessFunction,
     FitnessFunctionType,
     FitnessFunctionItem,
@@ -60,8 +63,8 @@ class TestConfigFile:
         )
         assert config_min.kubeconfig_file_path == "/path/to/kubeconfig"
         assert config_min.fitness_function.query == "test_query"
-        assert config_min.generations == 20
-        assert config_min.population_size == 10
+        assert config_min.genetic.generations == 20
+        assert config_min.genetic.population_size == 10
         assert config_min.parameters == {}
         assert isinstance(config_min.scenario, ScenarioConfig)
         assert isinstance(config_min.health_checks, HealthCheckConfig)
@@ -80,8 +83,7 @@ class TestConfigFile:
         config = ConfigFile(
             kubeconfig_file_path="/path/to/kubeconfig",
             parameters={"key1": ParameterValue(value="value1")},
-            generations=50,
-            population_size=20,
+            genetic=GeneticAlgorithmConfig(generations=50, population_size=20),
             fitness_function=fitness,
             scenario=scenario_config,
             health_checks=HealthCheckConfig(
@@ -95,8 +97,8 @@ class TestConfigFile:
             output=OutputConfig(result_name_fmt="gen_%g_scenario_%s.yaml"),
             cluster_components=cluster_full,
         )
-        assert config.generations == 50
-        assert config.population_size == 20
+        assert config.genetic.generations == 50
+        assert config.genetic.population_size == 20
         assert config.parameters["key1"].value == "value1"
         assert config.scenario.pod_scenarios.enable is True
         assert len(config.health_checks.applications) == 1
@@ -149,21 +151,18 @@ class TestFitnessFunction:
             FitnessFunction()
 
     def test_fitness_function_item_weight_validation(self):
-        """Test FitnessFunctionItem weight must be between 0 and 1"""
+        """Weights are non-negative coefficients, not percentages."""
         # Valid weights
         item1 = FitnessFunctionItem(query="test", weight=0.0)
         item2 = FitnessFunctionItem(query="test", weight=1.0)
-        item3 = FitnessFunctionItem(query="test", weight=0.5)
+        item3 = FitnessFunctionItem(query="test", weight=8.0)
         assert item1.weight == 0.0
         assert item2.weight == 1.0
-        assert item3.weight == 0.5
+        assert item3.weight == 8.0
 
         # Invalid weights
-        with pytest.raises(ValidationError, match="outside the range"):
+        with pytest.raises(ValidationError, match="finite non-negative"):
             FitnessFunctionItem(query="test", weight=-0.1)
-
-        with pytest.raises(ValidationError, match="outside the range"):
-            FitnessFunctionItem(query="test", weight=1.1)
 
     def test_fitness_function_item_auto_id(self):
         """Test that FitnessFunctionItem gets auto-incremented IDs"""
@@ -181,14 +180,18 @@ class TestHealthCheckConfig:
         # Test HealthCheckConfig defaults
         config = HealthCheckConfig()
         assert config.stop_watcher_on_failure is False
+        assert config.stop_timeout == 5.0
         assert config.applications == []
+
+        custom_config = HealthCheckConfig(stop_timeout=0.25)
+        assert custom_config.stop_timeout == 0.25
 
         # Test HealthCheckApplicationConfig with defaults and custom values
         app = HealthCheckApplicationConfig(
             name="test-app", url="http://localhost:8080/health"
         )
         assert app.name == "test-app"
-        assert app.url == "http://localhost:8080/health"
+        assert str(app.url) == "http://localhost:8080/health"
         assert app.status_code == 200
         assert app.timeout == 4
         assert app.interval == 2
@@ -235,6 +238,26 @@ class TestOutputConfig:
         assert "%g" in config.result_name_fmt
         assert "%s" in config.result_name_fmt
 
+    @pytest.mark.parametrize(
+        "field_name",
+        ["result_name_fmt", "graph_name_fmt", "log_name_fmt"],
+    )
+    def test_output_config_rejects_fmt_without_scenario_id(self, field_name):
+        """Format strings without %s must be rejected so scenarios don't collide on filenames"""
+        with pytest.raises(ValidationError, match="%s"):
+            OutputConfig(**{field_name: "gen_%g_scenario.yaml"})
+
+    def test_output_config_accepts_fmt_with_scenario_id(self):
+        """Format strings containing %s are accepted regardless of other placeholders"""
+        config = OutputConfig(
+            result_name_fmt="gen_%g_%s.yaml",
+            graph_name_fmt="%s.png",
+            log_name_fmt="%c_%s.log",
+        )
+        assert config.result_name_fmt == "gen_%g_%s.yaml"
+        assert config.graph_name_fmt == "%s.png"
+        assert config.log_name_fmt == "%c_%s.log"
+
 
 class TestStoppingCriteria:
     """Test StoppingCriteria model"""
@@ -270,12 +293,14 @@ class TestStoppingCriteria:
             kubeconfig_file_path="/path/to/kubeconfig",
             fitness_function=FitnessFunction(query="test_query"),
             cluster_components=cluster,
-            stopping_criteria=StoppingCriteria(
-                fitness_threshold=150.0, generation_saturation=3
+            genetic=GeneticAlgorithmConfig(
+                stopping_criteria=StoppingCriteria(
+                    fitness_threshold=150.0, generation_saturation=3
+                ),
             ),
         )
-        assert config.stopping_criteria.fitness_threshold == 150.0
-        assert config.stopping_criteria.generation_saturation == 3
+        assert config.genetic.stopping_criteria.fitness_threshold == 150.0
+        assert config.genetic.stopping_criteria.generation_saturation == 3
 
     def test_config_file_stopping_criteria_default(self):
         """Test that ConfigFile has default StoppingCriteria"""
@@ -285,6 +310,191 @@ class TestStoppingCriteria:
             fitness_function=FitnessFunction(query="test_query"),
             cluster_components=cluster,
         )
-        assert isinstance(config.stopping_criteria, StoppingCriteria)
-        assert config.stopping_criteria.fitness_threshold is None
-        assert config.stopping_criteria.generation_saturation is None
+        assert isinstance(config.genetic.stopping_criteria, StoppingCriteria)
+        assert config.genetic.stopping_criteria.fitness_threshold is None
+        assert config.genetic.stopping_criteria.generation_saturation is None
+
+    def test_backward_compat_flat_ga_fields(self):
+        """Test that old-format flat GA fields are auto-migrated"""
+        data = {
+            "kubeconfig_file_path": "/path/to/kubeconfig",
+            "fitness_function": {"query": "test_query"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "generations": 50,
+            "population_size": 20,
+            "mutation_rate": 0.8,
+            "stopping_criteria": {"fitness_threshold": 100.0},
+        }
+        config = ConfigFile.model_validate(data)
+        assert config.algorithm.value == "genetic"
+        assert config.genetic.generations == 50
+        assert config.genetic.population_size == 20
+        assert config.genetic.mutation_rate == 0.8
+        assert config.genetic.stopping_criteria.fitness_threshold == 100.0
+
+
+# ---------------------------------------------------------------------------
+# GeneticAlgorithmConfig validation
+# ---------------------------------------------------------------------------
+
+
+class TestGeneticAlgorithmConfigValidation:
+    """Tests for GeneticAlgorithmConfig field constraints."""
+
+    RATE_FIELDS = [
+        "mutation_rate",
+        "scenario_mutation_rate",
+        "crossover_rate",
+        "composition_rate",
+        "population_injection_rate",
+    ]
+
+    @pytest.mark.parametrize("field", RATE_FIELDS)
+    def test_rate_accepts_boundaries(self, field):
+        assert getattr(GeneticAlgorithmConfig(**{field: 0.0}), field) == 0.0
+        assert getattr(GeneticAlgorithmConfig(**{field: 1.0}), field) == 1.0
+
+    @pytest.mark.parametrize("field", RATE_FIELDS)
+    @pytest.mark.parametrize("bad", [-0.1, 1.5, 99.0])
+    def test_rate_rejects_out_of_range(self, field, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(**{field: bad})
+
+    def test_population_size_accepts_minimum(self):
+        assert GeneticAlgorithmConfig(population_size=2).population_size == 2
+
+    @pytest.mark.parametrize("bad", [1, 0, -5])
+    def test_population_size_rejects_below_2(self, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(population_size=bad)
+
+    def test_population_injection_size_accepts_minimum(self):
+        assert (
+            GeneticAlgorithmConfig(
+                population_injection_size=1
+            ).population_injection_size
+            == 1
+        )
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_population_injection_size_rejects_below_1(self, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(population_injection_size=bad)
+
+    def test_tournament_size_accepts_minimum(self):
+        assert GeneticAlgorithmConfig(tournament_size=1).tournament_size == 1
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_tournament_size_rejects_below_1(self, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(tournament_size=bad)
+
+    def test_generations_accepts_positive(self):
+        assert GeneticAlgorithmConfig(generations=1).generations == 1
+
+    def test_generations_accepts_none(self):
+        assert GeneticAlgorithmConfig(generations=None).generations is None
+
+    @pytest.mark.parametrize("bad", [0, -10])
+    def test_generations_rejects_non_positive(self, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(generations=bad)
+
+    def test_duration_accepts_positive(self):
+        assert GeneticAlgorithmConfig(duration=3600).duration == 3600
+
+    def test_duration_accepts_none(self):
+        assert GeneticAlgorithmConfig(duration=None).duration is None
+
+    @pytest.mark.parametrize("bad", [0, -60])
+    def test_duration_rejects_non_positive(self, bad):
+        with pytest.raises(ValidationError):
+            GeneticAlgorithmConfig(duration=bad)
+
+    def test_defaults_pass_validation(self):
+        config = GeneticAlgorithmConfig()
+        assert config.population_size == 10
+        assert config.generations == 20
+
+
+# ---------------------------------------------------------------------------
+# AdaptiveMutation validation
+# ---------------------------------------------------------------------------
+
+
+class TestAdaptiveMutationValidation:
+    """Tests for AdaptiveMutation field constraints."""
+
+    @pytest.mark.parametrize("field", ["min", "max"])
+    def test_rate_accepts_boundaries(self, field):
+        kwargs = {"min": 0.0, "max": 1.0, **{field: 0.0 if field == "min" else 1.0}}
+        am = AdaptiveMutation(**kwargs)
+        assert getattr(am, field) == kwargs[field]
+
+    @pytest.mark.parametrize("field", ["min", "max"])
+    @pytest.mark.parametrize("bad", [-0.1, 1.5])
+    def test_rate_rejects_out_of_range(self, field, bad):
+        with pytest.raises(ValidationError):
+            AdaptiveMutation(**{field: bad})
+
+    def test_min_equals_max_rejected_when_enabled(self):
+        with pytest.raises(ValidationError, match="must be less than"):
+            AdaptiveMutation(enable=True, min=0.5, max=0.5)
+
+    def test_min_greater_than_max_rejected_when_enabled(self):
+        with pytest.raises(ValidationError, match="must be less than"):
+            AdaptiveMutation(enable=True, min=0.9, max=0.1)
+
+    def test_min_equals_max_allowed_when_disabled(self):
+        am = AdaptiveMutation(enable=False, min=0.5, max=0.5)
+        assert am.min == 0.5
+
+    def test_generations_accepts_positive(self):
+        assert AdaptiveMutation(generations=1).generations == 1
+
+    @pytest.mark.parametrize("bad", [0, -5])
+    def test_generations_rejects_non_positive(self, bad):
+        with pytest.raises(ValidationError):
+            AdaptiveMutation(generations=bad)
+
+
+# ---------------------------------------------------------------------------
+# BaselineConfig validation
+# ---------------------------------------------------------------------------
+
+
+class TestBaselineConfigValidation:
+    """Tests for BaselineConfig.duration constraint."""
+
+    def test_duration_accepts_positive(self):
+        assert BaselineConfig(duration=120).duration == 120
+
+    @pytest.mark.parametrize("bad", [0, -10])
+    def test_duration_rejects_non_positive(self, bad):
+        with pytest.raises(ValidationError):
+            BaselineConfig(duration=bad)
+
+
+# ---------------------------------------------------------------------------
+# ConfigFile.wait_duration validation
+# ---------------------------------------------------------------------------
+
+
+class TestConfigFileWaitDurationValidation:
+    """Tests for ConfigFile.wait_duration constraint."""
+
+    def _make_config(self, **overrides):
+        defaults = {
+            "kubeconfig_file_path": "/path/to/kubeconfig",
+            "fitness_function": FitnessFunction(query="up"),
+            "cluster_components": ClusterComponents(namespaces=[], nodes=[]),
+        }
+        defaults.update(overrides)
+        return ConfigFile(**defaults)
+
+    def test_wait_duration_accepts_zero(self):
+        assert self._make_config(wait_duration=0).wait_duration == 0
+
+    def test_wait_duration_rejects_negative(self):
+        with pytest.raises(ValidationError):
+            self._make_config(wait_duration=-1)

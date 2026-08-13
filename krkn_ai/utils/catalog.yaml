@@ -1,0 +1,156 @@
+# Fitness queries. Only key and query_template are required; $ns and $range$ are filled at runtime.
+- key: pod-restarts
+  category: availability
+  name: Pod container restarts
+  query_template: 'sum(increase(kube_pod_container_status_restarts_total{namespace="$ns"}[$range$]))'
+  requires: [kube_pod_container_status_restarts_total]
+  scope: namespace
+
+- key: pod-unavailable
+  category: availability
+  name: Non-running pods (Pending/Failed/Unknown)
+  query_template: 'sum(kube_pod_status_phase{namespace="$ns", phase=~"Pending|Failed|Unknown"})'
+  requires: [kube_pod_status_phase]
+  scope: namespace
+
+- key: oom-kills
+  category: resource
+  name: Containers last terminated by OOMKilled
+  query_template: 'sum(kube_pod_container_status_last_terminated_reason{namespace="$ns", reason="OOMKilled"})'
+  requires: [kube_pod_container_status_last_terminated_reason]
+  scope: namespace
+
+- key: cpu-throttle
+  category: resource
+  name: Worst-container CPU throttling ratio
+  query_template: 'max(rate(container_cpu_cfs_throttled_periods_total{namespace="$ns", container!=""}[$range$]) / rate(container_cpu_cfs_periods_total{namespace="$ns", container!=""}[$range$]))'
+  requires: [container_cpu_cfs_throttled_periods_total, container_cpu_cfs_periods_total]
+  scope: namespace
+
+- key: node-pressure
+  category: node
+  name: Nodes reporting a pressure condition
+  query_template: 'sum(kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"})'
+  requires: [kube_node_status_condition]
+  scope: cluster
+
+- key: apiserver-errors
+  category: control_plane
+  name: API server 5xx error fraction
+  query_template: 'sum(rate(apiserver_request_total{code=~"5.."}[$range$])) / sum(rate(apiserver_request_total[$range$]))'
+  requires: [apiserver_request_total]
+  scope: cluster
+
+- key: apiserver-latency
+  category: control_plane
+  name: API server p99 request latency
+  query_template: 'histogram_quantile(0.99, sum(rate(apiserver_request_duration_seconds_bucket{verb!~"WATCH|CONNECT"}[$range$])) by (le))'
+  requires: [apiserver_request_duration_seconds_bucket]
+  scope: cluster
+
+- key: node-not-ready
+  category: node
+  name: Nodes not in Ready state
+  query_template: 'sum(kube_node_status_condition{condition="Ready", status="true"} == bool 0)'
+  requires: [kube_node_status_condition]
+  scope: cluster
+
+- key: deployment-replicas-missing
+  category: availability
+  name: Deployment replicas desired but unavailable
+  query_template: 'clamp_min(sum(kube_deployment_spec_replicas{namespace="$ns"} - kube_deployment_status_replicas_available{namespace="$ns"}), 0)'
+  requires: [kube_deployment_spec_replicas, kube_deployment_status_replicas_available]
+  scope: namespace
+
+- key: statefulset-replicas-unready
+  category: availability
+  name: StatefulSet replicas not ready
+  query_template: 'clamp_min(sum(kube_statefulset_status_replicas{namespace="$ns"} - kube_statefulset_status_replicas_ready{namespace="$ns"}), 0)'
+  requires: [kube_statefulset_status_replicas, kube_statefulset_status_replicas_ready]
+  scope: namespace
+
+- key: crashloop-pods
+  category: availability
+  name: Containers in CrashLoopBackOff
+  query_template: 'sum(kube_pod_container_status_waiting_reason{namespace="$ns", reason="CrashLoopBackOff"})'
+  requires: [kube_pod_container_status_waiting_reason]
+  scope: namespace
+
+- key: pdb-disruptions
+  category: availability
+  name: Pods short of a disruption budget
+  query_template: 'clamp_min(sum(kube_poddisruptionbudget_status_desired_healthy{namespace="$ns"} - kube_poddisruptionbudget_status_current_healthy{namespace="$ns"}), 0)'
+  requires: [kube_poddisruptionbudget_status_desired_healthy, kube_poddisruptionbudget_status_current_healthy]
+  scope: namespace
+
+- key: pvc-pending
+  category: storage
+  name: PersistentVolumeClaims stuck Pending
+  query_template: 'sum(kube_persistentvolumeclaim_status_phase{namespace="$ns", phase="Pending"})'
+  requires: [kube_persistentvolumeclaim_status_phase]
+  scope: namespace
+
+# etcd, apiserver-side. Available on any cluster since the API server is always scraped.
+- key: etcd-request-latency
+  category: etcd
+  name: API server to etcd p99 request latency
+  query_template: 'histogram_quantile(0.99, sum(rate(etcd_request_duration_seconds_bucket[$range$])) by (le))'
+  requires: [etcd_request_duration_seconds_bucket]
+  scope: cluster
+
+- key: etcd-request-errors
+  category: etcd
+  name: API server to etcd error fraction
+  query_template: '(sum(rate(etcd_request_errors_total[$range$])) / sum(rate(etcd_requests_total[$range$]))) and (sum(rate(etcd_requests_total[$range$])) > 0)'
+  requires: [etcd_request_errors_total, etcd_requests_total]
+  scope: cluster
+
+- key: etcd-db-size
+  category: etcd
+  name: etcd database size in bytes
+  query_template: 'max(apiserver_storage_size_bytes)'
+  requires: [apiserver_storage_size_bytes]
+  scope: cluster
+
+# etcd server internals. Only present where etcd's own metrics endpoint is scraped.
+- key: etcd-no-leader
+  category: etcd
+  name: etcd members without a leader
+  query_template: 'sum(etcd_server_has_leader == bool 0)'
+  requires: [etcd_server_has_leader]
+  scope: cluster
+
+- key: etcd-leader-changes
+  category: etcd
+  name: etcd leader changes in the window
+  query_template: 'max(increase(etcd_server_leader_changes_seen_total[$range$]))'
+  requires: [etcd_server_leader_changes_seen_total]
+  scope: cluster
+
+- key: etcd-failed-proposals
+  category: etcd
+  name: etcd failed raft proposals
+  query_template: 'sum(increase(etcd_server_proposals_failed_total[$range$]))'
+  requires: [etcd_server_proposals_failed_total]
+  scope: cluster
+
+- key: etcd-fsync-latency
+  category: etcd
+  name: etcd p99 WAL fsync duration
+  query_template: 'histogram_quantile(0.99, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket[$range$])) by (le))'
+  requires: [etcd_disk_wal_fsync_duration_seconds_bucket]
+  scope: cluster
+
+- key: etcd-commit-latency
+  category: etcd
+  name: etcd p99 backend commit duration
+  query_template: 'histogram_quantile(0.99, sum(rate(etcd_disk_backend_commit_duration_seconds_bucket[$range$])) by (le))'
+  requires: [etcd_disk_backend_commit_duration_seconds_bucket]
+  scope: cluster
+
+- key: etcd-peer-rtt
+  category: etcd
+  name: etcd p99 peer round-trip time
+  query_template: 'histogram_quantile(0.99, sum(rate(etcd_network_peer_round_trip_time_seconds_bucket[$range$])) by (le))'
+  requires: [etcd_network_peer_round_trip_time_seconds_bucket]
+  scope: cluster

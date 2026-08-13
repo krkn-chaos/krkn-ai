@@ -1,12 +1,15 @@
 import datetime
+import math
 from enum import Enum
 from typing import Dict, List, Optional, Union
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_serializer,
     model_validator,
+    AnyHttpUrl,
 )
 import krkn_ai.constants as const
 from krkn_ai.models.cluster_components import ClusterComponents
@@ -66,12 +69,22 @@ class KubevirtScenarioConfig(BaseModel):
     enable: bool = False
 
 
+class StorageThrottleScenarioConfig(BaseModel):
+    enable: bool = False
+
+
+class ServiceDisruptionScenarioConfig(BaseModel):
+    enable: bool = False
+
+
 class BaselineConfig(BaseModel):
     enable: bool = True
-    duration: int = 60 * 2  # 2 minutes
+    duration: int = Field(default=60 * 2, gt=0)
 
 
 class ScenarioConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     application_outages: Optional[AppOutageScenarioConfig] = Field(
         alias="application-outages", default=None
     )
@@ -106,6 +119,12 @@ class ScenarioConfig(BaseModel):
     kubevirt_scenarios: Optional[KubevirtScenarioConfig] = Field(
         alias="kubevirt-scenarios", default=None
     )
+    storage_throttle: Optional[StorageThrottleScenarioConfig] = Field(
+        alias="storage-throttle", default=None
+    )
+    service_disruption: Optional[ServiceDisruptionScenarioConfig] = Field(
+        alias="service-disruption", default=None
+    )
 
 
 class FitnessFunctionType(str, Enum):
@@ -129,9 +148,10 @@ class FitnessFunctionItem(BaseModel):
 
     @field_validator("weight", mode="after")
     @classmethod
-    def is_percent(cls, value: float) -> float:
-        if value < 0 or value > 1:
-            raise ValueError(f"{value} is outside the range [0.0, 1.0]")
+    def is_non_negative_finite(cls, value: float) -> float:
+        """Accept arbitrary non-negative coefficients for relative weighting."""
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{value} must be a finite non-negative weight")
         return value
 
 
@@ -142,6 +162,17 @@ class FitnessFunction(BaseModel):
     include_health_check_failure: bool = True
     include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
+
+    @property
+    def num_components(self) -> int:
+        return sum(
+            [
+                bool(self.query or self.items),
+                self.include_krkn_failure,
+                self.include_health_check_failure,
+                self.include_health_check_response_time,
+            ]
+        )
 
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
@@ -160,7 +191,7 @@ class HealthCheckApplicationConfig(BaseModel):
     """
 
     name: str
-    url: str
+    url: AnyHttpUrl
     status_code: int = 200  # Expected status code
     timeout: int = 4  # in seconds
     interval: int = 2  # in seconds
@@ -169,6 +200,7 @@ class HealthCheckApplicationConfig(BaseModel):
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
+    stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
 
@@ -187,6 +219,19 @@ class OutputConfig(BaseModel):
     graph_name_fmt: str = "scenario_%s.png"
     log_name_fmt: str = "scenario_%s.log"
 
+    @field_validator("result_name_fmt", "graph_name_fmt", "log_name_fmt", mode="after")
+    @classmethod
+    def requires_scenario_id_placeholder(cls, value: str, info) -> str:
+        if "%s" not in value:
+            field_name = info.field_name
+            raise ValueError(
+                f"{field_name} must include the %s (scenario ID) placeholder "
+                f"so every scenario produces a uniquely named file. "
+                f"Got: '{value}'. Please check the '{field_name}' parameter "
+                f"in your krkn-ai config file."
+            )
+        return value
+
 
 class ElasticConfig(BaseModel):
     """
@@ -195,12 +240,23 @@ class ElasticConfig(BaseModel):
     """
 
     enable: bool = False  # Enable Elasticsearch integration
-    server: str = ""  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
+    server: Optional[AnyHttpUrl] = (
+        None  # Elasticsearch URL (e.g., https://elasticsearch.example.com)
+    )
     port: int = 9200  # Elasticsearch port
     username: str = ""  # Elasticsearch username
     password: str = Field(exclude=True, default="")  # Elasticsearch password
     index: str = "krkn-ai-metrics"  # Index name for storing Krkn-AI results
     verify_certs: bool = True  # Verify SSL certificates
+
+    @model_validator(mode="after")
+    def server_required_when_enabled(self) -> "ElasticConfig":
+        if self.enable and self.server is None:
+            raise ValueError(
+                "ElasticConfig.server must be set when enable=True. "
+                "Please provide a valid Elasticsearch URL."
+            )
+        return self
 
 
 class HealthCheckResult(BaseModel):
@@ -214,10 +270,19 @@ class HealthCheckResult(BaseModel):
 
 class AdaptiveMutation(BaseModel):
     enable: bool = False
-    min: float = 0.05
-    max: float = 0.9
+    min: float = Field(default=0.05, ge=0.0, le=1.0)
+    max: float = Field(default=0.9, ge=0.0, le=1.0)
     threshold: float = 0.1
-    generations: int = 5
+    generations: int = Field(default=5, gt=0)
+
+    @model_validator(mode="after")
+    def validate_min_less_than_max(self):
+        if self.enable and self.min >= self.max:
+            raise ValueError(
+                f"adaptive_mutation.min ({self.min}) must be less than "
+                f"adaptive_mutation.max ({self.max})"
+            )
+        return self
 
 
 class StoppingCriteria(BaseModel):
@@ -259,52 +324,62 @@ class StoppingCriteria(BaseModel):
         return value
 
 
+class AlgorithmType(str, Enum):
+    genetic = "genetic"
+
+
+class GeneticAlgorithmConfig(BaseModel):
+    generations: Optional[int] = 20
+    duration: Optional[int] = None
+    population_size: int = Field(default=10, ge=2)
+    mutation_rate: float = Field(default=const.MUTATION_RATE, ge=0.0, le=1.0)
+    scenario_mutation_rate: float = Field(
+        default=const.SCENARIO_MUTATION_RATE, ge=0.0, le=1.0
+    )
+    crossover_rate: float = Field(default=const.CROSSOVER_RATE, ge=0.0, le=1.0)
+    composition_rate: float = Field(default=0, ge=0.0, le=1.0)
+    selection_strategy: SelectionStrategy = SelectionStrategy.tournament
+    tournament_size: int = Field(default=6, ge=1)
+    population_injection_rate: float = Field(
+        default=const.POPULATION_INJECTION_RATE, ge=0.0, le=1.0
+    )
+    population_injection_size: int = Field(
+        default=const.POPULATION_INJECTION_SIZE, ge=1
+    )
+    adaptive_mutation: AdaptiveMutation = AdaptiveMutation()
+    stopping_criteria: StoppingCriteria = StoppingCriteria()
+
+    @field_validator("generations", "duration", mode="after")
+    @classmethod
+    def validate_positive_when_set(cls, value: Optional[int], info) -> Optional[int]:
+        if value is not None and value <= 0:
+            raise ValueError(
+                f"{info.field_name} must be a positive integer when set, got {value}"
+            )
+        return value
+
+
 class ConfigFile(BaseModel):
     kubeconfig_file_path: str  # Path to kubeconfig
     parameters: Dict[str, ParameterValue] = {}
 
     seed: Optional[int] = None  # Optional: Random seed for reproducible runs
 
-    generations: Optional[int] = (
-        20  # Total number of generations to run. Ignored if duration is set.
-    )
-    population_size: int = 10  # Initial population size
-    duration: Optional[int] = (
-        None  # Maximum duration in seconds to run the algorithm. When set, generations is ignored and algorithm runs until duration is reached.
-    )
-
-    wait_duration: int = (
-        const.WAIT_DURATION
+    wait_duration: int = Field(
+        default=const.WAIT_DURATION, ge=0
     )  # Time to wait after each scenario run (Default: 120 seconds)
-
-    mutation_rate: float = (
-        const.MUTATION_RATE
-    )  # How often mutation should occur for each scenario parameter (0.0-1.0)
-    scenario_mutation_rate: float = (
-        const.SCENARIO_MUTATION_RATE
-    )  # How often scenario mutation should occur (0.0-1.0)
-    crossover_rate: float = (
-        const.CROSSOVER_RATE
-    )  # How often crossover should occur for each scenario parameter (0.0-1.0)
-    composition_rate: float = (
-        0  # How often a crossover would lead to composition (0.0-1.0)
-    )
-
-    selection_strategy: SelectionStrategy = SelectionStrategy.roulette
-    tournament_size: int = 3
-
-    population_injection_rate: float = (
-        const.POPULATION_INJECTION_RATE
-    )  # How often a random samples gets added to new population (0.0-1.0)
-    population_injection_size: int = (
-        const.POPULATION_INJECTION_SIZE
-    )  # What's the size of random samples that gets added to new population
 
     fitness_function: FitnessFunction
     health_checks: HealthCheckConfig = HealthCheckConfig()
 
     baseline: BaselineConfig = BaselineConfig()
     scenario: ScenarioConfig = ScenarioConfig()
+
+    # Opt-in gate for scenarios with a cluster-critical blast radius (e.g.
+    # service disruption, which deletes whole namespaces). Such scenarios are
+    # skipped unless this is explicitly set to true, even when their own
+    # ``enable`` flag is on.
+    allow_dangerous_scenarios: bool = False
 
     output: OutputConfig = OutputConfig()
 
@@ -314,8 +389,24 @@ class ConfigFile(BaseModel):
 
     cluster_components: ClusterComponents
 
-    adaptive_mutation: AdaptiveMutation = AdaptiveMutation()
+    # Algorithm selector + per-algorithm config section
+    algorithm: AlgorithmType = AlgorithmType.genetic
+    genetic: GeneticAlgorithmConfig = GeneticAlgorithmConfig()
 
-    stopping_criteria: StoppingCriteria = (
-        StoppingCriteria()
-    )  # Additional stopping criteria for the algorithm
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_flat_algorithm_fields(cls, data):
+        """Backward compat: auto-migrate old flat GA fields into genetic: section."""
+        if not isinstance(data, dict):
+            return data
+        if "algorithm" not in data:
+            data["algorithm"] = "genetic"
+        if "genetic" not in data:
+            # Collect any flat GA fields and move them under genetic:
+            ga_data = {}
+            for field in GeneticAlgorithmConfig.model_fields:
+                if field in data:
+                    ga_data[field] = data.pop(field)
+            if ga_data:
+                data["genetic"] = ga_data
+        return data

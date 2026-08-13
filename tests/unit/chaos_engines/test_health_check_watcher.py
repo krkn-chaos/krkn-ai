@@ -5,7 +5,10 @@ HealthCheckWatcher core functionality tests
 import time
 from unittest.mock import Mock, patch
 
-from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
+from krkn_ai.chaos_engines.health_check_watcher import (
+    HealthCheckWatcher,
+    compute_baseline_response_stats,
+)
 from krkn_ai.models.config import (
     HealthCheckConfig,
     HealthCheckApplicationConfig,
@@ -51,6 +54,7 @@ class TestHealthCheckWatcherRunAndStop:
         # Verify thread was started
         assert len(watcher._threads) == 1
         assert watcher._threads[0].is_alive()
+        assert watcher._threads[0].daemon is True
 
         # Stop and wait for thread to finish
         watcher.stop()
@@ -83,6 +87,31 @@ class TestHealthCheckWatcherRunAndStop:
         for thread in watcher._threads:
             thread.join(timeout=1.0)
             assert not thread.is_alive()
+
+    def test_stop_uses_timeout_budget_and_logs_stuck_threads(self):
+        """Test stop does not block forever on a stuck health check thread"""
+        config = HealthCheckConfig(applications=[], stop_timeout=0.25)
+        watcher = HealthCheckWatcher(config)
+        stuck_thread = Mock()
+        stuck_thread.name = "health-check-stuck"
+        stuck_thread.is_alive.return_value = True
+        watcher._threads = [stuck_thread]
+
+        with patch(
+            "krkn_ai.chaos_engines.health_check_watcher.logger.warning"
+        ) as mock_warning:
+            watcher.stop()
+
+        stuck_thread.join.assert_called_once()
+        actual_timeout = stuck_thread.join.call_args.kwargs["timeout"]
+        assert actual_timeout is not None
+        assert 0 <= actual_timeout <= 0.25
+        mock_warning.assert_called_once_with(
+            "Health check worker thread %s is still running after %.2f seconds; "
+            "continuing shutdown",
+            "health-check-stuck",
+            0.25,
+        )
 
 
 class TestHealthCheckWatcherResults:
@@ -119,6 +148,35 @@ class TestHealthCheckWatcherResults:
             assert result.success is True
             assert result.status_code == 200
 
+    def test_get_results_returns_snapshot_copy(self):
+        """Test get_results does not expose live worker result lists"""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+        first_result = HealthCheckResult(
+            name="test-app",
+            status_code=200,
+            success=True,
+            response_time=0.1,
+        )
+        late_result = HealthCheckResult(
+            name="test-app",
+            status_code=200,
+            success=True,
+            response_time=0.2,
+        )
+
+        with watcher._results_lock:
+            watcher._thread_results[1] = (
+                "http://localhost:8080/health",
+                [first_result],
+            )
+
+        results = watcher.get_results()
+
+        with watcher._results_lock:
+            watcher._thread_results[1][1].append(late_result)
+
+        assert results["http://localhost:8080/health"] == [first_result]
+
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_calculates_failure_score(self, mock_get):
         """Test summarize_success_rate calculates failure score correctly"""
@@ -146,7 +204,7 @@ class TestHealthCheckWatcherResults:
         # Should have some failures, score should be > 0
         assert score >= 0
         # Score is (failed / total) * 10
-        assert score <= 10
+        assert score <= 1.0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_returns_zero_for_empty_results(self, mock_get):
@@ -183,7 +241,7 @@ class TestHealthCheckWatcherResults:
 
         # Should detect outliers and return score > 0
         assert score >= 0
-        assert score <= 10
+        assert score <= 1.0
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_response_time_returns_zero_with_insufficient_data(
@@ -208,6 +266,211 @@ class TestHealthCheckWatcherResults:
 
         # Should return 0 when less than 4 successful checks
         assert score == 0
+
+    def test_summarize_response_time_skips_insufficient_first_url_continues_processing(
+        self,
+    ):
+        """Test summarize_response_time skips URLs with <4 samples but processes remaining URLs.
+
+        This tests the bug fix where previously return 0 would exit the entire function
+        when the first URL had insufficient data, causing total data loss.
+        """
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        # First URL has only 2 successful results (insufficient)
+        first_url_results = [
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.15
+            ),
+        ]
+
+        # Second URL has 5 successful results (sufficient - can detect outliers)
+        second_url_results = [
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=2.5
+            ),  # outlier
+        ]
+
+        health_check_results = {
+            "http://first-url": first_url_results,
+            "http://second-url": second_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        # Should NOT return 0 - second URL has sufficient data and should contribute
+        # The outlier (2.5) should be detected, so score should be > 0
+        assert score > 0
+
+    def test_summarize_response_time_returns_zero_only_when_all_urls_have_insufficient_data(
+        self,
+    ):
+        """Test summarize_response_time returns 0 when ALL URLs have <2 samples."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        first_url_results = [
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+        ]
+        second_url_results = [
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+        ]
+
+        health_check_results = {
+            "http://first-url": first_url_results,
+            "http://second-url": second_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        assert score == 0
+
+    def test_summarize_response_time_middle_url_insufficient_does_not_stop_processing(
+        self,
+    ):
+        """Test that an insufficient URL in the middle doesn't stop processing subsequent URLs."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        first_url_results = [
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app1", status_code=200, success=True, response_time=0.16
+            ),
+        ]
+        middle_url_results = [
+            HealthCheckResult(
+                name="app2", status_code=200, success=True, response_time=0.1
+            ),
+        ]  # Only 1 - insufficient (< 2)
+        last_url_results = [
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.12
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.14
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=0.16
+            ),
+            HealthCheckResult(
+                name="app3", status_code=200, success=True, response_time=3.0
+            ),
+        ]
+
+        health_check_results = {
+            "http://first": first_url_results,
+            "http://middle": middle_url_results,
+            "http://last": last_url_results,
+        }
+
+        score = watcher.summarize_response_time(health_check_results)
+
+        # Should NOT return 0 - first and last URLs have sufficient data
+        assert score > 0
+
+    def test_summarize_response_time_baseline_degradation_adds_bonus(self):
+        """With baseline stats, uniform slowdown is detected via degradation bonus."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        scenario_results = [
+            HealthCheckResult(
+                name="app", status_code=200, success=True, response_time=5.0
+            ),
+            HealthCheckResult(
+                name="app", status_code=200, success=True, response_time=5.1
+            ),
+            HealthCheckResult(
+                name="app", status_code=200, success=True, response_time=5.05
+            ),
+        ]
+
+        baseline_stats = {"http://app": (0.1, 0.01)}
+
+        score_without = watcher.summarize_response_time(
+            {"http://app": scenario_results}, baseline_stats=None
+        )
+        score_with = watcher.summarize_response_time(
+            {"http://app": scenario_results}, baseline_stats=baseline_stats
+        )
+
+        # Baseline degradation should add a bonus on top of the variability score
+        assert score_with > score_without
+
+    def test_summarize_success_rate_streak_increases_score(self):
+        """Consecutive failures score higher than scattered failures."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        # 3 consecutive failures
+        consecutive = [
+            HealthCheckResult(
+                name="a", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=200, success=True, response_time=0.1
+            ),
+        ]
+
+        # 3 scattered failures (same count but no streak)
+        scattered = [
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=200, success=True, response_time=0.1
+            ),
+            HealthCheckResult(
+                name="a", status_code=500, success=False, response_time=0.1
+            ),
+        ]
+
+        score_consecutive = watcher.summarize_success_rate({"http://a": consecutive})
+        score_scattered = watcher.summarize_success_rate({"http://a": scattered})
+
+        assert score_consecutive > score_scattered
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
@@ -368,3 +631,60 @@ class TestHealthCheckWatcherHeaders:
         assert (
             mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer $MISSING"
         )
+
+
+class TestComputeBaselineResponseStats:
+    """Tests for compute_baseline_response_stats."""
+
+    def test_basic_stats(self):
+        results = {
+            "http://app": [
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.10
+                ),
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.12
+                ),
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.14
+                ),
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.16
+                ),
+            ]
+        }
+        stats = compute_baseline_response_stats(results)
+        assert "http://app" in stats
+        median, mad = stats["http://app"]
+        assert 0.12 < median < 0.14  # median of [0.10, 0.12, 0.14, 0.16]
+        assert mad > 0
+
+    def test_skips_failed_checks(self):
+        results = {
+            "http://app": [
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.10
+                ),
+                HealthCheckResult(
+                    name="a", status_code=500, success=False, response_time=0.50
+                ),
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.12
+                ),
+            ]
+        }
+        stats = compute_baseline_response_stats(results)
+        median, _ = stats["http://app"]
+        # Only successful results (0.10, 0.12) should be used
+        assert 0.10 <= median <= 0.12
+
+    def test_skips_url_with_insufficient_data(self):
+        results = {
+            "http://app": [
+                HealthCheckResult(
+                    name="a", status_code=200, success=True, response_time=0.10
+                ),
+            ]
+        }
+        stats = compute_baseline_response_stats(results)
+        assert len(stats) == 0

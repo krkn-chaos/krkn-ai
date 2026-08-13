@@ -8,6 +8,7 @@ import datetime
 
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
+from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 
 
@@ -48,6 +49,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="test-run",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=best,
             start_time=now,
@@ -88,6 +90,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="test",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=[],
         )
@@ -115,6 +118,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="single",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=gen0,
             best_of_generation=[gen0[1]],
             completed_generations=1,
@@ -137,6 +141,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="zero",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population={999: res_zero},
             best_of_generation=[],
         )
@@ -149,6 +154,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="empty",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population={},
             best_of_generation=[],
         )
@@ -168,6 +174,7 @@ class TestJSONSummaryReporter:
         reporter = JSONSummaryReporter(
             run_uuid="save-test",
             config=minimal_config,
+            algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=[],
         )
@@ -180,3 +187,72 @@ class TestJSONSummaryReporter:
         with open(path, "r") as f:
             saved_content = json.load(f)
             assert saved_content == expected_summary
+
+    def test_population_lineage_in_summary(self, minimal_config):
+        """Test that population_lineage is built from scenario provenance"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cc = minimal_config.cluster_components
+        scenario = DummyScenario(cluster_components=cc)
+        scenario.parent_ids = ["parent-a", "parent-b"]
+        scenario.origin = ScenarioOrigin.CROSSOVER
+
+        res = CommandRunResult(
+            generation_id=1,
+            scenario_id=42,
+            scenario=scenario,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=75.0),
+        )
+
+        reporter = JSONSummaryReporter(
+            run_uuid="lineage-test",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={42: res},
+            best_of_generation=[],
+        )
+
+        lineage = reporter.generate_summary()["population_lineage"]
+        assert len(lineage) == 1
+        node = lineage[0]
+        assert node["scenario_id"] == 42
+        assert node["scenario_uuid"] == scenario.id
+        assert node["generation"] == 1
+        assert node["fitness_score"] == 75.0
+        assert node["parent_ids"] == ["parent-a", "parent-b"]
+        assert node["origin"] == ScenarioOrigin.CROSSOVER
+
+    def test_population_lineage_empty_for_initial_scenarios(self, minimal_config):
+        """Test that initial scenarios have no parent_ids"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cc = minimal_config.cluster_components
+        scenario = DummyScenario(cluster_components=cc)
+        scenario.origin = ScenarioOrigin.INITIAL
+
+        res = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=30.0),
+        )
+
+        reporter = JSONSummaryReporter(
+            run_uuid="initial-test",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={1: res},
+            best_of_generation=[],
+        )
+
+        node = reporter.generate_summary()["population_lineage"][0]
+        assert node["parent_ids"] == []
+        assert node["origin"] == ScenarioOrigin.INITIAL

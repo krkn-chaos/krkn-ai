@@ -7,7 +7,11 @@ import streamlit as st
 import re
 import json
 
+from krkn_ai.models.config import OutputConfig
+from krkn_ai.utils.output import fmt_to_glob, fmt_to_id_regex
 
+
+@st.cache_data(ttl=300)
 def load_results_csv(output_dir: str):
     """Return (file_exists, df).  df is None when file is missing or empty or unreadable."""
     csv_path = os.path.join(output_dir, "reports", "all.csv")
@@ -21,6 +25,28 @@ def load_results_csv(output_dir: str):
         return True, None
 
 
+@st.cache_data(ttl=300)
+def load_population_lineage(output_dir: str):
+    """Load population_lineage from results.json. Returns a DataFrame or None."""
+    results_path = os.path.join(output_dir, "results.json")
+    if not os.path.exists(results_path):
+        return None
+    try:
+        with open(results_path, "r") as f:
+            data = json.load(f)
+        lineage = data.get("population_lineage")
+        if not lineage:
+            return None
+        df = pd.DataFrame(lineage)
+        if df.empty or "origin" not in df.columns:
+            return None
+        return df
+    except Exception as e:
+        logging.error(f"Failed to load lineage from {results_path}: {e}")
+        return None
+
+
+@st.cache_data(ttl=300)
 def load_config_yaml(output_dir: str):
     config_path = os.path.join(output_dir, "krkn-ai.yaml")
     if os.path.exists(config_path):
@@ -32,9 +58,24 @@ def load_config_yaml(output_dir: str):
     return None
 
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=300)
+def _get_output_config(output_dir: str) -> OutputConfig:
+    """Load the output filename config for a run, falling back to defaults."""
+    raw = load_config_yaml(output_dir)
+    try:
+        return OutputConfig(**(raw or {}).get("output", {}))
+    except Exception as e:
+        logging.error(f"Failed to parse output config for {output_dir}: {e}")
+        return OutputConfig()
+
+
+@st.cache_data(ttl=300)
 def load_detailed_scenarios_data(output_dir: str):
-    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", "scenario_*.yaml")
+    output_config = _get_output_config(output_dir)
+    yaml_glob = fmt_to_glob(output_config.result_name_fmt)
+    base_name, _ext = os.path.splitext(yaml_glob)
+    yaml_glob = f"{base_name}.yaml"
+    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", yaml_glob)
     yaml_files = glob.glob(yaml_pattern)
 
     rows = []
@@ -82,6 +123,7 @@ def load_detailed_scenarios_data(output_dir: str):
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
 def load_health_check_csv(output_dir: str):
     """Return (file_exists, df).  df is None when file is missing or empty or unreadable."""
     csv_path = os.path.join(output_dir, "reports", "health_check_report.csv")
@@ -95,26 +137,21 @@ def load_health_check_csv(output_dir: str):
         return True, None
 
 
-# def load_best_scenarios_yaml(output_dir: str):
-#     yaml_path = os.path.join(output_dir, "reports", "best_scenarios.yaml")
-#     if os.path.exists(yaml_path):
-#         try:
-#             with open(yaml_path, "r") as f:
-#                 return yaml.safe_load(f)
-#         except Exception as e:
-#             logging.error(f"Failed to load best_scenarios.yaml: {e}")
-#     return None
-
-
+@st.cache_data(ttl=300)
 def load_logs(output_dir: str):
     """
-    Parse all scenario_N.log files and return a list of structured dicts,
-    one per scenario, containing everything needed for the report card.
+    Parse all scenario log files (matched using the run's configured
+    log_name_fmt) and return a list of structured dicts, one per scenario,
+    containing everything needed for the report card.
     """
 
     log_dir = os.path.join(output_dir, "logs")
     if not os.path.isdir(log_dir):
         return []
+
+    output_config = _get_output_config(output_dir)
+    log_glob = fmt_to_glob(output_config.log_name_fmt)
+    log_id_regex = fmt_to_id_regex(output_config.log_name_fmt)
 
     # Matches: "2026-03-17 11:58:12,164 [INFO] message..."
     log_re = re.compile(
@@ -126,9 +163,9 @@ def load_logs(output_dir: str):
     ansi_re = re.compile(r"\x1b\[[0-9;]*m")
 
     results = []
-    for log_file in sorted(glob.glob(os.path.join(log_dir, "scenario_*.log"))):
+    for log_file in sorted(glob.glob(os.path.join(log_dir, log_glob))):
         base = os.path.basename(log_file)
-        m = re.match(r"scenario_(\d+)\.log", base)
+        m = log_id_regex.match(base)
         scen_id = int(m.group(1)) if m else base
 
         try:
@@ -202,6 +239,14 @@ def load_logs(output_dir: str):
             except Exception:
                 return {}
 
+        def get_distribution():
+            dist_m = re.search(
+                r"Detected distribution\s+([a-zA-Z0-9_-]+)", clean_raw, re.IGNORECASE
+            )
+            if dist_m:
+                return dist_m.group(1).capitalize()
+            return jval("distribution") or jval("distribution_type") or "—"
+
         # Top-level telemetry fields
         telemetry = {
             "run_uuid": jval("run_uuid") or "",
@@ -210,6 +255,7 @@ def load_logs(output_dir: str):
             "timestamp": jval("timestamp") or "",
             "total_node_count": jval("total_node_count") or 0,
             "network_plugins": jlist("network_plugins") or ["Unknown"],
+            "distribution": get_distribution(),
             "kubernetes_objects_count": jobj("kubernetes_objects_count"),
             "scenarios": [],
             "node_summary_infos": [],
@@ -332,6 +378,7 @@ def load_logs(output_dir: str):
                 "k8s_objects": telemetry.get("kubernetes_objects_count", {}),
                 "net_plugins": telemetry.get("network_plugins", ["Unknown"]),
                 "timeline": timeline,
+                "distribution": telemetry.get("distribution", "Kubernetes"),
             }
         )
 

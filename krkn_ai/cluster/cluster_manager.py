@@ -1,12 +1,16 @@
 import re
+import ipaddress
 import concurrent.futures
 from typing import Dict, List, Optional, Union
+
+import requests
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
 from kubernetes.client.models import V1PodSpec
+from kubernetes.client.rest import ApiException
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
-from krkn_ai.utils.pattern_matcher import PatternMatcher
+from krkn_ai.cluster.pattern_matcher import PatternMatcher
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Container,
@@ -21,6 +25,43 @@ from krkn_ai.models.cluster_components import (
 from krkn_ai.models.cluster_components import VMI
 
 logger = get_logger(__name__)
+
+# Network interface name prefixes that are valid targets for network chaos.
+# Covers classic and predictable NIC names, bonds, bridges, InfiniBand and
+# wireless across bare-metal, cloud and OpenShift nodes. (#294)
+_TARGETABLE_INTERFACE_PREFIXES = (
+    "eth",  # classic: eth0
+    "en",  # predictable names: ens5, eno1, enp0s3, enx001122334455
+    "em",  # onboard (older biosdevname): em1
+    "bond",  # link aggregation: bond0
+    "br",  # bridges: br-ex, br0, bridge0
+    "ib",  # InfiniBand: ib0
+    "wlan",  # wireless: wlan0
+)
+
+# biosdevname-style PCI NICs (e.g. p2p1, p1p1). Matched separately from the
+# prefix tuple so a bare "p" doesn't admit non-physical names like "ppp0". (#294)
+_PCI_INTERFACE_RE = re.compile(r"^p\d")
+
+# Virtual / internal interfaces that must never be disrupted, even when they
+# share a prefix with a targetable one (e.g. "podman0" starts with "p", and the
+# OVS/OVN internal bridges "br-int"/"br-tun" start with "br"). Exclusion takes
+# precedence over the whitelist above. (#294)
+_EXCLUDED_INTERFACE_PREFIXES = (
+    "lo",  # loopback
+    "veth",  # container virtual ethernet pairs
+    "ovs",  # Open vSwitch: ovs-system
+    "br-int",  # OVN/OVS integration bridge (pod-to-pod traffic)
+    "br-tun",  # OVS tunnel bridge (overlay traffic)
+    "docker",  # docker bridge: docker0
+    "podman",  # podman bridge: podman0
+    "cni",  # CNI plugin interfaces: cni0
+    "flannel",  # flannel.1
+    "cali",  # Calico: cali<hash>
+    "tunl",  # IPIP tunnels: tunl0
+    "vxlan",  # VXLAN overlays: vxlan.calico
+    "dummy",  # dummy interfaces
+)
 
 
 class ClusterManager:
@@ -223,6 +264,126 @@ class ClusterManager:
         )
         return service_list
 
+    def recommend_health_checks(
+        self, cluster_components: ClusterComponents
+    ) -> List[Dict[str, Union[str, bool]]]:
+        """Suggest health-check URLs for LoadBalancer services."""
+        try:
+            recommendations: List[Dict[str, Union[str, bool]]] = []
+            for namespace in cluster_components.get_active_components().namespaces:
+                services = self.core_api.list_namespaced_service(
+                    namespace=namespace.name
+                ).items
+                pods = self.core_api.list_namespaced_pod(
+                    namespace=namespace.name, field_selector="status.phase=Running"
+                ).items
+
+                for svc in services:
+                    if svc.spec.type != "LoadBalancer" or not svc.spec.ports:
+                        continue
+                    address = self._external_address(svc)
+                    if address is None:
+                        continue
+
+                    probe, container = self._backing_probe(svc, pods)
+                    port, scheme, path = self._endpoint_from_probe(
+                        svc, probe, container
+                    )
+                    host = self._format_host(address)
+                    url = f"{scheme}://{host}:{port}{path}"
+                    recommendations.append(
+                        {
+                            "name": svc.metadata.name,
+                            "url": url,
+                            "probe": probe is not None,
+                            "active": self._check_reachable(url),
+                        }
+                    )
+            return recommendations
+        except Exception as error:
+            # Never let this break discovery.
+            logger.debug("Health check recommendation failed: %s", error)
+            return []
+
+    @staticmethod
+    def _external_address(svc) -> Optional[str]:
+        # The LoadBalancer's external IP or hostname.
+        if not svc.status or not svc.status.load_balancer:
+            return None
+        for entry in svc.status.load_balancer.ingress or []:
+            if entry.ip or entry.hostname:
+                return entry.ip or entry.hostname
+        return None
+
+    @staticmethod
+    def _format_host(address: str) -> str:
+        # Wrap IPv6 literals in brackets so the URL stays valid.
+        try:
+            if isinstance(ipaddress.ip_address(address), ipaddress.IPv6Address):
+                return f"[{address}]"
+        except ValueError:
+            pass
+        return address
+
+    @staticmethod
+    def _check_reachable(url: str) -> bool:
+        try:
+            resp = requests.get(url, timeout=3, verify=False)
+            return resp.status_code < 500
+        except Exception:
+            return False
+
+    def _backing_probe(self, svc, pods):
+        # First httpGet probe behind the service, preferring readiness over
+        # liveness across all containers.
+        selector = svc.spec.selector or {}
+        if not selector:
+            return None, None
+        for pod in pods:
+            labels = pod.metadata.labels or {}
+            if not all(labels.get(key) == value for key, value in selector.items()):
+                continue
+            for attr in ("readiness_probe", "liveness_probe"):
+                for container in pod.spec.containers:
+                    probe = getattr(container, attr)
+                    if probe and probe.http_get:
+                        return probe.http_get, container
+        return None, None
+
+    @staticmethod
+    def _endpoint_from_probe(svc, probe, container):
+        # Match the probe's port to a service port; else the first port at root.
+        port = svc.spec.ports[0].port
+        path = "/"
+        scheme = None
+        probe_port = (
+            ClusterManager._resolve_port(probe.port, container)
+            if probe is not None
+            else None
+        )
+        if probe_port is not None:
+            for svc_port in svc.spec.ports:
+                target = svc_port.target_port
+                target = svc_port.port if target is None else target
+                if ClusterManager._resolve_port(target, container) == probe_port:
+                    port = svc_port.port
+                    path = probe.path or "/"
+                    scheme = (probe.scheme or "HTTP").lower()
+                    break
+        if scheme is None:
+            scheme = "https" if port in (443, 8443) else "http"
+        return port, scheme, path
+
+    @staticmethod
+    def _resolve_port(value, container):
+        # Turn an int or named port into a port number.
+        if isinstance(value, int):
+            return value
+        for port in container.ports or []:
+            if port.name == value:
+                return port.container_port
+        return None
+
     def list_pvcs(self, namespace: Namespace) -> List[PVC]:
         """List all PVCs in the namespace"""
         try:
@@ -243,6 +404,19 @@ class ClusterManager:
                 "Discovered %d PVCs in namespace %s", len(pvc_list), namespace.name
             )
             return pvc_list
+        except ApiException as e:
+            if e.status == 403:
+                logger.warning(
+                    "RBAC denied listing PVCs in namespace %s, skipping",
+                    namespace.name,
+                )
+            else:
+                logger.warning(
+                    "Failed to list PVCs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
         except Exception as e:
             logger.warning(
                 "Failed to list PVCs in namespace %s: %s", namespace.name, str(e)
@@ -270,7 +444,7 @@ class ClusterManager:
                 logger.debug(
                     "Found %d vmis in namespace %s",
                     len(vmis),
-                    vmis[0]["metadata"]["name"],
+                    namespace.name,
                 )
             else:
                 logger.debug("No VMIs found in namespace %s", namespace.name)
@@ -282,8 +456,32 @@ class ClusterManager:
                 "Filtered %d vmis in namespace %s", len(vmi_list), namespace.name
             )
             return vmi_list
-        except Exception:
-            logger.warning("Unable to find VMIs in namespace %s", namespace.name)
+        except ApiException as e:
+            if e.status == 404:
+                logger.debug(
+                    "KubeVirt CRDs not installed, skipping VMI discovery in namespace %s",
+                    namespace.name,
+                )
+            elif e.status == 403:
+                logger.warning(
+                    "RBAC denied listing virtualmachineinstances in namespace %s, skipping. "
+                    "Grant kubevirt.io list permission to the ServiceAccount.",
+                    namespace.name,
+                )
+            else:
+                logger.warning(
+                    "Failed to list VMIs in namespace %s (HTTP %d), skipping",
+                    namespace.name,
+                    e.status,
+                )
+            return []
+        except Exception as e:
+            logger.warning(
+                "Failed to list VMIs in namespace %s: %s",
+                namespace.name,
+                e,
+                exc_info=True,
+            )
             return []
 
     def list_nodes(
@@ -430,20 +628,31 @@ class ClusterManager:
             logger.warning("Unable to find interfaces for node %s", node)
             return []
 
-        interfaces = []
         interfaces_list = [x.strip() for x in log.splitlines()]
 
-        # TODO: Check which interfaces to consider for network chaos
-        # For now, consider specific interfaces like ens5, eth0, etc.
-
-        for intf in interfaces_list:
-            # TODO: Check which interfaces to consider for network chaos
-            # ens5, eth0, br-ex, br-int, etc. as well as other interfaces like lo, ovs-system, etc.
-            # Krkn validation doesn't work with interfaces with name like ABC-XYZ
-            if intf.startswith("ens") or intf.startswith("eth"):
-                interfaces.append(intf)
+        # Keep only physical/targetable interfaces; drop virtual and internal
+        # ones (loopback, veth pairs, overlay/bridge interfaces created by
+        # container runtimes and CNIs) so chaos never disrupts core networking.
+        interfaces = [
+            intf for intf in interfaces_list if self._is_targetable_interface(intf)
+        ]
 
         return interfaces
+
+    @staticmethod
+    def _is_targetable_interface(name: str) -> bool:
+        """Return True if ``name`` is a physical/targetable network interface.
+
+        Excluded virtual/internal interfaces take precedence over the targetable
+        whitelist, so names that share a prefix with a real NIC (e.g. "podman0"
+        vs the "p" prefix) are still filtered out. (#294)
+        """
+        if not name or name.startswith(_EXCLUDED_INTERFACE_PREFIXES):
+            return False
+        if name.startswith(_TARGETABLE_INTERFACE_PREFIXES):
+            return True
+        # biosdevname PCI NICs (p2p1, p1p1) but not names like "ppp0".
+        return bool(_PCI_INTERFACE_RE.match(name))
 
     @staticmethod
     def parse_cpu(cpu_str: str):
@@ -522,4 +731,6 @@ class ClusterManager:
         u_uc = unit.capitalize()
         if u_uc in _mem_power2:
             return int(val * _mem_power2[u_uc])
+        if u_uc in _mem_power10:
+            return int(val * _mem_power10[u_uc])
         raise ValueError(f"Unknown memory unit: {unit}")

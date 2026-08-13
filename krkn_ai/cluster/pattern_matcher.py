@@ -66,19 +66,8 @@ class PatternMatcher:
         Raises:
             PatternValidationError: If any pattern contains invalid regex
         """
-        # Handle list input (pass through)
         if isinstance(pattern_string, list):
-            list_include: List[re.Pattern] = []
-            list_exclude: List[re.Pattern] = []
-            for pat in pattern_string:
-                if pat.startswith("!"):
-                    actual = pat[1:]
-                    if actual:
-                        list_exclude.append(cls._compile_pattern(actual))
-                else:
-                    list_include.append(cls._compile_pattern(pat))
-            list_match_all = len(list_include) == 0 and len(list_exclude) > 0
-            return cls(list_include, list_exclude, match_all=list_match_all)
+            pattern_string = ",".join(pattern_string)
 
         # Handle None or empty string
         if pattern_string is None or pattern_string.strip() == "":
@@ -222,16 +211,18 @@ class PatternMatcher:
         return not self.match_all and len(self.include_patterns) == 0
 
     @classmethod
-    def validate(cls, pattern_string: str) -> List[str]:
+    def validate(cls, pattern_string: Optional[Union[str, List[str]]]) -> List[str]:
         """
         Validate a pattern string without creating a matcher.
 
         Args:
-            pattern_string: The pattern string to validate
+            pattern_string: The pattern string or list to validate
 
         Returns:
             List of error messages (empty if valid)
         """
+        if isinstance(pattern_string, list):
+            pattern_string = ",".join(pattern_string)
         errors: List[str] = []
         if not pattern_string or pattern_string.strip() in ("", "*"):
             return errors

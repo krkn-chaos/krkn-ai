@@ -36,7 +36,11 @@ class HealthCheckReporter:
 
             for component_results in health_check_results:
                 if len(component_results) == 0:
-                    break
+                    logger.warning(
+                        "Component in scenario_id=%s produced zero health-check samples, skipping.",
+                        scenario_id,
+                    )
+                    continue
                 component_name = component_results[0].name
                 min_response_time = min(
                     [result.response_time for result in component_results]
@@ -102,6 +106,13 @@ class HealthCheckReporter:
                         "success": 1 if health_check_result.success else 0,
                     }
                 )
+        if not records:
+            logger.debug(
+                "No health check records found to plot for scenario_id=%s",
+                result.scenario_id,
+            )
+            return
+
         df = pd.DataFrame(records)
         df = df.sort_values("timestamp")
 
@@ -189,11 +200,17 @@ class HealthCheckReporter:
                 for param in fitness_result.scenario.parameters
             ]
 
-        # SLO breakdown
-        fitness_function_slos = {}
+        # SLO breakdown (raw, normalized, weighted per item)
+        fitness_function_slos: dict = {}
         for fitness_function_item in fitness_result.fitness_result.scores:
             fitness_function_slos[f"slo_{fitness_function_item.id}"] = (
                 fitness_function_item.fitness_score
+            )
+            fitness_function_slos[f"slo_{fitness_function_item.id}_normalized"] = (
+                fitness_function_item.normalized_score
+            )
+            fitness_function_slos[f"slo_{fitness_function_item.id}_weighted"] = (
+                fitness_function_item.weighted_score
             )
 
         new_row = pd.DataFrame(
@@ -232,6 +249,45 @@ class HealthCheckReporter:
         df.to_csv(report_path, index=False)
         logger.debug("Fitness result updated.")
 
+    def update_normalized_scores(self, results: List[CommandRunResult]) -> None:
+        """Patch CSV rows with post-normalization scores for a generation.
+
+        Called after ``normalize_generation_scores`` mutates the in-memory
+        results so that ``normalized_score``, ``weighted_score`` and the
+        recomputed ``fitness_score`` are persisted to ``all.csv``.
+        """
+        report_path = os.path.join(self.output_dir, "all.csv")
+        if not os.path.isfile(report_path):
+            return
+
+        try:
+            df = pd.read_csv(report_path)
+        except Exception as e:
+            logger.warning("Could not read CSV for normalization update: %s", e)
+            return
+
+        for result in results:
+            mask = (df["generation_id"] == result.generation_id) & (
+                df["scenario_id"].astype(str) == str(result.scenario_id)
+            )
+            if not mask.any():
+                continue
+
+            for score in result.fitness_result.scores:
+                norm_col = f"slo_{score.id}_normalized"
+                weighted_col = f"slo_{score.id}_weighted"
+                if norm_col not in df.columns:
+                    df[norm_col] = pd.NA
+                if weighted_col not in df.columns:
+                    df[weighted_col] = pd.NA
+                df.loc[mask, norm_col] = score.normalized_score
+                df.loc[mask, weighted_col] = score.weighted_score
+
+            df.loc[mask, "fitness_score"] = result.fitness_result.fitness_score
+
+        df.to_csv(report_path, index=False)
+        logger.debug("CSV updated with normalized scores")
+
     def sort_fitness_result_csv(self):
         """Read the CSV file, sort it by fitness_score, and write it back"""
         report_path = os.path.join(self.output_dir, "all.csv")
@@ -241,5 +297,5 @@ class HealthCheckReporter:
                 df = df.sort_values(by="fitness_score", ascending=False)
                 df.to_csv(report_path, index=False)
                 logger.debug("Fitness result CSV sorted by fitness_score")
-            except Exception:
-                logger.warning("Unable to sort fitness results")
+            except Exception as e:
+                logger.exception("Unable to sort fitness results: %s", e)

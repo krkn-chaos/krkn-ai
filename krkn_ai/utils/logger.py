@@ -2,6 +2,7 @@
 import logging
 import os
 from typing import Optional
+from rich.logging import RichHandler
 
 _LOGGER_INITIALIZED = False
 _LOG_DIR: Optional[str] = None
@@ -35,10 +36,19 @@ def init_logger(output_dir: Optional[str] = None, verbose: bool = False):
     parent.setLevel(logging.DEBUG)  # accept all levels; handler controls output
     parent.propagate = False  # don't let messages go to root
 
-    # Console handler
-    console = logging.StreamHandler()
-    console.setLevel(log_level)
-    console.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    # Console handler (rich gives color-coded levels and clean formatting)
+    try:
+        console = RichHandler(
+            level=log_level,
+            show_path=False,
+            show_time=False,
+            markup=True,
+            rich_tracebacks=True,
+        )
+    except ImportError:
+        console = logging.StreamHandler()
+        console.setLevel(log_level)
+        console.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
     parent.addHandler(console)
 
     # Optional file handler

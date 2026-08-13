@@ -8,7 +8,7 @@ import datetime
 from unittest.mock import patch, MagicMock
 
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
-from krkn_ai.models.app import CommandRunResult, FitnessResult
+from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
 from krkn_ai.models.config import HealthCheckResult
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.cluster_components import ClusterComponents
@@ -82,6 +82,70 @@ class TestHealthCheckReporter:
         assert app1_row["max_response_time"] == 0.2
         assert app1_row["success_count"] == 2
         assert app1_row["failure_count"] == 0
+
+    def test_save_report_skips_empty_results_and_continues(
+        self, temp_output_dir, caplog
+    ):
+        """Test that an empty component results list does not break the loop, missing subsequent components."""
+        import logging
+
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        now = datetime.datetime.now()
+
+        fitness_results = [
+            CommandRunResult(
+                generation_id=0,
+                scenario_id=1,
+                scenario=scenario,
+                cmd="test-cmd",
+                log="test-log",
+                returncode=0,
+                start_time=now,
+                end_time=now,
+                fitness_result=FitnessResult(fitness_score=10.0),
+                health_check_results={
+                    "app1": [
+                        HealthCheckResult(
+                            name="app1",
+                            response_time=0.1,
+                            status_code=200,
+                            success=True,
+                        )
+                    ],
+                    "broken_app_2": [],  # Empty result! This used to break the loop.
+                    "app3": [
+                        HealthCheckResult(
+                            name="app3",
+                            response_time=0.3,
+                            status_code=200,
+                            success=True,
+                        )
+                    ],
+                },
+            )
+        ]
+
+        target_logger = logging.getLogger("krkn-ai")
+        target_logger.addHandler(caplog.handler)
+        try:
+            with caplog.at_level(logging.WARNING):
+                reporter.save_report(fitness_results)
+        finally:
+            target_logger.removeHandler(caplog.handler)
+
+        report_path = os.path.join(
+            temp_output_dir, "reports", "health_check_report.csv"
+        )
+        assert os.path.exists(report_path)
+
+        df = pd.read_csv(report_path)
+        # Should contain app1 and app3, skipping broken_app_2 but NOT terminating the loop
+        assert len(df) == 2
+        assert set(df["component_name"].values) == {"app1", "app3"}
+
+        # Assert the skip was logged so operators can debug silent gaps
+        assert any("zero health-check samples" in msg for msg in caplog.messages)
 
     def test_save_report_with_empty_results(self, temp_output_dir):
         """Test saving report with empty fitness results"""
@@ -177,6 +241,35 @@ class TestHealthCheckReporter:
             # Should not call savefig for empty results
             mock_plt.savefig.assert_not_called()
 
+    def test_plot_report_with_empty_sample_lists_in_health_check_results(
+        self, temp_output_dir
+    ):
+        """Test that health_check_results with empty sample lists does not cause KeyError."""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        now = datetime.datetime.now()
+
+        result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="test-cmd",
+            log="test-log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=10.0),
+            health_check_results={
+                "http://broken-app/api": [],
+                "http://unreachable/ping": [],
+            },
+        )
+
+        with patch("krkn_ai.reporter.health_check_reporter.plt") as mock_plt:
+            # Should not raise KeyError: 'timestamp'
+            reporter.plot_report(result)
+            mock_plt.savefig.assert_not_called()
+
     def test_write_fitness_result_creates_and_appends_csv(self, temp_output_dir):
         """Test writing fitness result creates CSV and appends subsequent results"""
         reporter = HealthCheckReporter(output_dir=temp_output_dir)
@@ -269,3 +362,89 @@ class TestHealthCheckReporter:
 
         report_path = os.path.join(temp_output_dir, "reports", "all.csv")
         assert not os.path.exists(report_path)
+
+    def test_write_fitness_result_includes_slo_columns(self, temp_output_dir):
+        """Test that SLO raw, normalized, and weighted columns are written."""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        now = datetime.datetime.now()
+
+        result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="cmd",
+            log="log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(
+                fitness_score=5.0,
+                scores=[
+                    FitnessScoreResult(
+                        id=0,
+                        fitness_score=100.0,
+                        weighted_score=3.0,
+                        normalized_score=0.8,
+                    ),
+                    FitnessScoreResult(
+                        id=1,
+                        fitness_score=0.5,
+                        weighted_score=0.1,
+                        normalized_score=0.2,
+                    ),
+                ],
+            ),
+        )
+
+        reporter.write_fitness_result(result)
+        report_path = os.path.join(temp_output_dir, "reports", "all.csv")
+        df = pd.read_csv(report_path)
+
+        assert df.iloc[0]["slo_0"] == 100.0
+        assert df.iloc[0]["slo_0_normalized"] == 0.8
+        assert df.iloc[0]["slo_0_weighted"] == 3.0
+        assert df.iloc[0]["slo_1"] == 0.5
+        assert df.iloc[0]["slo_1_normalized"] == 0.2
+        assert df.iloc[0]["slo_1_weighted"] == 0.1
+
+    def test_update_normalized_scores_patches_csv(self, temp_output_dir):
+        """Test that update_normalized_scores patches existing CSV rows."""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        now = datetime.datetime.now()
+
+        scores = [
+            FitnessScoreResult(id=0, fitness_score=500.0, weighted_score=500.0),
+        ]
+        result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="cmd",
+            log="log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=500.0, scores=scores),
+        )
+
+        reporter.write_fitness_result(result)
+
+        # Simulate normalization mutating the result in-place
+        scores[0].normalized_score = 0.75
+        scores[0].weighted_score = 0.6
+        result.fitness_result.fitness_score = 0.6
+
+        reporter.update_normalized_scores([result])
+
+        report_path = os.path.join(temp_output_dir, "reports", "all.csv")
+        df = pd.read_csv(report_path)
+        assert df.iloc[0]["slo_0_normalized"] == 0.75
+        assert df.iloc[0]["slo_0_weighted"] == 0.6
+        assert df.iloc[0]["fitness_score"] == 0.6
+
+    def test_update_normalized_scores_no_csv(self, temp_output_dir):
+        """Test that update_normalized_scores is a no-op when CSV doesn't exist."""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        reporter.update_normalized_scores([])

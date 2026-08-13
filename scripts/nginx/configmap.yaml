@@ -101,6 +101,11 @@ data:
                 proxy_set_header X-Forwarded-Proto $scheme;
             }
 
+            location /healthz {
+                access_log off;
+                return 200 'ok';
+            }
+
             # Optional: fallback
             location / {
                 return 404;

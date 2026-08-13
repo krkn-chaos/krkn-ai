@@ -163,6 +163,17 @@ class FitnessFunction(BaseModel):
     include_health_check_response_time: bool = True
     items: List[FitnessFunctionItem] = []
 
+    @property
+    def num_components(self) -> int:
+        return sum(
+            [
+                bool(self.query or self.items),
+                self.include_krkn_failure,
+                self.include_health_check_failure,
+                self.include_health_check_response_time,
+            ]
+        )
+
     @model_validator(mode="after")
     def check_fitness_definition_exists(self):
         """Validates whether there is at least one fitness function is defined."""
@@ -327,8 +338,8 @@ class GeneticAlgorithmConfig(BaseModel):
     )
     crossover_rate: float = Field(default=const.CROSSOVER_RATE, ge=0.0, le=1.0)
     composition_rate: float = Field(default=0, ge=0.0, le=1.0)
-    selection_strategy: SelectionStrategy = SelectionStrategy.roulette
-    tournament_size: int = Field(default=3, ge=1)
+    selection_strategy: SelectionStrategy = SelectionStrategy.tournament
+    tournament_size: int = Field(default=6, ge=1)
     population_injection_rate: float = Field(
         default=const.POPULATION_INJECTION_RATE, ge=0.0, le=1.0
     )

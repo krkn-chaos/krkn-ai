@@ -1,10 +1,11 @@
 import math
 import datetime
 import time
-from typing import Iterable, List
+from collections import defaultdict
+from typing import Dict, Iterable, List
 
-from krkn_ai.models.app import FitnessResult, FitnessScoreResult
-from krkn_ai.models.config import FitnessFunctionType
+from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
+from krkn_ai.models.config import FitnessFunctionItem, FitnessFunctionType
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
     FitnessFunctionConfigurationError,
@@ -118,7 +119,8 @@ class FitnessCalculator:
     def calculate_fitness_value(self, start, end, query, fitness_type):
         """Calculate fitness score for scenario run"""
         if is_mock_enabled(MockType.FITNESS):
-            return rng.random()
+            scale = rng.choice([1.0, 1e3, 1e6, 1e9])
+            return rng.random() * scale
 
         retries = 3
         retry_delay = 10
@@ -251,4 +253,63 @@ class FitnessCalculator:
                 f"range fitness [{start}, {end}]",
                 no_data_error,
             )
+        )
+
+
+def _log_transform(x: float) -> float:
+    return math.copysign(math.log1p(abs(x)), x)
+
+
+def normalize_generation_scores(
+    results: List[CommandRunResult],
+    fitness_items: List[FitnessFunctionItem],
+    num_components: int = 4,
+) -> None:
+    """Apply log + per-generation min-max normalization to Prometheus scores.
+
+    Mutates results in-place.  Skips misconfiguration results (fitness == -1).
+    """
+    valid = [
+        r
+        for r in results
+        if r.fitness_result.scores and r.fitness_result.fitness_score != -1.0
+    ]
+    if len(valid) < 2:
+        return
+
+    by_item: Dict[int, List[FitnessScoreResult]] = defaultdict(list)
+    for r in valid:
+        for s in r.fitness_result.scores:
+            by_item[s.id].append(s)
+
+    for item_id, score_entries in by_item.items():
+        log_values = [_log_transform(s.fitness_score) for s in score_entries]
+        lo = min(log_values)
+        hi = max(log_values)
+
+        for s, lv in zip(score_entries, log_values):
+            if hi == lo:
+                s.normalized_score = 0.0
+            else:
+                s.normalized_score = (lv - lo) / (hi - lo)
+
+    weights = normalize_weights(item.weight for item in fitness_items)
+    item_weight = {item.id: w for item, w in zip(fitness_items, weights)}
+
+    for r in valid:
+        for s in r.fitness_result.scores:
+            ns = s.normalized_score if s.normalized_score is not None else 0.0
+            s.weighted_score = item_weight.get(s.id, 0.0) * ns
+
+        prometheus_score = sum(s.weighted_score for s in r.fitness_result.scores)
+        raw_total = sum(
+            [
+                prometheus_score,
+                r.fitness_result.krkn_failure_score,
+                r.fitness_result.health_check_failure_score,
+                r.fitness_result.health_check_response_time_score,
+            ]
+        )
+        r.fitness_result.fitness_score = (
+            (raw_total / num_components * 100) if num_components else 0.0
         )

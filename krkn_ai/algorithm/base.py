@@ -17,6 +17,8 @@ from krkn_ai.utils.elastic_client import ElasticSearchClient
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_result_filename
 from krkn_ai.utils.rng import rng
+from krkn_ai.chaos_engines.health_check_watcher import compute_baseline_response_stats
+
 
 logger = get_logger(__name__)
 
@@ -86,6 +88,13 @@ class BaseEngine(ABC):
         self.baseline_result = self.krkn_client.run(baseline_scenario, 0)
         self.baseline_result.scenario_id = "baseline"
 
+        if self.config.fitness_function.include_health_check_response_time:
+            stats = compute_baseline_response_stats(
+                self.baseline_result.health_check_results
+            )
+            self.krkn_client.set_baseline_response_stats(stats)
+            logger.info("Baseline response stats computed for %d URLs", len(stats))
+
         self.save_scenario_result(self.baseline_result)
         self.health_check_reporter.plot_report(self.baseline_result)
         self.health_check_reporter.write_fitness_result(self.baseline_result)
@@ -130,6 +139,11 @@ class BaseEngine(ABC):
         with open(log_save_path, "w", encoding="utf-8") as f:
             f.write(command_result.log)
         return log_save_path
+
+    def update_scenario_results(self, results: list) -> None:
+        """Re-save scenario result files after in-place mutation (e.g. normalization)."""
+        for result in results:
+            self.save_scenario_result(result)
 
     def save_scenario_result(self, fitness_result: CommandRunResult):
         logger.debug(

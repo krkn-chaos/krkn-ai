@@ -26,6 +26,8 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
+from krkn_ai.chaos_engines.fitness import normalize_generation_scores
+from krkn_ai.utils.console import print_generation_table, print_run_summary
 
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
@@ -104,28 +106,39 @@ class GeneticAlgorithm(BaseEngine):
                     format_duration(remaining_time),
                 )
 
-            logger.info("| Population |")
-            logger.info("--------------------------------------------------------")
-            for scenario in self.population:
-                logger.info("%s, ", scenario)
-            logger.info("--------------------------------------------------------")
-
-            logger.info("| Generation %d |", cur_generation + 1)
-            logger.info("--------------------------------------------------------")
+            logger.info(
+                "Generation %d — %d scenarios",
+                cur_generation + 1,
+                len(self.population),
+            )
+            for i, scenario in enumerate(self.population):
+                logger.debug("  [%d] %s", i, scenario)
 
             fitness_scores = [
                 self.calculate_fitness(member, cur_generation)
                 for member in self.population
             ]
+
+            if len(self.config.fitness_function.items) > 0:
+                to_normalize = list(fitness_scores)
+                if cur_generation == 0 and self.baseline_result is not None:
+                    to_normalize.append(self.baseline_result)
+
+                normalize_generation_scores(
+                    to_normalize,
+                    self.config.fitness_function.items,
+                    self.config.fitness_function.num_components,
+                )
+                self.health_check_reporter.update_normalized_scores(to_normalize)
+                self.update_scenario_results(to_normalize)
+
             fitness_scores = sorted(
                 fitness_scores,
                 key=lambda x: x.fitness_result.fitness_score,
                 reverse=True,
             )
             self.best_of_generation.append(fitness_scores[0])
-            logger.info(
-                "Best Fitness: %f", fitness_scores[0].fitness_result.fitness_score
-            )
+            print_generation_table(cur_generation, fitness_scores)
 
             self.adapt_mutation_rate()
 
@@ -183,12 +196,12 @@ class GeneticAlgorithm(BaseEngine):
         if should_stop:
             self.end_time = datetime.datetime.now(datetime.timezone.utc)
             logger.info("Stopping algorithm: %s", reason)
-            logger.info(
-                "Completed %d generations in %s",
-                cur_generation,
-                format_duration(elapsed_time),
-            )
             self.completed_generations = cur_generation
+            print_run_summary(
+                self.best_of_generation,
+                cur_generation,
+                elapsed_time,
+            )
             return True
         return False
 

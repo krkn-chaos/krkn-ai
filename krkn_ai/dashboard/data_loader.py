@@ -9,16 +9,14 @@ import json
 
 from krkn_ai.models.config import OutputConfig
 from krkn_ai.utils.output import fmt_to_glob, fmt_to_id_regex
+from krkn_ai.utils.weight_learning import load_learned_weights as read_learned_weights
 
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
 _SLO_RE = re.compile(r"^slo_\d+$")
-# "- query: 'sum(...)'", with or without the leading comment marker already stripped
 _QUERY_RE = re.compile(r"^-\s*query:\s*(?P<query>.+?)\s*$")
 _TYPE_RE = re.compile(r"^type:\s*(?P<type>\w+)\s*$")
-# "pod-restarts:default" or "pod-restarts:default (metric(s) not scraped: x)"
 _NAME_RE = re.compile(r"^(?P<name>\S+?)(?:\s*\((?P<reason>.*)\))?$")
-# fallback layout when no query was enabled: "name (reason): query"
 _INLINE_DISABLED_RE = re.compile(
     r"^(?P<name>\S+)\s*\((?P<reason>.*?)\):\s*(?P<query>.+?)\s*$"
 )
@@ -74,18 +72,6 @@ def load_population_lineage(output_dir: str):
 
 
 @st.cache_data(ttl=300)
-def load_config_yaml(output_dir: str):
-    config_path = os.path.join(output_dir, "krkn-ai.yaml")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r") as f:
-                return yaml.safe_load(f)
-        except Exception as e:
-            logging.error(f"Failed to read {config_path}: {e}")
-    return None
-
-
-@st.cache_data(ttl=300)
 def load_config_text(output_dir: str):
     """Raw krkn-ai.yaml text — keeps the comments yaml.safe_load throws away."""
     config_path = os.path.join(output_dir, "krkn-ai.yaml")
@@ -99,17 +85,18 @@ def load_config_text(output_dir: str):
 
 
 @st.cache_data(ttl=300)
+def load_config_yaml(output_dir: str):
+    try:
+        return yaml.safe_load(load_config_text(output_dir)) or None
+    except Exception as e:
+        logging.error(f"Failed to parse {output_dir}/krkn-ai.yaml: {e}")
+        return None
+
+
+@st.cache_data(ttl=300)
 def load_learned_weights(output_dir: str):
     """Weights the engine learned from this run, keyed by query. Empty when absent."""
-    path = os.path.join(output_dir, LEARNED_WEIGHTS_FILE)
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r") as f:
-            return json.load(f) or {}
-    except Exception as e:
-        logging.error(f"Failed to read {path}: {e}")
-        return {}
+    return read_learned_weights(os.path.join(output_dir, LEARNED_WEIGHTS_FILE))
 
 
 def _catalog_matchers():
@@ -127,11 +114,9 @@ def _catalog_matchers():
 
         for entry in catalog:
             pattern = re.escape(entry.query_template)
-            # a template can name $ns several times, but always the same namespace
             pattern = pattern.replace(re.escape("$ns"), r"(?P<ns>[^\"]+)", 1).replace(
                 re.escape("$ns"), r"(?P=ns)"
             )
-            # discover wraps queries in `(...) or vector(0)`
             pattern = rf"^\(?{pattern}\)?(?:\s+or\s+vector\(0\))?$"
             try:
                 matchers.append((re.compile(pattern), entry))
@@ -154,30 +139,35 @@ def describe_query(query: str):
     return None, None
 
 
-def _fitness_block(text: str):
-    """Lines of the fitness_function block, comments included."""
+def _config_block(text: str, key: str):
+    """Lines under a top-level config key, comments included.
+
+    The key itself may be commented out, which is how discover writes a section
+    it wants to suggest but not enable.
+    """
     block, inside = [], False
     for line in (text or "").splitlines():
-        if line.startswith("fitness_function:"):
+        if not line:
+            if inside:
+                block.append(line)
+            continue
+        heading = line.lstrip("#").strip()
+        if not line[0].isspace() and heading.startswith(f"{key}:"):
             inside = True
             continue
         if inside:
-            if line.strip() and not line[0].isspace():
+            if line.strip() and not line[0].isspace() and not line.startswith("#"):
                 break
             block.append(line)
     return block
 
 
 def _parse_fitness_comments(text: str):
-    """Read the annotations discover leaves in the config.
-
-    Returns (names_by_query, disabled) where names_by_query labels the enabled
-    items and disabled holds the queries discover commented out, with reasons.
-    """
+    """Read discover's annotations: (names by query, queries it commented out)."""
     names, disabled = {}, []
     pending_name = pending_reason = None
 
-    for line in _fitness_block(text):
+    for line in _config_block(text, "fitness_function"):
         stripped = line.strip()
         if stripped.startswith("#"):
             body = stripped.lstrip("#").strip()
@@ -227,10 +217,7 @@ def _parse_fitness_comments(text: str):
 
 @st.cache_data(ttl=300)
 def load_fitness_items(output_dir: str):
-    """Per-query fitness metadata: the items in use plus the ones discover rejected.
-
-    Each entry carries name, category, query, type, weight, enabled and reason.
-    """
+    """Fitness queries in use plus the ones discover rejected, with their reason."""
     config = load_config_yaml(output_dir) or {}
     fitness_function = config.get("fitness_function") or {}
     names, disabled = _parse_fitness_comments(load_config_text(output_dir))
@@ -268,22 +255,6 @@ def load_fitness_items(output_dir: str):
     return items
 
 
-def map_slo_columns(items, columns):
-    """Attach each enabled item to its slo_* column in all.csv.
-
-    The CSV names those columns after the auto-generated item id, so they line up
-    with the config items in order. Skipped when the counts disagree.
-    """
-    slo_cols = sorted(
-        (c for c in columns if _SLO_RE.match(str(c))),
-        key=lambda c: int(str(c).split("_")[1]),
-    )
-    enabled = [item for item in items if item["enabled"]]
-    if not slo_cols or len(slo_cols) != len(enabled):
-        return {}
-    return {col: item for col, item in zip(slo_cols, enabled)}
-
-
 def slo_columns(columns):
     """All slo_* columns present, in id order."""
     return sorted(
@@ -292,25 +263,20 @@ def slo_columns(columns):
     )
 
 
-def _health_check_block(text: str):
-    block, inside = [], False
-    for line in (text or "").splitlines():
-        marker = line.lstrip("#").strip()
-        if line and marker.startswith("health_checks:") and not line[0].isspace():
-            inside = True
-            continue
-        if inside:
-            if line.strip() and not line[0].isspace() and not line.startswith("#"):
-                break
-            block.append(line)
-    return block
+def map_slo_columns(items, columns):
+    """Pair each enabled item with its slo_* column in all.csv."""
+    slo_cols = slo_columns(columns)
+    enabled = [item for item in items if item["enabled"]]
+    if not slo_cols or len(slo_cols) != len(enabled):
+        return {}
+    return {col: item for col, item in zip(slo_cols, enabled)}
 
 
 @st.cache_data(ttl=300)
 def load_health_check_recos(output_dir: str):
     """Health-check applications discover commented out, with the reason it gave."""
     disabled, pending = [], None
-    for line in _health_check_block(load_config_text(output_dir)):
+    for line in _config_block(load_config_text(output_dir), "health_checks"):
         stripped = line.strip()
         if not stripped.startswith("#"):
             continue

@@ -5,8 +5,14 @@ import plotly.graph_objects as go
 
 from krkn_ai.dashboard.data_loader import map_slo_columns
 
-# Below this, a baseline is treated as zero and deltas are shown in absolute terms.
 ZERO_BASELINE_EPS = 1e-9
+RELATIVE_BASELINE_FRACTION = 0.01
+
+
+def use_relative_baseline(baseline, scores):
+    """True when the baseline is big enough for percentages to mean anything."""
+    scale = float(pd.Series(scores).abs().max() or 0.0)
+    return abs(baseline) > max(ZERO_BASELINE_EPS, RELATIVE_BASELINE_FRACTION * scale)
 
 
 def render_summary(df):
@@ -253,20 +259,18 @@ def create_improvement_trend_plot(df_all):
     if bl_rows.empty:
         return None
 
+    non_bl = df_all[df_all["scenario_id"].astype(str) != "baseline"].copy()
+    if non_bl.empty:
+        return None
+
     bl_fitness = float(bl_rows.iloc[0]["fitness_score"])
-    # A clean baseline scores 0 on counter-based queries, so fall back to the
-    # absolute delta rather than dividing by zero.
-    relative = abs(bl_fitness) > ZERO_BASELINE_EPS
+    relative = use_relative_baseline(bl_fitness, non_bl["fitness_score"])
     unit = "%" if relative else ""
 
     def _delta(series):
         if relative:
             return (series - bl_fitness) / abs(bl_fitness) * 100
         return series - bl_fitness
-
-    non_bl = df_all[df_all["scenario_id"].astype(str) != "baseline"].copy()
-    if non_bl.empty:
-        return None
 
     gen_best = non_bl.groupby("generation_id")["fitness_score"].max().reset_index()
     gen_best["gen_display"] = gen_best["generation_id"] + 1
@@ -354,9 +358,13 @@ def render_improvement_trend(df_all):
         return
 
     bl_fitness = float(bl_rows.iloc[0]["fitness_score"])
-    if abs(bl_fitness) <= ZERO_BASELINE_EPS:
+    non_bl = df_all[df_all["scenario_id"].astype(str) != "baseline"]
+    if not non_bl.empty and not use_relative_baseline(
+        bl_fitness, non_bl["fitness_score"]
+    ):
         st.caption(
-            "Baseline fitness is 0 — showing absolute deltas instead of percentages."
+            f"Baseline fitness ({bl_fitness:.4f}) is too close to 0 for percentages "
+            "to be meaningful — showing absolute deltas."
         )
 
     fig = create_improvement_trend_plot(df_all)
@@ -403,7 +411,6 @@ def render_generation_details(df, title="Generation & Scenario Details", items=N
         else:
             gen_scenarios["slo_score"] = 0.0
 
-        # ...and optionally break that score back out, one column per query
         slo_map = map_slo_columns(items or [], gen_scenarios.columns)
         show_slo = bool(slo_map) and st.checkbox(
             "Show per-query fitness columns",

@@ -1,15 +1,17 @@
+import math
+
 import pandas as pd
 import streamlit as st
 
 
 def _fitness_frame(items):
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         [
             {
                 "name": item["name"],
                 "category": item["category"] or "—",
                 "type": item["type"] or "—",
-                "weight": item["weight"],
+                "weight": item["weight"] if item["enabled"] else math.nan,
                 "status": "in use" if item["enabled"] else "rejected",
                 "reason": item["reason"] or "—",
                 "query": item["query"],
@@ -17,6 +19,9 @@ def _fitness_frame(items):
             for item in items
         ]
     )
+    if not frame.empty:
+        frame["weight"] = pd.to_numeric(frame["weight"], errors="coerce")
+    return frame
 
 
 def render_fitness_section(config_data, items):

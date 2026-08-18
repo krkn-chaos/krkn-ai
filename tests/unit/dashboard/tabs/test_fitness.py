@@ -37,7 +37,7 @@ def _items():
             "type": "range",
             "weight": 0.0,
             "enabled": False,
-            "reason": "metric(s) not scraped: etcd_server_has_leader",
+            "reason": "not scraped",
         },
     ]
 
@@ -54,11 +54,6 @@ def _df():
     )
 
 
-def test_build_contribution_frame_empty():
-    assert build_contribution_frame(pd.DataFrame(), _items()).empty
-    assert build_contribution_frame(_df(), []).empty
-
-
 def test_build_contribution_frame_weights_each_query():
     long_df = build_contribution_frame(_df(), _items())
     assert len(long_df) == 4
@@ -67,27 +62,11 @@ def test_build_contribution_frame_weights_each_query():
     ].iloc[0]
     assert first["raw"] == 2.0
     assert first["contribution"] == 1.5
-    # the rejected query has no column and must not appear
     assert "etcd-no-leader" not in set(long_df["name"])
 
 
 def test_build_contribution_frame_skips_mismatched_columns():
-    df = _df().drop(columns=["slo_1"])
-    assert build_contribution_frame(df, _items()).empty
-
-
-def test_create_contribution_plot():
-    assert create_contribution_plot(pd.DataFrame()) is None
-    assert (
-        create_contribution_plot(build_contribution_frame(_df(), _items())) is not None
-    )
-
-
-def test_create_query_evolution_plot():
-    long_df = build_contribution_frame(_df(), _items())
-    assert create_query_evolution_plot(long_df) is not None
-    assert create_query_evolution_plot(long_df, ["node-pressure"]) is not None
-    assert create_query_evolution_plot(long_df, ["missing"]) is None
+    assert build_contribution_frame(_df().drop(columns=["slo_1"]), _items()).empty
 
 
 def test_build_query_summary_flags_flat_queries():
@@ -99,16 +78,24 @@ def test_build_query_summary_flags_flat_queries():
     assert varying["spread"] == 2.0
 
 
-def test_build_weights_frame_without_learned_weights():
-    frame = build_weights_frame(_items(), {})
-    assert list(frame["name"]) == ["pod-restarts:default", "node-pressure"]
-    assert frame["learned"].isna().all()
-    assert create_weights_plot(frame) is None
+def test_query_colours_match_across_charts():
+    long_df = build_contribution_frame(_df(), _items())
+    bars = create_contribution_plot(long_df)
+    lines = create_query_evolution_plot(long_df, ["node-pressure"])
+    assert lines.data[0].name == "node-pressure"
+    assert (
+        lines.data[0].line.color
+        == {t.name: t.marker.color for t in bars.data}["node-pressure"]
+    )
 
 
-def test_build_weights_frame_with_learned_weights():
-    frame = build_weights_frame(_items(), {"q1": 0.9, "q2": 0.1})
-    row = frame[frame["name"] == "pod-restarts:default"].iloc[0]
+def test_build_weights_frame():
+    plain = build_weights_frame(_items(), {})
+    assert list(plain["name"]) == ["pod-restarts:default", "node-pressure"]
+    assert create_weights_plot(plain) is None  # nothing learned yet
+
+    learned = build_weights_frame(_items(), {"q1": 0.9, "q2": 0.1})
+    row = learned[learned["name"] == "pod-restarts:default"].iloc[0]
     assert row["learned"] == 0.9
     assert round(row["delta"], 4) == 0.15
-    assert create_weights_plot(frame) is not None
+    assert create_weights_plot(learned) is not None

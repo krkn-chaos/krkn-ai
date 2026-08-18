@@ -54,6 +54,7 @@ from krkn_ai.dashboard.tabs.anomalies import (
 from krkn_ai.dashboard.tabs.fitness import (
     build_contribution_frame,
     build_query_summary,
+    build_rejected_frame,
     build_weights_frame,
     create_contribution_plot,
     create_weights_plot,
@@ -206,21 +207,10 @@ def _fit_weights(weights_df: pd.DataFrame) -> str:
 
 
 def _fit_rejected(fitness_items: Optional[List]) -> str:
-    rejected = [item for item in (fitness_items or []) if not item["enabled"]]
-    if not rejected:
+    rejected = build_rejected_frame(fitness_items or [])
+    if rejected.empty:
         return _na("No queries were rejected.")
-    return _df_table(
-        pd.DataFrame(
-            [
-                {
-                    "name": item["name"],
-                    "reason": item["reason"],
-                    "query": item["query"],
-                }
-                for item in rejected
-            ]
-        )
-    )
+    return _df_table(rejected)
 
 
 # Health Checks

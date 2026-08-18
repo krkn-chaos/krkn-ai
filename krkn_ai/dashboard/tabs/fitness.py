@@ -8,12 +8,16 @@ from krkn_ai.dashboard.data_loader import map_slo_columns, slo_columns
 MAX_BAR_SCENARIOS = 30
 
 
-def build_contribution_frame(df, items):
-    """Long frame of per-query fitness: one row per (scenario, query).
+def query_color_map(names):
+    """Fix a colour per query so it stays the same across every chart on the tab."""
+    palette = px.colors.qualitative.Plotly
+    return {
+        name: palette[i % len(palette)] for i, name in enumerate(sorted(set(names)))
+    }
 
-    `contribution` is the raw query value scaled by its configured weight, which
-    is what the query actually added to the scenario's fitness score.
-    """
+
+def build_contribution_frame(df, items):
+    """One row per scenario and query, with what that query added to the score."""
     if df is None or df.empty or not items:
         return pd.DataFrame()
 
@@ -27,6 +31,7 @@ def build_contribution_frame(df, items):
             value = row.get(col)
             if pd.isna(value):
                 continue
+            weighted = row.get(f"{col}_weighted")
             rows.append(
                 {
                     "scenario_id": str(row.get("scenario_id", "?")),
@@ -37,7 +42,9 @@ def build_contribution_frame(df, items):
                     "query": item["query"],
                     "weight": item["weight"],
                     "raw": float(value),
-                    "contribution": float(value) * item["weight"],
+                    "contribution": float(weighted)
+                    if pd.notna(weighted)
+                    else float(value) * item["weight"],
                 }
             )
     return pd.DataFrame(rows)
@@ -63,6 +70,7 @@ def create_contribution_plot(long_df):
         color="name",
         title="Fitness Contribution by Query",
         hover_data=["category", "raw", "weight"],
+        color_discrete_map=query_color_map(long_df["name"]),
     )
     fig.update_layout(
         barmode="relative",
@@ -81,6 +89,8 @@ def create_query_evolution_plot(long_df, names=None):
     if long_df is None or long_df.empty or "generation_id" not in long_df.columns:
         return None
 
+    colors = query_color_map(long_df["name"])
+
     working = long_df.dropna(subset=["generation_id"])
     if names:
         working = working[working["name"].isin(names)]
@@ -97,6 +107,7 @@ def create_query_evolution_plot(long_df, names=None):
         color="name",
         markers=True,
         title="Query Value Over Generations",
+        color_discrete_map=colors,
     )
     fig.update_layout(
         xaxis_title="Generation",
@@ -149,6 +160,17 @@ def build_weights_frame(items, learned_weights):
     if frame.empty or frame["learned"].isna().all():
         return frame
     return frame.sort_values(by="learned", ascending=False)
+
+
+def build_rejected_frame(items):
+    """The queries discover would not run, with the reason it gave."""
+    return pd.DataFrame(
+        [
+            {"name": item["name"], "reason": item["reason"], "query": item["query"]}
+            for item in items
+            if not item["enabled"]
+        ]
+    )
 
 
 def create_weights_plot(weights_df):
@@ -275,16 +297,7 @@ def render_fitness(df, items, learned_weights=None, output_dir=None):
         st.divider()
         st.subheader("Queries Discover Rejected")
         st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "name": item["name"],
-                        "reason": item["reason"],
-                        "query": item["query"],
-                    }
-                    for item in disabled
-                ]
-            ),
+            build_rejected_frame(items),
             column_config={
                 "name": st.column_config.TextColumn("Query", width="medium"),
                 "reason": st.column_config.TextColumn("Reason", width="medium"),

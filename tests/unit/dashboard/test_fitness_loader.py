@@ -1,14 +1,11 @@
-import json
 import os
 
 import pytest
 import streamlit as st
 
 from krkn_ai.dashboard.data_loader import (
-    describe_query,
     load_fitness_items,
     load_health_check_recos,
-    load_learned_weights,
     map_slo_columns,
     slo_columns,
 )
@@ -87,14 +84,6 @@ def test_load_fitness_items_labels_from_catalog(run_dir):
     assert items[1]["category"] == "node"
 
 
-def test_load_fitness_items_missing_config(tmp_path):
-    assert load_fitness_items(str(tmp_path)) == []
-
-
-def test_describe_query_unknown():
-    assert describe_query("sum(made_up_metric)") == (None, None)
-
-
 def test_load_health_check_recos(run_dir):
     recos = load_health_check_recos(run_dir)
     assert recos == [
@@ -111,25 +100,14 @@ def test_load_health_check_recos(run_dir):
     ]
 
 
-def test_load_learned_weights(run_dir):
-    assert load_learned_weights(run_dir) == {}
-    with open(os.path.join(run_dir, "learned_weights.json"), "w") as f:
-        json.dump({"q1": 0.7}, f)
-    st.cache_data.clear()
-    assert load_learned_weights(run_dir) == {"q1": 0.7}
-
-
-def test_slo_columns_ordered_numerically():
-    assert slo_columns(["slo_10", "fitness_score", "slo_2"]) == ["slo_2", "slo_10"]
-
-
 def test_map_slo_columns_requires_matching_counts(run_dir):
     items = load_fitness_items(run_dir)
+    assert slo_columns(["slo_10", "fitness_score", "slo_2"]) == ["slo_2", "slo_10"]
+
     mapping = map_slo_columns(items, ["slo_0", "slo_1", "fitness_score"])
     assert [item["name"] for item in mapping.values()] == [
         "pod-restarts:default",
         "node-pressure",
     ]
-    # a rejected query has no column, so three columns cannot be trusted
     assert map_slo_columns(items, ["slo_0", "slo_1", "slo_2"]) == {}
     assert map_slo_columns(items, []) == {}

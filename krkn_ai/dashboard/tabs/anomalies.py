@@ -314,17 +314,40 @@ def detect_fitness_regression(df: pd.DataFrame) -> pd.DataFrame:
     anomalies = []
     prev_gen = prev_best = None
     cfg = get_anomaly_config().get("fitness_regression", {})
+    min_abs_drop = cfg.get("min_abs_drop", 1e-6)
     for gen_id, best_fs in gen_best.items():
         if prev_best is not None and prev_gen is not None and best_fs < prev_best:
-            drop_pct = ((prev_best - best_fs) / max(prev_best, 1e-6)) * 100
-            z = -drop_pct / cfg.get("z_div", 10.0)
-            severity = (
-                "High"
-                if drop_pct > cfg.get("high_drop_pct", 20.0)
-                else "Medium"
-                if drop_pct > cfg.get("medium_drop_pct", 10.0)
-                else "Low"
-            )
+            abs_drop = prev_best - best_fs
+            if abs_drop < min_abs_drop:
+                prev_gen, prev_best = gen_id, best_fs
+                continue
+
+            # Counter-based fitness queries sit at 0 on a healthy cluster, where a
+            # percentage drop is meaningless — score those in absolute terms.
+            scale = abs(prev_best)
+            relative = scale > cfg.get("min_scale", 1e-3)
+            if relative:
+                drop_pct = abs_drop / scale * 100
+                severity = (
+                    "High"
+                    if drop_pct > cfg.get("high_drop_pct", 20.0)
+                    else "Medium"
+                    if drop_pct > cfg.get("medium_drop_pct", 10.0)
+                    else "Low"
+                )
+                z = -drop_pct / cfg.get("z_div", 10.0)
+                detail_tail = f" — {drop_pct:.1f}% regression"
+            else:
+                severity = (
+                    "High"
+                    if abs_drop > cfg.get("high_abs_drop", 0.2)
+                    else "Medium"
+                    if abs_drop > cfg.get("medium_abs_drop", 0.05)
+                    else "Low"
+                )
+                z = -abs_drop / cfg.get("z_div", 10.0)
+                detail_tail = f" — {abs_drop:.4f} absolute regression"
+
             anomalies.append(
                 {
                     "scenario_id": int(gen_id) + 1,
@@ -339,7 +362,7 @@ def detect_fitness_regression(df: pd.DataFrame) -> pd.DataFrame:
                     "detail": (
                         f"Best fitness dropped from Gen {int(prev_gen) + 1} ({prev_best:.3f})"
                         f" to Gen {int(gen_id) + 1} ({best_fs:.3f})"
-                        f" — {drop_pct:.1f}% regression"
+                        f"{detail_tail}"
                     ),
                 }
             )
@@ -1351,7 +1374,7 @@ Upper fence = Q3 + 1.5 × IQR
 | **Low / High Fitness** | `fitness_score` | IQR fence | x < Q1−1.5·IQR or x > Q3+1.5·IQR |
 | **Duration Anomaly** | `duration_seconds` | Z-score (RMS σ vs baseline if available) | `|z| ≥ 1.5` |
 | **HC Failure Surge** | `health_check_failure_score` | IQR fence | x > Q3+1.5·IQR |
-| **Fitness Regression** | Best fitness per generation | Gen-over-gen delta | `drop% = (prev−cur)/prev×100`; High if drop > 20% |
+| **Fitness Regression** | Best fitness per generation | Gen-over-gen delta | `drop% = (prev−cur)/prev×100`; High if drop > 20%. When `|prev| ≤ 0.001` the absolute drop is used instead (High if > 0.2) |
 | **Service Failure Rate** | Per-service failure_rate | Z-score vs service distribution | `|z| ≥ 1.5` |
 | **Krkn Failure Score** | `krkn_failure_score` | Non-zero sentinel + IQR | Non-zero → Medium; above IQR upper fence → High |
 | **HC Response Time** | `health_check_response_time_score` | IQR + Z-score | IQR breach OR `|z| ≥ 1.5` |
@@ -1380,7 +1403,7 @@ For each value **x** and its baseline reference **b**:
 | **Low / High Fitness** | Baseline scenario `fitness_score` | IQR fence breach **and/or** `Δ% < 0` below baseline |
 | **Duration Anomaly** | Baseline scenario `duration_seconds` | `|Δ%| ≥ 30` |
 | **HC Failure Surge** | Baseline `health_check_failure_score` | `|Δ%| ≥ 30` |
-| **Fitness Regression** | Previous generation best fitness | `drop% = (prev−cur)/prev×100`; High if drop > 20%, Medium if drop > 10% |
+| **Fitness Regression** | Previous generation best fitness | `drop% = (prev−cur)/prev×100`; High if drop > 20%, Medium if drop > 10%. Falls back to absolute drop when `|prev| ≤ 0.001` |
 | **Service Failure Rate** | Baseline per-service failure rate | `|Δ%| ≥ 30` |
 | **Krkn Failure Score** | — (non-zero sentinel) | Non-zero → Medium; above IQR upper fence → High |
 | **HC Response Time** | Baseline `health_check_response_time_score` | `|Δ%| ≥ 30` |

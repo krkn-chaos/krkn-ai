@@ -3,6 +3,11 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
+from krkn_ai.dashboard.data_loader import map_slo_columns
+
+# Below this, a baseline is treated as zero and deltas are shown in absolute terms.
+ZERO_BASELINE_EPS = 1e-9
+
 
 def render_summary(df):
     st.header("Experiment Summary")
@@ -249,8 +254,15 @@ def create_improvement_trend_plot(df_all):
         return None
 
     bl_fitness = float(bl_rows.iloc[0]["fitness_score"])
-    if bl_fitness == 0:
-        return None
+    # A clean baseline scores 0 on counter-based queries, so fall back to the
+    # absolute delta rather than dividing by zero.
+    relative = abs(bl_fitness) > ZERO_BASELINE_EPS
+    unit = "%" if relative else ""
+
+    def _delta(series):
+        if relative:
+            return (series - bl_fitness) / abs(bl_fitness) * 100
+        return series - bl_fitness
 
     non_bl = df_all[df_all["scenario_id"].astype(str) != "baseline"].copy()
     if non_bl.empty:
@@ -258,9 +270,7 @@ def create_improvement_trend_plot(df_all):
 
     gen_best = non_bl.groupby("generation_id")["fitness_score"].max().reset_index()
     gen_best["gen_display"] = gen_best["generation_id"] + 1
-    gen_best["delta_pct"] = (
-        (gen_best["fitness_score"] - bl_fitness) / abs(bl_fitness) * 100
-    )
+    gen_best["delta_pct"] = _delta(gen_best["fitness_score"])
 
     fig = go.Figure()
 
@@ -278,8 +288,8 @@ def create_improvement_trend_plot(df_all):
                     lambda v: "#22c55e" if v >= 0 else "#ef4444"
                 ),
             ),
-            name="Best Fitness % vs Baseline",
-            hovertemplate="Gen %{x}: %{y:+.2f}% vs baseline<extra></extra>",
+            name=f"Best Fitness {unit or 'Δ'} vs Baseline",
+            hovertemplate=f"Gen %{{x}}: %{{y:+.4f}}{unit} vs baseline<extra></extra>",
         )
     )
 
@@ -287,9 +297,7 @@ def create_improvement_trend_plot(df_all):
     gen_avg = non_bl.groupby("generation_id")["fitness_score"].mean().reset_index()
     if not gen_avg.empty:
         gen_avg["gen_display"] = gen_avg["generation_id"] + 1
-        gen_avg["delta_pct"] = (
-            (gen_avg["fitness_score"] - bl_fitness) / abs(bl_fitness) * 100
-        )
+        gen_avg["delta_pct"] = _delta(gen_avg["fitness_score"])
         fig.add_trace(
             go.Scatter(
                 x=gen_avg["gen_display"],
@@ -297,8 +305,8 @@ def create_improvement_trend_plot(df_all):
                 mode="lines+markers",
                 line=dict(color="#64748b", width=1.5, dash="dot"),
                 marker=dict(size=6),
-                name="Avg Fitness % vs Baseline",
-                hovertemplate="Gen %{x}: avg %{y:+.2f}% vs baseline<extra></extra>",
+                name=f"Avg Fitness {unit or 'Δ'} vs Baseline",
+                hovertemplate=f"Gen %{{x}}: avg %{{y:+.4f}}{unit} vs baseline<extra></extra>",
             )
         )
 
@@ -312,7 +320,9 @@ def create_improvement_trend_plot(df_all):
     fig.update_layout(
         title="Fitness Improvement vs Baseline — per Generation",
         xaxis_title="Generation",
-        yaxis_title="% Improvement vs Baseline",
+        yaxis_title=(
+            "% Improvement vs Baseline" if relative else "Delta vs Baseline (absolute)"
+        ),
         hovermode="x unified",
         xaxis=dict(tickmode="linear", tick0=1, dtick=1),
         legend_title_text="Metric",
@@ -344,26 +354,31 @@ def render_improvement_trend(df_all):
         return
 
     bl_fitness = float(bl_rows.iloc[0]["fitness_score"])
-    if bl_fitness == 0:
-        st.info("Baseline fitness is 0 — cannot compute relative improvement.")
-        return
+    if abs(bl_fitness) <= ZERO_BASELINE_EPS:
+        st.caption(
+            "Baseline fitness is 0 — showing absolute deltas instead of percentages."
+        )
 
     fig = create_improvement_trend_plot(df_all)
     if fig:
         st.plotly_chart(fig, width="stretch")
 
 
-def render_generation_details(df, title="Generation & Scenario Details"):
+def render_generation_details(df, title="Generation & Scenario Details", items=None):
     st.header(title)
     if df is None or df.empty or "generation_id" not in df.columns:
         st.write("No failed scenario details available yet!!")
         return
 
+    key_prefix = title.lower().replace(" ", "_")
+
     # Extract all unique generation numbers for the dropdown
     gen_nums = sorted(df["generation_id"].unique().tolist())
     display_gens = ["All"] + [g + 1 for g in gen_nums]
     selected_gen_disp = st.selectbox(
-        "Select Generation to view executed scenarios:", options=display_gens
+        "Select Generation to view executed scenarios:",
+        options=display_gens,
+        key=f"{key_prefix}_generation",
     )
 
     if selected_gen_disp == "All":
@@ -388,6 +403,15 @@ def render_generation_details(df, title="Generation & Scenario Details"):
         else:
             gen_scenarios["slo_score"] = 0.0
 
+        # ...and optionally break that score back out, one column per query
+        slo_map = map_slo_columns(items or [], gen_scenarios.columns)
+        show_slo = bool(slo_map) and st.checkbox(
+            "Show per-query fitness columns",
+            value=False,
+            key=f"{key_prefix}_show_slo",
+            help="One column per fitness query defined in the run config.",
+        )
+
         display_cols = [
             "generation_id",
             "scenario_id",
@@ -400,6 +424,8 @@ def render_generation_details(df, title="Generation & Scenario Details"):
             "fitness_score",
             "parameters",
         ]
+        if show_slo:
+            display_cols = display_cols[:-1] + list(slo_map) + ["parameters"]
         available_cols = [c for c in display_cols if c in gen_scenarios.columns]
         view = gen_scenarios[available_cols].copy()
         if "generation_id" in view.columns:
@@ -427,6 +453,11 @@ def render_generation_details(df, title="Generation & Scenario Details"):
             ),
             "parameters": st.column_config.TextColumn("Parameters"),
         }
+        if show_slo:
+            for col, item in slo_map.items():
+                column_cfg[col] = st.column_config.NumberColumn(
+                    item["name"], format="%.4f", help=item["query"]
+                )
         st.dataframe(
             view,
             column_config=column_cfg,

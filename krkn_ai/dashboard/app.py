@@ -19,6 +19,10 @@ from krkn_ai.dashboard.data_loader import (
     load_detailed_scenarios_data,
     load_logs,
     load_population_lineage,
+    load_fitness_items,
+    load_learned_weights,
+    load_health_check_recos,
+    map_slo_columns,
 )
 from krkn_ai.dashboard.tabs.dashboard import (
     render_summary,
@@ -29,6 +33,7 @@ from krkn_ai.dashboard.tabs.dashboard import (
     render_baseline_delta,
     render_improvement_trend,
 )
+from krkn_ai.dashboard.tabs.fitness import render_fitness
 from krkn_ai.dashboard.tabs.health_checks import render_health_checks
 from krkn_ai.dashboard.tabs.detailed_scenarios import render_detailed_scenarios
 from krkn_ai.dashboard.tabs.logs import render_logs
@@ -139,6 +144,9 @@ def main():
         df_details = load_detailed_scenarios_data.__wrapped__(output_dir)
         df_logs = load_logs.__wrapped__(output_dir)
         df_lineage = load_population_lineage.__wrapped__(output_dir)
+        fitness_items = load_fitness_items.__wrapped__(output_dir)
+        learned_weights = load_learned_weights.__wrapped__(output_dir)
+        health_check_recos = load_health_check_recos.__wrapped__(output_dir)
     else:
         results_file_found, df_results = load_results_csv(output_dir)
         config_data = load_config_yaml(output_dir)
@@ -146,6 +154,9 @@ def main():
         df_details = load_detailed_scenarios_data(output_dir)
         df_logs = load_logs(output_dir)
         df_lineage = load_population_lineage(output_dir)
+        fitness_items = load_fitness_items(output_dir)
+        learned_weights = load_learned_weights(output_dir)
+        health_check_recos = load_health_check_recos(output_dir)
 
     # fully unfiltered copy (baseline row included) for anomaly detection
     df_results_all = df_results.copy() if df_results is not None else None
@@ -276,7 +287,13 @@ def main():
     ]
     if df_results is not None and not df_results.empty:
         st.sidebar.subheader("Best Iterations Scope")
-        available_score_cols = [c for c in SCORE_COLS if c in df_results.columns]
+        slo_labels = {
+            col: item["name"]
+            for col, item in map_slo_columns(fitness_items, df_results.columns).items()
+        }
+        available_score_cols = [
+            c for c in SCORE_COLS if c in df_results.columns
+        ] + list(slo_labels)
         sort_col = st.sidebar.selectbox(
             "Sort by:",
             options=available_score_cols,
@@ -285,6 +302,7 @@ def main():
                 "health_check_failure_score": "Health Check Failure Score",
                 "health_check_response_time_score": "Health Check Response Time Score",
                 "krkn_failure_score": "Krkn Failure Score",
+                **slo_labels,
             }.get(c, c),
             key="best_iter_sort_col",
         )
@@ -442,6 +460,8 @@ def main():
                     global_services=global_services,
                     filtered_scenario_ids=filtered_scenario_ids,
                     anomaly_mode=amode,
+                    fitness_items=fitness_items,
+                    learned_weights=learned_weights,
                 ).encode("utf-8")
 
         from datetime import datetime as _dt
@@ -459,6 +479,7 @@ def main():
     has_lineage = df_lineage is not None and not df_lineage.empty
     tab_names = [
         "Dashboard",
+        "Fitness",
         "Health Checks",
         "Detailed Scenarios",
         "Anomalies",
@@ -469,7 +490,7 @@ def main():
     if has_lineage:
         tab_names.append("Lineage")
     tabs = st.tabs(tab_names)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = tabs[:7]
+    tab1, tab_fitness, tab2, tab3, tab4, tab5, tab6, tab7 = tabs[:8]
 
     with tab1:
         if not has_any_data:
@@ -502,17 +523,39 @@ def main():
             st.divider()
             render_fitness_evolution(df_results)
             st.divider()
-            render_generation_details(df_results)
+            render_generation_details(df_results, items=fitness_items)
             st.divider()
             render_baseline_delta(df_results_all)
             st.divider()
             render_improvement_trend(df_results_all)
+
+    with tab_fitness:
+        if not has_any_data:
+            st.warning("No valid Krkn-AI data found in the selected folder.")
+        else:
+            render_fitness(
+                df_results,
+                fitness_items,
+                learned_weights=learned_weights,
+                output_dir=output_dir,
+            )
+
+    hc_configured = bool(
+        ((config_data or {}).get("health_checks") or {}).get("applications")
+    )
 
     with tab2:
         if not has_any_data:
             st.warning("No valid Krkn-AI data found in the selected folder.")
         elif health_empty_file:
             st.info("`reports/health_check_report.csv` exists but is empty.")
+        elif df_health is None and config_data is not None and not hc_configured:
+            st.info(
+                "No health checks are configured for this run, so no health-check "
+                "data will be produced. Discover leaves a service out when it has "
+                "no HTTP probe or its URL is unreachable — see the Configuration "
+                "tab for what it found and why."
+            )
         elif df_health is None:
             st.info("No health check data found yet.")
         elif filters_active and (df_health is None or df_health.empty):
@@ -560,10 +603,16 @@ def main():
         render_logs(df_logs, scen_id_to_name=scen_id_to_name)
 
     with tab6:
-        render_config(config_data)
+        render_config(
+            config_data,
+            items=fitness_items,
+            health_check_recos=health_check_recos,
+        )
 
     with tab7:
-        render_generation_details(df_failed, title="Failed Scenarios")
+        render_generation_details(
+            df_failed, title="Failed Scenarios", items=fitness_items
+        )
 
     if has_lineage:
         with tabs[7]:

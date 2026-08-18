@@ -10,6 +10,33 @@ import json
 from krkn_ai.models.config import OutputConfig
 from krkn_ai.utils.output import fmt_to_glob, fmt_to_id_regex
 
+LEARNED_WEIGHTS_FILE = "learned_weights.json"
+
+_SLO_RE = re.compile(r"^slo_\d+$")
+# "- query: 'sum(...)'", with or without the leading comment marker already stripped
+_QUERY_RE = re.compile(r"^-\s*query:\s*(?P<query>.+?)\s*$")
+_TYPE_RE = re.compile(r"^type:\s*(?P<type>\w+)\s*$")
+# "pod-restarts:default" or "pod-restarts:default (metric(s) not scraped: x)"
+_NAME_RE = re.compile(r"^(?P<name>\S+?)(?:\s*\((?P<reason>.*)\))?$")
+# fallback layout when no query was enabled: "name (reason): query"
+_INLINE_DISABLED_RE = re.compile(
+    r"^(?P<name>\S+)\s*\((?P<reason>.*?)\):\s*(?P<query>.+?)\s*$"
+)
+_HC_REASON_RE = re.compile(r"^\((?P<reason>[^)]*)\)$")
+_HC_NAME_RE = re.compile(r"^-\s*name:\s*(?P<name>.+?)\s*$")
+_HC_URL_RE = re.compile(r"^url:\s*(?P<url>.+?)\s*$")
+
+_CATALOG_MATCHERS = None
+
+
+def _unquote(value: str) -> str:
+    return (value or "").strip().strip("'\"")
+
+
+def _short_query(query: str, width: int = 60) -> str:
+    query = (query or "").strip()
+    return query if len(query) <= width else f"{query[: width - 1]}…"
+
 
 @st.cache_data(ttl=300)
 def load_results_csv(output_dir: str):
@@ -56,6 +83,252 @@ def load_config_yaml(output_dir: str):
         except Exception as e:
             logging.error(f"Failed to read {config_path}: {e}")
     return None
+
+
+@st.cache_data(ttl=300)
+def load_config_text(output_dir: str):
+    """Raw krkn-ai.yaml text — keeps the comments yaml.safe_load throws away."""
+    config_path = os.path.join(output_dir, "krkn-ai.yaml")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                return f.read()
+        except Exception as e:
+            logging.error(f"Failed to read {config_path}: {e}")
+    return ""
+
+
+@st.cache_data(ttl=300)
+def load_learned_weights(output_dir: str):
+    """Weights the engine learned from this run, keyed by query. Empty when absent."""
+    path = os.path.join(output_dir, LEARNED_WEIGHTS_FILE)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f) or {}
+    except Exception as e:
+        logging.error(f"Failed to read {path}: {e}")
+        return {}
+
+
+def _catalog_matchers():
+    """Regex per catalog entry, with $ns left open, to recognise a query in a config."""
+    global _CATALOG_MATCHERS
+    if _CATALOG_MATCHERS is None:
+        matchers = []
+        try:
+            from krkn_ai.utils.catalog import get_base_catalog
+
+            catalog = get_base_catalog()
+        except Exception as e:  # catalog is optional for the dashboard
+            logging.error(f"Could not load the fitness catalog: {e}")
+            catalog = []
+
+        for entry in catalog:
+            pattern = re.escape(entry.query_template)
+            # a template can name $ns several times, but always the same namespace
+            pattern = pattern.replace(re.escape("$ns"), r"(?P<ns>[^\"]+)", 1).replace(
+                re.escape("$ns"), r"(?P=ns)"
+            )
+            # discover wraps queries in `(...) or vector(0)`
+            pattern = rf"^\(?{pattern}\)?(?:\s+or\s+vector\(0\))?$"
+            try:
+                matchers.append((re.compile(pattern), entry))
+            except re.error as e:
+                logging.error(f"Skipping catalog entry {entry.key}: {e}")
+        _CATALOG_MATCHERS = matchers
+    return _CATALOG_MATCHERS
+
+
+def describe_query(query: str):
+    """Return (name, category) for a query by matching it against the catalog."""
+    for pattern, entry in _catalog_matchers():
+        m = pattern.match(query or "")
+        if not m:
+            continue
+        namespace = m.groupdict().get("ns")
+        name = f"{entry.key}:{namespace}" if namespace else entry.key
+        category = entry.category.value if entry.category else None
+        return name, category
+    return None, None
+
+
+def _fitness_block(text: str):
+    """Lines of the fitness_function block, comments included."""
+    block, inside = [], False
+    for line in (text or "").splitlines():
+        if line.startswith("fitness_function:"):
+            inside = True
+            continue
+        if inside:
+            if line.strip() and not line[0].isspace():
+                break
+            block.append(line)
+    return block
+
+
+def _parse_fitness_comments(text: str):
+    """Read the annotations discover leaves in the config.
+
+    Returns (names_by_query, disabled) where names_by_query labels the enabled
+    items and disabled holds the queries discover commented out, with reasons.
+    """
+    names, disabled = {}, []
+    pending_name = pending_reason = None
+
+    for line in _fitness_block(text):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            body = stripped.lstrip("#").strip()
+            inline = _INLINE_DISABLED_RE.match(body)
+            if inline:
+                disabled.append(
+                    {
+                        "name": inline.group("name"),
+                        "reason": inline.group("reason"),
+                        "query": _unquote(inline.group("query")),
+                        "type": None,
+                    }
+                )
+                pending_name = pending_reason = None
+                continue
+
+            query_match = _QUERY_RE.match(body)
+            if query_match:
+                disabled.append(
+                    {
+                        "name": pending_name,
+                        "reason": pending_reason or "",
+                        "query": _unquote(query_match.group("query")),
+                        "type": None,
+                    }
+                )
+                pending_name = pending_reason = None
+                continue
+
+            type_match = _TYPE_RE.match(body)
+            if type_match and disabled:
+                disabled[-1]["type"] = type_match.group("type")
+                continue
+
+            named = _NAME_RE.match(body)
+            pending_name = named.group("name") if named else None
+            pending_reason = named.group("reason") if named else None
+            continue
+
+        query_match = _QUERY_RE.match(stripped)
+        if query_match and pending_name and not pending_reason:
+            names[_unquote(query_match.group("query"))] = pending_name
+        pending_name = pending_reason = None
+
+    return names, disabled
+
+
+@st.cache_data(ttl=300)
+def load_fitness_items(output_dir: str):
+    """Per-query fitness metadata: the items in use plus the ones discover rejected.
+
+    Each entry carries name, category, query, type, weight, enabled and reason.
+    """
+    config = load_config_yaml(output_dir) or {}
+    fitness_function = config.get("fitness_function") or {}
+    names, disabled = _parse_fitness_comments(load_config_text(output_dir))
+
+    items = []
+    for item in fitness_function.get("items") or []:
+        query = item.get("query", "")
+        catalog_name, category = describe_query(query)
+        items.append(
+            {
+                "name": names.get(query) or catalog_name or _short_query(query),
+                "category": category,
+                "query": query,
+                "type": item.get("type", ""),
+                "weight": float(item.get("weight", 1.0)),
+                "enabled": True,
+                "reason": "",
+            }
+        )
+
+    for entry in disabled:
+        catalog_name, category = describe_query(entry["query"])
+        items.append(
+            {
+                "name": entry["name"] or catalog_name or _short_query(entry["query"]),
+                "category": category,
+                "query": entry["query"],
+                "type": entry["type"] or "",
+                "weight": 0.0,
+                "enabled": False,
+                "reason": entry["reason"],
+            }
+        )
+
+    return items
+
+
+def map_slo_columns(items, columns):
+    """Attach each enabled item to its slo_* column in all.csv.
+
+    The CSV names those columns after the auto-generated item id, so they line up
+    with the config items in order. Skipped when the counts disagree.
+    """
+    slo_cols = sorted(
+        (c for c in columns if _SLO_RE.match(str(c))),
+        key=lambda c: int(str(c).split("_")[1]),
+    )
+    enabled = [item for item in items if item["enabled"]]
+    if not slo_cols or len(slo_cols) != len(enabled):
+        return {}
+    return {col: item for col, item in zip(slo_cols, enabled)}
+
+
+def slo_columns(columns):
+    """All slo_* columns present, in id order."""
+    return sorted(
+        (c for c in columns if _SLO_RE.match(str(c))),
+        key=lambda c: int(str(c).split("_")[1]),
+    )
+
+
+def _health_check_block(text: str):
+    block, inside = [], False
+    for line in (text or "").splitlines():
+        marker = line.lstrip("#").strip()
+        if line and marker.startswith("health_checks:") and not line[0].isspace():
+            inside = True
+            continue
+        if inside:
+            if line.strip() and not line[0].isspace() and not line.startswith("#"):
+                break
+            block.append(line)
+    return block
+
+
+@st.cache_data(ttl=300)
+def load_health_check_recos(output_dir: str):
+    """Health-check applications discover commented out, with the reason it gave."""
+    disabled, pending = [], None
+    for line in _health_check_block(load_config_text(output_dir)):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        body = stripped.lstrip("#").strip()
+        reason = _HC_REASON_RE.match(body)
+        if reason:
+            pending = reason.group("reason")
+            continue
+        name = _HC_NAME_RE.match(body)
+        if name:
+            disabled.append(
+                {"name": _unquote(name.group("name")), "url": "", "reason": pending}
+            )
+            continue
+        url = _HC_URL_RE.match(body)
+        if url and disabled:
+            disabled[-1]["url"] = _unquote(url.group("url"))
+    return [d for d in disabled if d["reason"]]
 
 
 @st.cache_data(ttl=300)

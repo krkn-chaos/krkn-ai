@@ -26,6 +26,14 @@ fitness_regression:
   high_drop_pct: 20.0
   medium_drop_pct: 10.0
   z_div: 10.0
+  # Below this baseline magnitude, drops are scored in absolute terms instead of
+  # percentages — counter-based fitness queries sit at 0 on a healthy cluster
+  min_scale: 0.001
+  # Absolute drop thresholds used in that mode
+  high_abs_drop: 0.2
+  medium_abs_drop: 0.05
+  # Ignore drops smaller than this (floating-point noise)
+  min_abs_drop: 0.000001
 
 hc_response_time:
   z_threshold: 1.5

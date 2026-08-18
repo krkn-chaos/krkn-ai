@@ -47,6 +47,20 @@ def load_population_lineage(output_dir: str):
 
 
 @st.cache_data(ttl=300)
+def load_results_json(output_dir: str):
+    """Load the results.json file and return the best_scenarios data as a list of dicts."""
+    json_path = os.path.join(output_dir, "results.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+                return data.get("best_scenarios", [])
+        except Exception as e:
+            logging.error(f"Failed to read {json_path}: {e}")
+    return []
+
+
+@st.cache_data(ttl=300)
 def load_config_yaml(output_dir: str):
     config_path = os.path.join(output_dir, "krkn-ai.yaml")
     if os.path.exists(config_path):

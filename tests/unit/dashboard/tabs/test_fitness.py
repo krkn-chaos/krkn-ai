@@ -17,7 +17,7 @@ def _items():
             "category": "availability",
             "query": "q1",
             "type": "range",
-            "weight": 0.75,
+            "weight": 6.0,
             "enabled": True,
             "reason": "",
         },
@@ -26,7 +26,7 @@ def _items():
             "category": "node",
             "query": "q2",
             "type": "range",
-            "weight": 0.25,
+            "weight": 2.0,
             "enabled": True,
             "reason": "",
         },
@@ -45,11 +45,11 @@ def _items():
 def _df():
     return pd.DataFrame(
         {
-            "generation_id": [0, 1],
-            "scenario_id": ["1", "2"],
-            "scenario": ["pod_scenarios", "pod_scenarios"],
-            "slo_0": [2.0, 4.0],
-            "slo_1": [1.0, 1.0],
+            "generation_id": [0, 0, 1],
+            "scenario_id": ["baseline", "1", "2"],
+            "scenario": ["baseline", "pod_scenarios", "pod_scenarios"],
+            "slo_0": [0.0, 2.0, 4.0],
+            "slo_1": [0.0, 1.0, 1.0],
         }
     )
 
@@ -57,6 +57,7 @@ def _df():
 def test_build_contribution_frame_weights_each_query():
     long_df = build_contribution_frame(_df(), _items())
     assert len(long_df) == 4
+    assert "baseline" not in set(long_df["scenario_id"])
     first = long_df[
         (long_df["scenario_id"] == "1") & (long_df["name"] == "pod-restarts:default")
     ].iloc[0]

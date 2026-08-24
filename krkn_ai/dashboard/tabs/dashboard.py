@@ -11,7 +11,8 @@ RELATIVE_BASELINE_FRACTION = 0.01
 
 def use_relative_baseline(baseline, scores):
     """True when the baseline is big enough for percentages to mean anything."""
-    scale = float(pd.Series(scores).abs().max() or 0.0)
+    largest = pd.Series(list(scores), dtype="float64").abs().max()
+    scale = 0.0 if pd.isna(largest) else float(largest)
     return abs(baseline) > max(ZERO_BASELINE_EPS, RELATIVE_BASELINE_FRACTION * scale)
 
 

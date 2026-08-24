@@ -58,6 +58,7 @@ from krkn_ai.dashboard.tabs.fitness import (
     build_weights_frame,
     create_contribution_plot,
     create_weights_plot,
+    runtime_weights,
 )
 from krkn_ai.dashboard.data_loader import map_slo_columns
 
@@ -460,7 +461,7 @@ def generate_html_report(
     learned_weights: Optional[dict] = None,
 ) -> str:
     """
-    Generate a complete self-contained HTML report covering all five dashboard tabs.
+    Generate a complete self-contained HTML report covering all six dashboard tabs.
 
     Parameters
     ----------
@@ -599,7 +600,7 @@ def generate_html_report(
                     ),
                     (
                         "Total Weight",
-                        f"{sum(item['weight'] for item in enabled_items):.4f}",
+                        f"{sum(runtime_weights(fitness_items or []).values()):.4f}",
                     ),
                 ]
             )

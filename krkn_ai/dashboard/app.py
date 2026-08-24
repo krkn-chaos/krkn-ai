@@ -615,7 +615,7 @@ def main():
         )
 
     if has_lineage:
-        with tabs[7]:
+        with tabs[-1]:
             render_lineage(df_lineage)
 
     # Refresh mechanism

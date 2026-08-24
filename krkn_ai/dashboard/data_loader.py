@@ -7,6 +7,8 @@ import streamlit as st
 import re
 import json
 
+from typing import List
+
 from krkn_ai.models.config import OutputConfig
 from krkn_ai.utils.output import fmt_to_glob, fmt_to_id_regex
 from krkn_ai.utils.weight_learning import load_learned_weights as read_learned_weights
@@ -14,6 +16,8 @@ from krkn_ai.utils.weight_learning import load_learned_weights as read_learned_w
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
 _SLO_RE = re.compile(r"^slo_\d+$")
+_COMMENT_MARKER_RE = re.compile(r"^#\s?")
+_TOP_KEY_RE = re.compile(r"^[A-Za-z_][\w-]*:")
 _QUERY_RE = re.compile(r"^-\s*query:\s*(?P<query>.+?)\s*$")
 _TYPE_RE = re.compile(r"^type:\s*(?P<type>\w+)\s*$")
 _NAME_RE = re.compile(r"^(?P<name>\S+?)(?:\s*\((?P<reason>.*)\))?$")
@@ -139,24 +143,22 @@ def describe_query(query: str):
     return None, None
 
 
-def _config_block(text: str, key: str):
-    """Lines under a top-level config key, comments included.
-
-    The key itself may be commented out, which is how discover writes a section
-    it wants to suggest but not enable.
-    """
-    block, inside = [], False
+def _config_block(text: str, key: str) -> List[str]:
+    """Lines under a top-level config key, comments included."""
+    block: List[str] = []
+    inside = False
     for line in (text or "").splitlines():
         if not line:
             if inside:
                 block.append(line)
             continue
-        heading = line.lstrip("#").strip()
-        if not line[0].isspace() and heading.startswith(f"{key}:"):
+        bare = _COMMENT_MARKER_RE.sub("", line, count=1)
+        top_level = bool(bare) and not bare[0].isspace()
+        if top_level and bare.startswith(f"{key}:"):
             inside = True
             continue
         if inside:
-            if line.strip() and not line[0].isspace() and not line.startswith("#"):
+            if top_level and _TOP_KEY_RE.match(bare):
                 break
             block.append(line)
     return block
@@ -233,6 +235,7 @@ def load_fitness_items(output_dir: str):
                 "query": query,
                 "type": item.get("type", ""),
                 "weight": float(item.get("weight", 1.0)),
+                "id": item.get("id"),
                 "enabled": True,
                 "reason": "",
             }
@@ -247,6 +250,7 @@ def load_fitness_items(output_dir: str):
                 "query": entry["query"],
                 "type": entry["type"] or "",
                 "weight": 0.0,
+                "id": None,
                 "enabled": False,
                 "reason": entry["reason"],
             }
@@ -265,8 +269,17 @@ def slo_columns(columns):
 
 def map_slo_columns(items, columns):
     """Pair each enabled item with its slo_* column in all.csv."""
-    slo_cols = slo_columns(columns)
     enabled = [item for item in items if item["enabled"]]
+    if not enabled:
+        return {}
+
+    if all(item.get("id") is not None for item in enabled):
+        by_id = {f"slo_{item['id']}": item for item in enabled}
+        if all(col in columns for col in by_id):
+            return by_id
+        return {}
+
+    slo_cols = slo_columns(columns)
     if not slo_cols or len(slo_cols) != len(enabled):
         return {}
     return {col: item for col, item in zip(slo_cols, enabled)}

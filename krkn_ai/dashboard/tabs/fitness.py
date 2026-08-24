@@ -3,9 +3,22 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from krkn_ai.chaos_engines.fitness import normalize_weights
 from krkn_ai.dashboard.data_loader import map_slo_columns, slo_columns
 
 MAX_BAR_SCENARIOS = 30
+
+
+def runtime_weights(items):
+    """Effective weight per query, normalised the way the engine does."""
+    enabled = [item for item in items if item["enabled"]]
+    if not enabled:
+        return {}
+    try:
+        weights = normalize_weights(item["weight"] for item in enabled)
+    except Exception:
+        return {item["query"]: item["weight"] for item in enabled}
+    return {item["query"]: weight for item, weight in zip(enabled, weights)}
 
 
 def query_color_map(names):
@@ -17,7 +30,7 @@ def query_color_map(names):
 
 
 def build_contribution_frame(df, items):
-    """One row per scenario and query, with what that query added to the score."""
+    """One row per chaos scenario and query, with what that query added."""
     if df is None or df.empty or not items:
         return pd.DataFrame()
 
@@ -25,12 +38,20 @@ def build_contribution_frame(df, items):
     if not mapping:
         return pd.DataFrame()
 
+    working = df
+    if "scenario_id" in working.columns:
+        working = working[working["scenario_id"].astype(str) != "baseline"]
+    if working.empty:
+        return pd.DataFrame()
+
+    weights = runtime_weights(items)
     rows = []
-    for _, row in df.iterrows():
+    for _, row in working.iterrows():
         for col, item in mapping.items():
             value = row.get(col)
             if pd.isna(value):
                 continue
+            weight = weights.get(item["query"], item["weight"])
             weighted = row.get(f"{col}_weighted")
             rows.append(
                 {
@@ -40,11 +61,11 @@ def build_contribution_frame(df, items):
                     "name": item["name"],
                     "category": item["category"] or "—",
                     "query": item["query"],
-                    "weight": item["weight"],
+                    "weight": weight,
                     "raw": float(value),
                     "contribution": float(weighted)
                     if pd.notna(weighted)
-                    else float(value) * item["weight"],
+                    else float(value) * weight,
                 }
             )
     return pd.DataFrame(rows)
@@ -142,17 +163,19 @@ def build_query_summary(long_df):
 def build_weights_frame(items, learned_weights):
     """Configured weight next to the weight this run learned, per query."""
     learned_weights = learned_weights or {}
+    weights = runtime_weights(items)
     rows = []
     for item in items:
         if not item["enabled"]:
             continue
+        configured = weights.get(item["query"], item["weight"])
         learned = learned_weights.get(item["query"])
         rows.append(
             {
                 "name": item["name"],
-                "configured": item["weight"],
+                "configured": configured,
                 "learned": learned,
-                "delta": None if learned is None else learned - item["weight"],
+                "delta": None if learned is None else learned - configured,
                 "query": item["query"],
             }
         )
@@ -222,7 +245,7 @@ def render_fitness(df, items, learned_weights=None, output_dir=None):
     cols = st.columns(3)
     cols[0].metric("Queries In Use", len(enabled))
     cols[1].metric("Queries Rejected", len(disabled))
-    cols[2].metric("Total Weight", f"{sum(item['weight'] for item in enabled):.4f}")
+    cols[2].metric("Total Weight", f"{sum(runtime_weights(items).values()):.4f}")
 
     long_df = build_contribution_frame(df, items)
     if long_df.empty and df is not None and not df.empty:

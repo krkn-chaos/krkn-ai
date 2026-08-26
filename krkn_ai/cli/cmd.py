@@ -24,6 +24,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.catalog import recommend_fitness_queries
+from krkn_ai.utils.ga_sizing import recommend_genetic_params
 from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
@@ -328,6 +329,11 @@ def discover(
         if fresh_write
         else None
     )
+    genetic = (
+        recommend_genetic_params(cluster_components, kubeconfig)
+        if fresh_write
+        else None
+    )
     # recommend fitness queries on fresh writes and merges; else keep the static default.
     recommend_fitness = fresh_write or save_strategy.lower() == "merge"
     fitness_queries = None
@@ -351,4 +357,5 @@ def discover(
         scenario_enables=scenario_enables,
         fitness_queries=fitness_queries,
         health_checks=health_checks,
+        genetic=genetic,
     )

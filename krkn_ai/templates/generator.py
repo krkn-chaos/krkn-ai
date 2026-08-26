@@ -17,6 +17,7 @@ def create_krkn_ai_template(
     scenario_enables: dict = None,
     health_checks: list = None,
     fitness_queries: list = None,
+    genetic: dict = None,
 ) -> str:
     """Create krkn-ai.yaml from template with proper indentation"""
     # Get the directory of the current module
@@ -51,4 +52,5 @@ def create_krkn_ai_template(
         scenario_enables=scenario_enables,
         fitness_queries=fitness_queries,
         health_check_apps=health_checks,
+        genetic=genetic,
     )

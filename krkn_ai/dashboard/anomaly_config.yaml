@@ -26,6 +26,9 @@ fitness_regression:
   high_drop_pct: 20.0
   medium_drop_pct: 10.0
   z_div: 10.0
+  high_abs_drop: 0.2
+  medium_abs_drop: 0.05
+  min_abs_drop: 0.000001
 
 hc_response_time:
   z_threshold: 1.5

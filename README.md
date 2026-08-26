@@ -166,6 +166,7 @@ krkn_ai run \
 | `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
 | `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
 | `monitor` | `-o` results dir, `-p` port |
+| `validate` | `-c` config, `-k` kubeconfig, `-p` params, `--check-connectivity` |
 
 Run any command with `--help` for full details.
 

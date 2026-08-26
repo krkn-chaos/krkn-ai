@@ -67,7 +67,7 @@ def _probe_config(components: ClusterComponents, kubeconfig: str) -> ConfigFile:
         fitness_function=FitnessFunction(query="placeholder"),
         scenario=ScenarioConfig(**{name: {"enable": True} for name in names}),
         cluster_components=components,
-        allow_dangerous_scenarios=True,
+        allow_dangerous_scenarios=False,
     )
 
 

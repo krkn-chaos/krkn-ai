@@ -37,3 +37,7 @@ hr.d{border:none;border-top:1px solid var(--b);margin:1rem 0}
 .scenario-dist-item {
     width: 100%;
 }
+
+details{margin-top:1rem;border:1px solid var(--b);border-radius:8px;padding:.65rem .8rem;background:var(--bg)}
+details summary{cursor:pointer;color:var(--m);font-size:.82rem;font-weight:600}
+.raw-log,.raw-config{margin-top:.7rem;padding:.8rem;overflow:auto;max-height:32rem;background:#020617;color:var(--t);border:1px solid var(--b);border-radius:6px;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}

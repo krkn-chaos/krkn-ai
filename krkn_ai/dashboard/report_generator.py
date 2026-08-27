@@ -4,13 +4,16 @@ report_generator.py
 Generates a single self-contained HTML report of the full Krkn-AI dashboard
 suitable for CI/CD artifact capture.
 
-Covers all six tabs:
+Covers every section available in the live dashboard:
   1. Dashboard        — summary, fitness evolution, baseline delta, improvement trend
   2. Fitness          — per-query contributions, query stats, learned weights
   3. Health Checks    — heatmap, success/failure bar, radar-style coverage
   4. Detailed Scenarios — runtime RT chart, success timeline heatmap
   5. Anomaly Detection  — bubble map, anomaly table
-  6. Failed Scenarios   — failed run table
+  6. Logs             — scenario metadata and raw logs
+  7. Configuration    — structured run configuration and raw YAML
+  8. Failed Scenarios   — failed run table
+  9. Lineage          — optional origin charts and ancestry records
 
 Public API
 ----------
@@ -23,7 +26,10 @@ Public API
 
 from __future__ import annotations
 
+import html
+import json
 import os
+import re
 from datetime import datetime
 from typing import Optional, List
 
@@ -419,6 +425,303 @@ def _failed_bar(df_failed: pd.DataFrame) -> str:
     return _fig_html(fig, 320)
 
 
+# Logs, Configuration, and Lineage
+
+
+def _log_status(value) -> str:
+    if value is True:
+        return "Job passed"
+    if value is False:
+        return "Job failed"
+    return "—"
+
+
+def _scenario_label(scenario_id, scen_id_to_name=None) -> str:
+    name = None
+    if scen_id_to_name:
+        name = scen_id_to_name.get(str(scenario_id)) or scen_id_to_name.get(scenario_id)
+    return f"Scenario {scenario_id} — {name}" if name else f"Scenario {scenario_id}"
+
+
+def _logs_body(log_data, scen_id_to_name=None) -> str:
+    if not log_data:
+        return _na("No log files found in the logs directory.")
+
+    rows = []
+    raw_blocks = []
+    for entry in log_data:
+        scenario_id = entry.get("scenario_id", "?")
+        rows.append(
+            {
+                "scenario": _scenario_label(scenario_id, scen_id_to_name),
+                "status": _log_status(entry.get("job_status")),
+                "scenario_type": entry.get("scenario_type") or "—",
+                "duration": entry.get("duration") or "—",
+                "exit_status": entry.get("exit_status", "—"),
+                "recovered": entry.get("affected_recovered", 0),
+                "unrecovered": entry.get("affected_unrecovered", 0),
+                "run_uuid": entry.get("run_uuid") or "—",
+            }
+        )
+        raw_text = entry.get("raw_text") or ""
+        if raw_text:
+            label = _scenario_label(scenario_id, scen_id_to_name)
+            raw_blocks.append(
+                f"<details><summary>Raw log — {html.escape(label)}</summary>"
+                f"<pre class='raw-log'>{html.escape(_redact_string(str(raw_text)))}</pre></details>"
+            )
+
+    content = _df_table(pd.DataFrame(rows))
+    if raw_blocks:
+        content += "<div class='raw-logs'>" + "".join(raw_blocks) + "</div>"
+    return content
+
+
+_SECRET_KEY_PARTS = ("token", "password", "secret", "authorization", "api_key")
+_SECRET_URL_USERINFO_RE = re.compile(r"(https?://)[^/\s@]+@", re.IGNORECASE)
+_SECRET_URL_QUERY_RE = re.compile(
+    r"([?&](?:token|password|secret|authorization|api[_-]?key|access[_-]?token|signature)=)[^&#\s]+",
+    re.IGNORECASE,
+)
+_SECRET_AUTHORIZATION_RE = re.compile(r"(?im)(\bauthorization\b\s*[:=]\s*)[^\r\n]+")
+_SECRET_QUOTED_VALUE_RE = re.compile(
+    r"""(?i)(\b(?:token|password|secret|api[_-]?key|access[_-]?token)\b\s*[:=]\s*)(["'])(.*?)(\2)"""
+)
+_SECRET_UNQUOTED_VALUE_RE = re.compile(
+    r"(?i)(\b(?:token|password|secret|api[_-]?key|access[_-]?token)\b\s*[:=]\s*)[^\s,;}\]]+"
+)
+
+
+def _redact_string(value: str) -> str:
+    text = str(value)
+    text = _SECRET_URL_USERINFO_RE.sub(r"\1***@", text)
+    text = _SECRET_URL_QUERY_RE.sub(r"\1***", text)
+    text = _SECRET_AUTHORIZATION_RE.sub(r"\1***", text)
+    text = _SECRET_QUOTED_VALUE_RE.sub(r"\1\2***\4", text)
+    text = _SECRET_UNQUOTED_VALUE_RE.sub(r"\1***", text)
+    return text
+
+
+def _redact_config(value, key=""):
+    if any(part in key.lower() for part in _SECRET_KEY_PARTS):
+        return "***"
+    if isinstance(value, dict):
+        return {name: _redact_config(item, str(name)) for name, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_config(item, key) for item in value]
+    if isinstance(value, str):
+        return _redact_string(value)
+    return value
+
+
+def _config_body(config_data, fitness_items=None, health_check_recos=None) -> str:
+    if not config_data:
+        return _na("Configuration file not found.")
+
+    sections = []
+    fitness = config_data.get("fitness_function") or {}
+    if fitness_items:
+        sections.append(
+            _subsec(
+                "Fitness Function",
+                _df_table(
+                    pd.DataFrame(
+                        [
+                            {
+                                "name": item.get("name", "—"),
+                                "category": item.get("category") or "—",
+                                "type": item.get("type") or "—",
+                                "weight": item.get("weight")
+                                if item.get("enabled")
+                                else None,
+                                "status": "in use"
+                                if item.get("enabled")
+                                else "rejected",
+                                "reason": item.get("reason") or "—",
+                                "query": item.get("query", ""),
+                            }
+                            for item in fitness_items
+                        ]
+                    )
+                ),
+            )
+        )
+    elif fitness.get("query"):
+        sections.append(
+            _subsec(
+                "Fitness Function",
+                _df_table(
+                    pd.DataFrame(
+                        [
+                            {
+                                "mode": "single-query",
+                                "type": fitness.get("type", "point"),
+                                "query": fitness["query"],
+                            }
+                        ]
+                    )
+                ),
+            )
+        )
+
+    applications = (config_data.get("health_checks") or {}).get("applications") or []
+    if applications:
+        sections.append(
+            _subsec(
+                "Health Checks",
+                _df_table(pd.DataFrame(_redact_config(applications, "applications"))),
+            )
+        )
+    if health_check_recos:
+        sections.append(
+            _subsec(
+                "Health Checks Discovered but Disabled",
+                _df_table(pd.DataFrame(_redact_config(health_check_recos))),
+            )
+        )
+
+    scenarios = config_data.get("scenario") or {}
+    if scenarios:
+        sections.append(
+            _subsec(
+                "Scenarios",
+                _df_table(
+                    pd.DataFrame(
+                        [
+                            {
+                                "scenario": name,
+                                "enabled": bool((value or {}).get("enable")),
+                            }
+                            for name, value in scenarios.items()
+                        ]
+                    )
+                ),
+            )
+        )
+
+    components = config_data.get("cluster_components") or {}
+    namespaces = components.get("namespaces") or []
+    nodes = components.get("nodes") or []
+    sections.append(
+        _subsec(
+            "Cluster Components",
+            _cards([("Namespaces", len(namespaces)), ("Nodes", len(nodes))])
+            + (
+                _df_table(
+                    pd.DataFrame(
+                        [
+                            {
+                                "namespace": ns.get("name"),
+                                "pods": len(ns.get("pods") or []),
+                                "services": len(ns.get("services") or []),
+                                "pvcs": len(ns.get("pvcs") or []),
+                                "disabled": bool(ns.get("disabled")),
+                            }
+                            for ns in namespaces
+                        ]
+                    )
+                )
+                if namespaces
+                else _na("No namespaces recorded.")
+            ),
+        )
+    )
+
+    raw = html.escape(json.dumps(_redact_config(config_data), indent=2, default=str))
+    sections.append(
+        _subsec("Raw Configuration", f"<pre class='raw-config'>{raw}</pre>")
+    )
+    return "".join(sections)
+
+
+def _lineage_body(df_lineage: Optional[pd.DataFrame]) -> str:
+    if df_lineage is None or df_lineage.empty:
+        return _na("No lineage data available for this run.")
+
+    try:
+        from krkn_ai.dashboard.tabs.lineage import _ORIGIN_COLORS, _ORIGIN_LABELS
+    except ImportError:
+        _ORIGIN_COLORS, _ORIGIN_LABELS = {}, {}
+
+    if "origin" not in df_lineage.columns or not df_lineage["origin"].notna().any():
+        return _na("Lineage origin data not recorded for this run.")
+
+    charts = []
+    if "origin" in df_lineage.columns:
+        origin = df_lineage["origin"].astype(str)
+        counts = (
+            origin.value_counts().rename_axis("origin").reset_index(name="scenarios")
+        )
+        counts["origin_label"] = counts["origin"].map(
+            lambda value: _ORIGIN_LABELS.get(value, value)
+        )
+        fig = px.pie(
+            counts,
+            names="origin_label",
+            values="scenarios",
+            hole=0.45,
+            title="Origin Distribution",
+            color="origin_label",
+            color_discrete_map={
+                _ORIGIN_LABELS.get(key, key): value
+                for key, value in _ORIGIN_COLORS.items()
+            },
+        )
+        charts.append(_fig_html(fig, 350))
+
+        if "generation" in df_lineage.columns:
+            grouped = (
+                df_lineage.assign(origin=origin)
+                .groupby(["generation", "origin"])
+                .size()
+                .reset_index(name="scenarios")
+            )
+            grouped["generation"] = (
+                pd.to_numeric(grouped["generation"], errors="coerce") + 1
+            )
+            grouped["origin_label"] = grouped["origin"].map(
+                lambda value: _ORIGIN_LABELS.get(value, value)
+            )
+            fig = px.bar(
+                grouped,
+                x="generation",
+                y="scenarios",
+                color="origin_label",
+                title="GA Strategy per Generation",
+                barmode="stack",
+                color_discrete_map={
+                    _ORIGIN_LABELS.get(key, key): value
+                    for key, value in _ORIGIN_COLORS.items()
+                },
+            )
+            charts.append(_fig_html(fig, 350))
+
+    columns = [
+        column
+        for column in [
+            "generation",
+            "scenario_id",
+            "scenario_uuid",
+            "origin",
+            "fitness_score",
+            "parent_ids",
+        ]
+        if column in df_lineage.columns
+    ]
+    table = df_lineage[columns].copy() if columns else df_lineage.copy()
+    if "generation" in table.columns:
+        table["generation"] = pd.to_numeric(table["generation"], errors="coerce") + 1
+    if "parent_ids" in table.columns:
+        table["parent_ids"] = table["parent_ids"].map(
+            lambda value: ", ".join(map(str, value))
+            if isinstance(value, (list, tuple))
+            else (value or "—")
+        )
+    return (
+        "<div class='two-col'>" + "".join(charts) + "</div>" if charts else ""
+    ) + _subsec("Lineage Records", _df_table(table))
+
+
 # HTML Template
 _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
 
@@ -459,9 +762,14 @@ def generate_html_report(
     anomaly_mode: str = "z_score",
     fitness_items: Optional[List] = None,
     learned_weights: Optional[dict] = None,
+    df_logs: Optional[list[dict]] = None,
+    config_data: Optional[dict] = None,
+    df_lineage: Optional[pd.DataFrame] = None,
+    health_check_recos: Optional[list[dict]] = None,
+    scen_id_to_name: Optional[dict] = None,
 ) -> str:
     """
-    Generate a complete self-contained HTML report covering all six dashboard tabs.
+    Generate a complete HTML report covering every live dashboard section.
 
     Parameters
     ----------
@@ -475,6 +783,11 @@ def generate_html_report(
     anomaly_mode          : "z_score" or "pct_deviation" — determines which anomaly detectors fire.
     fitness_items        : Per-query fitness metadata from the run config.
     learned_weights      : Weights the engine learned from the run, keyed by query.
+    df_logs              : Parsed scenario log records.
+    config_data          : Parsed krkn-ai.yaml configuration.
+    df_lineage           : Optional population lineage records.
+    health_check_recos   : Health checks discovered but disabled.
+    scen_id_to_name      : Optional scenario ID-to-name lookup for log labels.
 
     Returns
     -------
@@ -530,15 +843,19 @@ def generate_html_report(
         else 0
     )
 
-    # Nav tabs
+    # Nav tabs — mirror the live dashboard, including optional lineage.
     tab_defs = [
         ("Dashboard", "tab-dashboard"),
         ("Fitness", "tab-fitness"),
         ("Health Checks", "tab-health"),
         ("Detailed Scenarios", "tab-detailed"),
         ("Anomaly Detection", "tab-anomalies"),
+        ("Logs", "tab-logs"),
+        ("Configuration", "tab-config"),
         ("Failed Scenarios", "tab-failed"),
     ]
+    if df_lineage is not None and not df_lineage.empty:
+        tab_defs.append(("Lineage", "tab-lineage"))
 
     # Header
     header = (
@@ -709,5 +1026,34 @@ def generate_html_report(
         "tab-failed",
     )
 
-    body = "\n".join([header, tab1, tab_fit, tab2, tab3, tab4, tab5])
+    tab_logs = _sec(
+        "Scenario Logs",
+        _logs_body(df_logs, scen_id_to_name),
+        "tab-logs",
+    )
+    tab_config = _sec(
+        "Krkn-AI Configuration",
+        _config_body(config_data, fitness_items, health_check_recos),
+        "tab-config",
+    )
+    tab_lineage = (
+        _sec("Evolutionary Lineage", _lineage_body(df_lineage), "tab-lineage")
+        if df_lineage is not None and not df_lineage.empty
+        else ""
+    )
+
+    body = "\n".join(
+        [
+            header,
+            tab1,
+            tab_fit,
+            tab2,
+            tab3,
+            tab4,
+            tab_logs,
+            tab_config,
+            tab5,
+            tab_lineage,
+        ]
+    )
     return _full_page(body, ts)

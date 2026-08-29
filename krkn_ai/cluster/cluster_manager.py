@@ -105,7 +105,6 @@ class ClusterManager:
             namespaces[i].pods = pods
             namespaces[i].services = self.list_services(namespace)
             namespaces[i].pvcs = self.list_pvcs(namespace)
-
             vmis = self.list_vmis(namespace)
             namespaces[i].vmis = vmis
 

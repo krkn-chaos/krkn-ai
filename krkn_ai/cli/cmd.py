@@ -241,21 +241,21 @@ def monitor(ctx, output: str, port: int):
 @click.option(
     "--namespace",
     "-n",
-    help="Namespace(s) to discover components in. Supports Regex and comma separated values.",
-    default=".*",
+    help="Namespace(s) to discover components in. Supports wildcard (*), regex and comma separated values.",
+    default="*",
 )
 @click.option(
     "--pod-label",
     "-pl",
-    help="Pod Label Keys(s) to filter. Supports Regex and comma separated values.",
-    default=".*",
+    help="Pod Label Keys(s) to filter. Supports wildcard (*), regex and comma separated values.",
+    default="*",
     required=False,
 )
 @click.option(
     "--node-label",
     "-nl",
-    help="Node Label Keys(s) to filter. Supports Regex and comma separated values.",
-    default=".*",
+    help="Node Label Keys(s) to filter. Supports wildcard (*), regex and comma separated values.",
+    default="*",
     required=False,
 )
 @click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
@@ -282,9 +282,9 @@ def discover(
     ctx,
     kubeconfig: str,
     output: str = "./krkn-ai.yaml",
-    namespace: str = ".*",
-    pod_label: str = ".*",
-    node_label: str = ".*",
+    namespace: str = "*",
+    pod_label: str = "*",
+    node_label: str = "*",
     verbose: int = 0,
     skip_pod_name: str = None,
     save_strategy: str = "skip",

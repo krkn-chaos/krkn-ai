@@ -1,5 +1,5 @@
 from krkn_ai.models.app import KrknRunnerType
-from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.config import ConfigFile, ElasticConfig
 from krkn_ai.models.scenario.base import Scenario
 
 PODMAN_TEMPLATE = 'podman run -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
@@ -9,6 +9,19 @@ PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER="{server}" -e ES_PORT="{
 KRKNCTL_TEMPLATE = "krknctl run {name} --telemetry-prometheus-backup False --wait-duration {wait_duration} --kubeconfig {kubeconfig} {env_list} {{es_env_list}}"
 
 KRKNCTL_ES_TEMPLATE = ' --enable-es True --es-server "{server}" --es-port "{port}" --es-username "{username}" --es-password "{password}" --es-verify-certs "{verify_certs}" '
+
+
+def es_env_vars(elastic: ElasticConfig) -> dict[str, str]:
+    # krknctl graph run accepts no ES flags, so composite scenario nodes receive the
+    # ES settings through their env block. Names match PODMAN_ES_TEMPLATE.
+    return {
+        "ENABLE_ES": "True",
+        "ES_SERVER": elastic.server,
+        "ES_PORT": str(elastic.port),
+        "ES_USERNAME": elastic.username,
+        "ES_PASSWORD": elastic.password,
+        "ES_VERIFY_CERTS": str(elastic.verify_certs),
+    }
 
 
 def build_scenario_command(

@@ -34,6 +34,28 @@ class TestGeneticAlgorithmInitialization:
                 assert ga.population == []
                 assert len(ga.best_of_generation) == 0
 
+    def test_init_skips_elasticsearch_without_config(
+        self, minimal_config, temp_output_dir
+    ):
+        """ElasticSearchClient is opt-in."""
+        assert minimal_config.elastic is None
+        with patch("krkn_ai.algorithm.genetic.KrknRunner"):
+            with patch(
+                "krkn_ai.algorithm.genetic.ScenarioFactory.generate_valid_scenarios"
+            ) as mock_gen:
+                with patch(
+                    "krkn_ai.algorithm.genetic.ElasticSearchClient"
+                ) as mock_elastic:
+                    mock_gen.return_value = [("pod_scenarios", Mock)]
+                    ga = GeneticAlgorithm(
+                        config=minimal_config,
+                        output_dir=temp_output_dir,
+                        format="yaml",
+                    )
+
+                    assert ga.elastic_client is None
+                    mock_elastic.assert_not_called()
+
     def test_init_generates_unique_run_uuid(self, minimal_config, temp_output_dir):
         """Test initialization generates a unique run UUID per instance"""
         with patch("krkn_ai.algorithm.base.KrknRunner"):

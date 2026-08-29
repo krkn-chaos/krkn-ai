@@ -19,6 +19,7 @@ from krkn_ai.models.config import (
     HealthCheckApplicationConfig,
     OutputConfig,
     ClusterComponents,
+    ElasticConfig,
     StoppingCriteria,
 )
 from krkn_ai.models.cluster_components import Namespace, Node
@@ -69,6 +70,7 @@ class TestConfigFile:
         assert isinstance(config_min.scenario, ScenarioConfig)
         assert isinstance(config_min.health_checks, HealthCheckConfig)
         assert isinstance(config_min.output, OutputConfig)
+        assert config_min.elastic is None
 
         # Test with all fields
         cluster_full = ClusterComponents(
@@ -95,6 +97,7 @@ class TestConfigFile:
                 ],
             ),
             output=OutputConfig(result_name_fmt="gen_%g_scenario_%s.yaml"),
+            elastic=ElasticConfig(enable=True, server="https://elastic.example.com"),
             cluster_components=cluster_full,
         )
         assert config.genetic.generations == 50
@@ -102,6 +105,9 @@ class TestConfigFile:
         assert config.parameters["key1"].value == "value1"
         assert config.scenario.pod_scenarios.enable is True
         assert len(config.health_checks.applications) == 1
+        assert config.elastic is not None
+        assert config.elastic.enable is True
+        assert config.elastic.server == "https://elastic.example.com"
 
     def test_config_missing_required_fields_raises_error(self):
         """Test that missing required fields raise ValidationError"""

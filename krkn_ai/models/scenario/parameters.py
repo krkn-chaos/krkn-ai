@@ -5,6 +5,30 @@ from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
 
 
+def _mutate_percentage(value: int, floor: int) -> int:
+    """Mutate an integer percentage, clamped to ``[floor, 100]``.
+
+    Preserves the original ``int(value +/- randint(...) * value / 100)`` rounding
+    of the previous per-parameter implementations, but guarantees the mutation is
+    not a silent no-op: when truncation would leave ``value`` unchanged it is
+    nudged by +/-1, so the genetic algorithm keeps exploring instead of
+    stagnating on small values (e.g. ``value <= 3`` with ``floor == 1``, where
+    ``int(randint(1, 35) * value / 100)`` truncated to ``0``). (#292)
+
+    Note: at the bounds the final clamp to ``[floor, 100]`` may still return the
+    original value (e.g. an increment from ``100`` or a decrement at ``floor``).
+    """
+    if rng.random() < 0.5:
+        mutated = int(value + rng.randint(1, 35) * value / 100)
+        if mutated == value:
+            mutated = value + 1
+    else:
+        mutated = int(value - rng.randint(1, 25) * value / 100)
+        if mutated == value:
+            mutated = value - 1
+    return min(max(mutated, floor), 100)
+
+
 class DummyEndParameter(BaseParameter):
     krknhub_name: str = "END"
     krknctl_name: str = "duration"
@@ -124,13 +148,7 @@ class NodeCPUPercentageParameter(BaseParameter):
     value: int = 50
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=20)
 
 
 class NodeMemoryPercentageParameter(BaseParameter):
@@ -146,13 +164,7 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=20)
 
 
 class NumberOfWorkersParameter(BaseParameter):
@@ -515,13 +527,7 @@ class IOWriteBytesParameter(BaseParameter):
         """
         Mutate the percentage value between 1 and 100.
         """
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
-        else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 1)
-        self.value = min(self.value, 100)
+        self.value = _mutate_percentage(self.value, floor=1)
 
 
 class NodeMountPathParameter(BaseParameter):

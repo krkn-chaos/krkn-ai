@@ -2,11 +2,14 @@
 run_shell unit tests
 """
 
+import sys
 import pytest
 from unittest.mock import patch
 
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
 from krkn_ai.utils import run_shell
+
+_LONG_SLEEP_CMD = f'{sys.executable} -c "import time; time.sleep(10)"'
 
 
 class TestRunShell:
@@ -14,7 +17,7 @@ class TestRunShell:
 
     def test_timeout_raises_shell_command_timeout_error(self):
         with pytest.raises(ShellCommandTimeoutError):
-            run_shell("sleep 10", timeout=5)
+            run_shell(_LONG_SLEEP_CMD, timeout=5)
 
     @patch("krkn_ai.utils.shutil.which")
     def test_command_not_found_returns_empty_string_and_127(self, mock_which):

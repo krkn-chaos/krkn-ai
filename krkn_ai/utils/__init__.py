@@ -18,7 +18,7 @@ def id_generator() -> Iterator[int]:
         i += 1
 
 
-def run_shell(command, do_not_log=False, timeout=None):
+def run_shell(command, do_not_log=False, timeout=None, cwd=None):
     """
     Run shell command and get logs and statuscode in output.
 
@@ -36,7 +36,11 @@ def run_shell(command, do_not_log=False, timeout=None):
 
     try:
         process = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=cwd,
         )
     except OSError as e:
         level = logging.DEBUG if do_not_log else logging.ERROR

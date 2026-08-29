@@ -11,6 +11,7 @@ Fallback chain:
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -156,6 +157,75 @@ def _try_regex_extraction(text: str) -> Optional[TelemetryResult]:
     logger.debug("Extracted resiliency_score: %s (regex)", resiliency_score)
     return TelemetryResult(
         exit_status=exit_status,
+        run_uuid=run_uuid,
+        resiliency_score=resiliency_score,
+    )
+
+
+def extract_telemetry_from_graph_logs(
+    log_dir: str, default_returncode: int
+) -> TelemetryResult:
+    """
+    Extract telemetry from a graph run by parsing individual node log files.
+    krknctl graph run creates a separate log file per graph node execution.
+
+    Returns the worst return code found across all node logs, with safe fallback.
+    """
+    if not os.path.exists(log_dir):
+        logger.warning("Graph log directory does not exist: %s", log_dir)
+        return TelemetryResult(exit_status=default_returncode)
+
+    log_files = [f for f in os.listdir(log_dir) if f.endswith(".log")]
+    if not log_files:
+        logger.warning("No log files found in graph log directory")
+        return TelemetryResult(exit_status=default_returncode)
+
+    logger.debug("Found %d log files in graph run", len(log_files))
+
+    worst_returncode = 0
+    run_uuid = None
+    resiliency_scores = []
+
+    for log_file in log_files:
+        log_path = os.path.join(log_dir, log_file)
+        try:
+            with open(log_path, "r") as f:
+                node_log = f.read()
+
+            node_telemetry = extract_telemetry_from_log(node_log, 0)
+            node_returncode = node_telemetry.exit_status
+
+            # Track the worst return code seen.
+            # Prioritize misconfiguration (non-zero, non-2) over SLO failures (2).
+            if node_returncode != 0 and node_returncode != 2:
+                worst_returncode = node_returncode
+            elif worst_returncode in (0, 2):
+                if node_returncode > worst_returncode:
+                    worst_returncode = node_returncode
+
+            # Capture UUID from any node (they should all share the same run UUID)
+            if node_telemetry.run_uuid and not run_uuid:
+                run_uuid = node_telemetry.run_uuid
+
+            if node_telemetry.resiliency_score is not None:
+                resiliency_scores.append(node_telemetry.resiliency_score)
+
+            logger.debug("Node %s exit status: %d", log_file, node_returncode)
+
+        except Exception as e:
+            logger.warning("Failed to parse log file %s: %s", log_file, e)
+            continue
+
+    logger.info(
+        "Graph run worst exit status: %d (from %d nodes)",
+        worst_returncode,
+        len(log_files),
+    )
+    resiliency_score = (
+        sum(resiliency_scores) / len(resiliency_scores) if resiliency_scores else None
+    )
+    return TelemetryResult(
+        exit_status=worst_returncode,
         run_uuid=run_uuid,
         resiliency_score=resiliency_score,
     )

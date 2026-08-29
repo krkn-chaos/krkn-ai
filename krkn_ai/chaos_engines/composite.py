@@ -33,9 +33,18 @@ def build_graph_command(
         json.dump(scenario_json, f, ensure_ascii=False, indent=4)
     logger.info("Created scenario json in path: %s", json_file)
 
+    # Create log directory for graph run node logs. krknctl has no --log-dir
+    # flag; it writes per-node "<container>.log" files into its current
+    # working directory, so the caller must run the command with this
+    # directory as cwd.
+    graph_log_directory = os.path.join(output_dir, "graph_logs")
+    os.makedirs(graph_log_directory, exist_ok=True)
+
+    # The command will run with cwd set to graph_log_directory, so any
+    # relative paths passed to krknctl must be made absolute first.
     command = KRKNCTL_GRAPH_RUN_TEMPLATE.format(
-        path=json_file,
-        kubeconfig=kubeconfig_path,
+        path=os.path.abspath(json_file),
+        kubeconfig=os.path.abspath(kubeconfig_path),
     )
     return command
 

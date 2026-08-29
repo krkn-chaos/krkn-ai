@@ -204,9 +204,18 @@ class TestKrknRunnerCommandGeneration:
             command = runner.graph_command(composite)
 
             assert "krknctl graph run" in command
-            assert "/tmp/kubeconfig" in command
+            # krknctl resolves relative paths against its cwd (which is set
+            # to graph_logs when the command runs), so the kubeconfig path
+            # must be made absolute here.
+            assert os.path.abspath("/tmp/kubeconfig") in command
+            # krknctl has no --log-dir flag; per-node logs are captured by
+            # running the command with cwd set to the graph_logs directory.
+            assert "--log-dir" not in command
             # Verify JSON file was created
             graph_dir = os.path.join(temp_output_dir, "graphs")
             assert os.path.exists(graph_dir)
             json_files = [f for f in os.listdir(graph_dir) if f.endswith(".json")]
             assert len(json_files) > 0
+            # Verify log directory was created
+            log_dir = os.path.join(temp_output_dir, "graph_logs")
+            assert os.path.exists(log_dir)

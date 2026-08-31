@@ -25,10 +25,6 @@ An intelligent chaos engineering framework that uses genetic algorithms to evolv
 - [helm 3.x](https://helm.sh/docs/v3/intro/install/)
 - Kubernetes/OpenShift cluster kubeconfig
 
-The `operator` runner does not require local `krknctl`, Podman, or `oc`; it
-uses the Kubernetes API and an installed `krkn-operator`. Those tools remain
-required for the default local/container HUB and discovery workflows.
-
 ## 🚀 Getting Started
 
 ### Install from source
@@ -162,43 +158,6 @@ krkn_ai run \
   -o ./tmp/results/ \
   -p HOST=$HOST
 ```
-
-### Run with the Kubernetes operator
-
-The `operator` runner creates a `KrknScenarioRun` custom resource for each
-scenario instead of invoking Podman or `krknctl` locally. The
-`krkn-operator` controller creates the scenario pod and reports its result
-back to krkn-ai.
-
-Manual execution requires the `krkn-operator` CRD and an in-cluster identity
-with permission to create and read `KrknScenarioRun` resources:
-
-```bash
-export KUBECONFIG=/path/to/kubeconfig
-export KRKNAI_NAMESPACE=krkn-operator
-export KRKNAI_RUN_NAME=manual-run
-export KRKNAI_RUN_UID=<KrknAIRun-uid>
-export KRKNAI_TARGET_REQUEST_ID=self
-export KRKNAI_PROVIDER=krkn-operator
-export KRKNAI_CLUSTER=self
-export KRKNAI_SCENARIO_MAX_RETRIES=0
-
-krkn_ai run \
-  -c ./tmp/krkn-ai.yaml \
-  -k "$KUBECONFIG" \
-  -o ./tmp/operator-results \
-  --runner-type operator
-```
-
-The `KRKNAI_RUN_UID` value is used as the owner reference for child
-`KrknScenarioRun` resources. When running outside a `KrknAIRun` controller,
-use a real parent UID or omit owner-reference cleanup expectations.
-
-For the Kubernetes deployment workflow, including the per-run configuration
-ConfigMap, `KrknAIRun` manifest, target Secret format, RBAC, dedicated image,
-and cleanup commands, see
-[`hack/README.md`](hack/README.md) and
-[`containers/README.md`](containers/README.md).
 
 ## 💻 CLI Reference
 

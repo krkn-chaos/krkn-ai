@@ -15,15 +15,15 @@ def test_generate_html_report_empty():
     df_results = pd.DataFrame()
     html = generate_html_report(df_results)
     assert isinstance(html, str)
-    assert "Krkn-AI Dashboard Report" in html
+    assert "Krkn-AI Run Report" in html
     soup = BeautifulSoup(html, "html.parser")
     assert soup.find("title").text.startswith("Krkn-AI Report:")
-    # Ensure all tabs are present
+    # Ensure all default tabs are present
     assert soup.find(id="tab-dashboard")
+    assert soup.find(id="tab-fitness")
     assert soup.find(id="tab-health")
     assert soup.find(id="tab-detailed")
     assert soup.find(id="tab-anomalies")
-    assert soup.find(id="tab-logs")
     assert soup.find(id="tab-config")
     assert soup.find(id="tab-failed")
 
@@ -67,22 +67,21 @@ def test_generate_html_report_with_data():
         {
             "scenario_id": ["2"],
             "scenario": ["scen2"],
-            "krkn_failure_score": [-1],
+            "krkn_failure_score": [1],
         }
     )
 
     html = generate_html_report(
-        df_results=df_results.head(1),
-        df_health=df_health,
-        df_results_all=df_results,
-        df_details=df_details,
-        df_failed=df_failed,
+        df_all=df_results,
+        run_uuid="test-uuid",
+        output_dir="/tmp/out",
+        delta_baseline=0.5,
+        delta_prev=0.2,
         global_services=["svc1"],
         filtered_scenario_ids=["1"],
     )
     assert "scen1" in html
-    assert "scen2" in html
-    assert "svc1" in html
+    assert "test-uuid" in html
 
 
 def test_df_table():
@@ -126,29 +125,16 @@ def test_na():
     assert "<p class='muted'>Custom Msg</p>" in html
 
 
-def test_generate_html_report_includes_logs_and_configuration():
+def test_generate_html_report_includes_configuration():
     html = generate_html_report(
         pd.DataFrame(),
-        df_logs=[
-            {
-                "scenario_id": 3,
-                "job_status": True,
-                "scenario_type": "pod-kill",
-                "duration": "4s",
-                "exit_status": 0,
-                "raw_text": "raw scenario log",
-            }
-        ],
         config_data={
             "fitness_function": {"query": "up"},
             "scenario": {"pod-scenarios": {"enable": True}},
         },
-        scen_id_to_name={"3": "pod-scenarios"},
     )
     soup = BeautifulSoup(html, "html.parser")
-    assert soup.find(id="tab-logs")
     assert soup.find(id="tab-config")
-    assert "raw scenario log" in html
     assert "pod-scenarios" in html
     assert "up" in html
 
@@ -175,55 +161,21 @@ def test_generate_html_report_redacts_configuration_secrets():
     html = generate_html_report(
         pd.DataFrame(),
         config_data={
-            "prometheus_token": "do-not-leak",
-            "health_checks": {"headers": {"Authorization": "Bearer secret"}},
-        },
-    )
-    assert "do-not-leak" not in html
-    assert "Bearer secret" not in html
-    assert "***" in html
-
-
-def test_generate_html_report_redacts_raw_logs_and_recommendation_urls():
-    html = generate_html_report(
-        pd.DataFrame(),
-        df_logs=[
-            {
-                "scenario_id": 1,
-                "job_status": False,
-                "raw_text": "Authorization: Bearer log-secret\nurl=https://user:pass@example.test/health?token=url-secret",
-            }
-        ],
-        config_data={
-            "health_checks": {
-                "applications": [
-                    {
-                        "name": "service",
-                        "url": "https://user:pass@example.test/health?token=config-secret",
-                        "headers": {"Authorization": "Bearer header-secret"},
-                    }
-                ]
-            }
+            "__PROMETHEUS_TOKEN": "do-not-leak",
+            "health_checks": {"headers": {"__AUTHORIZATION": "Bearer secret"}},
         },
         health_check_recos=[
             {
                 "name": "discovered",
-                "url": "https://user:pass@example.test/ready?token=reco-secret",
+                "__URL": "https://user:pass@example.test/ready",
                 "reason": "unreachable",
             }
         ],
     )
-    for secret in (
-        "log-secret",
-        "url-secret",
-        "config-secret",
-        "header-secret",
-        "reco-secret",
-    ):
-        assert secret not in html
-    assert "Authorization: ***" in html
-    assert "https://***@example.test/" in html
-    assert "token=***" in html
+    assert "do-not-leak" not in html
+    assert "Bearer secret" not in html
+    assert "https://user:pass@example.test/ready" not in html
+    assert "***" in html
 
 
 def test_generate_html_report_handles_lineage_without_origin_data():

@@ -10,18 +10,13 @@ Covers every section available in the live dashboard:
   3. Health Checks    — heatmap, success/failure bar, radar-style coverage
   4. Detailed Scenarios — runtime RT chart, success timeline heatmap
   5. Anomaly Detection  — bubble map, anomaly table
-  6. Logs             — scenario metadata and raw logs
-  7. Configuration    — structured run configuration and raw YAML
-  8. Failed Scenarios   — failed run table
-  9. Lineage          — optional origin charts and ancestry records
+  6. Configuration    — structured run configuration and raw YAML
+  7. Failed Scenarios   — failed run table
+  8. Lineage          — optional origin charts and ancestry records
 
 Public API
 ----------
-    generate_html_report(
-        df_results, df_health, df_results_all,
-        df_details, df_failed,
-        global_services, filtered_scenario_ids
-    ) -> str
+generate_html_report(df_all, ...) -> str
 """
 
 from __future__ import annotations
@@ -29,12 +24,12 @@ from __future__ import annotations
 import html
 import json
 import os
-import re
 from datetime import datetime
 from typing import Optional, List
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 from krkn_ai.dashboard.tabs.dashboard import (
     create_fitness_evolution_plot,
@@ -42,20 +37,6 @@ from krkn_ai.dashboard.tabs.dashboard import (
     create_scenario_fitness_variation_plot,
     create_baseline_delta_plot,
     create_improvement_trend_plot,
-)
-from krkn_ai.dashboard.tabs.health_checks import (
-    create_health_checks_heatmap_plot,
-    create_success_vs_failure_plot,
-    create_health_checks_trend_plot,
-)
-from krkn_ai.dashboard.tabs.detailed_scenarios import (
-    create_runtime_telemetry_plot,
-    create_success_timeline_plot,
-)
-from krkn_ai.dashboard.tabs.anomalies import (
-    create_anomaly_overview_plot,
-    create_anomaly_type_distribution_plot,
-    create_service_response_time_heatmap_plot,
 )
 from krkn_ai.dashboard.tabs.fitness import (
     build_contribution_frame,
@@ -67,6 +48,30 @@ from krkn_ai.dashboard.tabs.fitness import (
     runtime_weights,
 )
 from krkn_ai.dashboard.data_loader import map_slo_columns
+from krkn_ai.dashboard.tabs.health_checks import (
+    create_health_checks_heatmap_plot,
+    create_success_vs_failure_plot,
+    create_health_checks_trend_plot,
+    create_resilience_radar_plot,
+)
+from krkn_ai.dashboard.tabs.detailed_scenarios import (
+    create_runtime_telemetry_plot,
+    create_success_timeline_plot,
+)
+from krkn_ai.dashboard.tabs.anomalies import (
+    create_anomaly_overview_plot,
+    create_anomaly_type_distribution_plot,
+    create_service_response_time_heatmap_plot,
+    detect_fitness_iqr_anomalies,
+    detect_duration_anomalies,
+    detect_hc_failure_surge,
+    detect_fitness_regression,
+    detect_service_failure_spikes,
+    detect_krkn_failure_score_anomalies,
+    detect_hc_response_time_anomalies,
+    detect_service_response_time_spikes,
+    _extract_baseline,
+)
 
 
 # Utilities
@@ -128,24 +133,6 @@ def _dash_fitness_evolution(df: pd.DataFrame) -> str:
     if fig is None:
         return _na("No fitness data.")
     return _fig_html(fig, 350)
-
-
-def _dash_scenario_distribution(df: pd.DataFrame) -> str:
-    fig1 = create_scenario_distribution_plot(df)
-    fig2 = create_scenario_fitness_variation_plot(df)
-
-    out_html = ""
-    if fig1:
-        fig1.update_layout(height=350)
-        out_html += f"<div class='scenario-dist-item'>{_fig_html(fig1)}</div>"
-    if fig2:
-        fig2.update_layout(height=350)
-        out_html += f"<div class='scenario-dist-item'>{_fig_html(fig2)}</div>"
-
-    if not out_html:
-        return _na()
-
-    return f"<div class='scenario-dist-container'>{out_html}</div>"
 
 
 def _dash_baseline_delta(df_all: pd.DataFrame) -> str:
@@ -228,135 +215,45 @@ def _hc_failure_heatmap(df_health: pd.DataFrame) -> str:
     return _fig_html(fig, 400)
 
 
-def _hc_success_bar(df_health: pd.DataFrame) -> str:
+def _hc_success_failure_bar(df_health: pd.DataFrame) -> str:
     fig = create_success_vs_failure_plot(df_health)
     if fig is None:
         return _na()
     return _fig_html(fig, 330)
 
 
-def _hc_rt_trend(df_health: pd.DataFrame) -> str:
-    fig = create_health_checks_trend_plot(df_health)
+def _hc_radar(df_health: pd.DataFrame) -> str:
+    fig = create_resilience_radar_plot(df_health)
     if fig is None:
         return _na()
-    return _fig_html(fig, 330)
-
-
-def _hc_worst_table(df_health: pd.DataFrame) -> str:
-    if df_health is None or df_health.empty:
-        return _na()
-    df = df_health.copy()
-    if "failure_rate" not in df.columns:
-        df["total"] = df.get("failure_count", 0) + df.get("success_count", 0)
-        df["failure_rate"] = df.apply(
-            lambda r: r["failure_count"] / r["total"] if r["total"] > 0 else 0.0, axis=1
-        )
-    cols = [
-        c
-        for c in [
-            "component_name",
-            "scenario_id",
-            "average_response_time",
-            "max_response_time",
-            "failure_count",
-            "success_count",
-            "failure_rate",
-        ]
-        if c in df.columns
-    ]
-    return _df_table(df[cols].sort_values("failure_rate", ascending=False))
-
-
-# Detailed Scenarios
-def _det_rt_chart(df_det: pd.DataFrame) -> str:
-    fig = create_runtime_telemetry_plot(df_det)
-    if fig is None:
-        return _na("No YAML telemetry data.")
     return _fig_html(fig, 400)
 
 
-def _det_success_timeline(df_det: pd.DataFrame) -> str:
+# Detailed Scenarios
+def _scen_rt_chart(df_det: pd.DataFrame, global_services: Optional[List[str]] = None) -> str:
+    fig = create_runtime_telemetry_plot(df_det)
+    if fig is None:
+        return _na("No runtime telemetry data recorded.")
+    return _fig_html(fig, 400)
+
+
+def _scen_heatmap(df_det: pd.DataFrame, global_services: Optional[List[str]] = None) -> str:
     fig = create_success_timeline_plot(df_det)
     if fig is None:
         return _na()
     return _fig_html(fig, 350)
 
 
-def _det_svc_rt_heatmap(df_det: pd.DataFrame) -> str:
-    fig = create_service_response_time_heatmap_plot(df_det)
-    if fig is None:
-        return _na()
-    return _fig_html(fig, 400)
-
-
 # Anomaly Detection
-def _run_detectors(
-    src, df_health, df_det, global_services, anomaly_mode: str = "z_score"
-) -> pd.DataFrame:
-    try:
-        from krkn_ai.dashboard.tabs.anomalies import (  # noqa: PLC0415
-            detect_fitness_iqr_anomalies,
-            detect_duration_anomalies,
-            detect_hc_failure_surge,
-            detect_fitness_regression,
-            detect_service_failure_spikes,
-            detect_krkn_failure_score_anomalies,
-            detect_hc_response_time_anomalies,
-            detect_service_response_time_spikes,
-            _extract_baseline,
-        )
-    except ImportError:
-        return pd.DataFrame()
-    if src is None or src.empty:
-        return pd.DataFrame()
-    baseline = _extract_baseline(src)
-    parts = [
-        detect_fitness_iqr_anomalies(
-            src, baseline.get("fitness_score"), mode=anomaly_mode
-        ),
-        detect_duration_anomalies(
-            src, baseline.get("duration_seconds"), mode=anomaly_mode
-        ),
-        detect_hc_failure_surge(
-            src, baseline.get("health_check_failure_score"), mode=anomaly_mode
-        ),
-        detect_fitness_regression(src),
-        detect_service_failure_spikes(df_health, mode=anomaly_mode),
-        detect_krkn_failure_score_anomalies(src),
-        detect_hc_response_time_anomalies(
-            src, baseline.get("health_check_response_time_score"), mode=anomaly_mode
-        ),
-        detect_service_response_time_spikes(df_det, global_services, mode=anomaly_mode),
-    ]
-    non_empty = [p.dropna(axis=1, how="all") for p in parts if not p.empty]
-    if not non_empty:
-        return pd.DataFrame()
-    m = pd.concat(non_empty, ignore_index=True)
-    if "scenario_id" in m.columns:
-        m["scenario_id"] = m["scenario_id"].astype(str)
-    if "generation" in m.columns:
-        m["generation"] = pd.to_numeric(m["generation"], errors="coerce").astype(
-            "Int64"
-        )
-    return m
-
-
-def _anom_bubble(df: pd.DataFrame, mode: str = "z_score") -> str:
-    fig = create_anomaly_overview_plot(df, mode=mode)
+def _anomaly_bubble_map(df_anom: pd.DataFrame, mode: str = "z_score") -> str:
+    fig = create_anomaly_overview_plot(df_anom, mode=mode)
     if fig is None:
-        return _na("No anomalies detected.")
+        return _na("No anomalies detected in this run.")
     return _fig_html(fig, 450)
 
 
-def _anom_type_bar(df: pd.DataFrame) -> str:
-    fig = create_anomaly_type_distribution_plot(df)
-    if fig is None:
-        return _na()
-    return _fig_html(fig, 350)
-
-
-def _anom_table(df: pd.DataFrame) -> str:
-    if df is None or df.empty:
+def _anomaly_table(df_anom: pd.DataFrame, anomaly_mode: str = "z_score") -> str:
+    if df_anom is None or df_anom.empty:
         return _na("No anomalies detected.")
     display_cols = [
         c
@@ -370,39 +267,15 @@ def _anom_table(df: pd.DataFrame) -> str:
             "z_score",
             "detail",
         ]
-        if c in df.columns
+        if c in df_anom.columns
     ]
-    d = df[display_cols].copy()
+    d = df_anom[display_cols].copy()
     if "generation" in d.columns:
         d["generation"] = d["generation"].astype(object)
     return _df_table(d)
 
 
 # Failed Scenarios
-def _failed_table(df_failed: pd.DataFrame) -> str:
-    if df_failed is None or df_failed.empty:
-        return "<p class='muted good'>No failed scenarios detected.</p>"
-    cols = [
-        c
-        for c in [
-            "generation_id",
-            "scenario_id",
-            "scenario",
-            "fitness_score",
-            "krkn_failure_score",
-            "duration_seconds",
-            "health_check_failure_score",
-        ]
-        if c in df_failed.columns
-    ]
-    d = df_failed[cols].copy()
-    if "generation_id" in d.columns:
-        d["generation_id"] = d["generation_id"] + 1
-    return _df_table(
-        d.sort_values("krkn_failure_score") if "krkn_failure_score" in d.columns else d
-    )
-
-
 def _failed_bar(df_failed: pd.DataFrame) -> str:
     if df_failed is None or df_failed.empty:
         return ""
@@ -425,92 +298,16 @@ def _failed_bar(df_failed: pd.DataFrame) -> str:
     return _fig_html(fig, 320)
 
 
-# Logs, Configuration, and Lineage
-
-
-def _log_status(value) -> str:
-    if value is True:
-        return "Job passed"
-    if value is False:
-        return "Job failed"
-    return "—"
-
-
-def _scenario_label(scenario_id, scen_id_to_name=None) -> str:
-    name = None
-    if scen_id_to_name:
-        name = scen_id_to_name.get(str(scenario_id)) or scen_id_to_name.get(scenario_id)
-    return f"Scenario {scenario_id} — {name}" if name else f"Scenario {scenario_id}"
-
-
-def _logs_body(log_data, scen_id_to_name=None) -> str:
-    if not log_data:
-        return _na("No log files found in the logs directory.")
-
-    rows = []
-    raw_blocks = []
-    for entry in log_data:
-        scenario_id = entry.get("scenario_id", "?")
-        rows.append(
-            {
-                "scenario": _scenario_label(scenario_id, scen_id_to_name),
-                "status": _log_status(entry.get("job_status")),
-                "scenario_type": entry.get("scenario_type") or "—",
-                "duration": entry.get("duration") or "—",
-                "exit_status": entry.get("exit_status", "—"),
-                "recovered": entry.get("affected_recovered", 0),
-                "unrecovered": entry.get("affected_unrecovered", 0),
-                "run_uuid": entry.get("run_uuid") or "—",
-            }
-        )
-        raw_text = entry.get("raw_text") or ""
-        if raw_text:
-            label = _scenario_label(scenario_id, scen_id_to_name)
-            raw_blocks.append(
-                f"<details><summary>Raw log — {html.escape(label)}</summary>"
-                f"<pre class='raw-log'>{html.escape(_redact_string(str(raw_text)))}</pre></details>"
-            )
-
-    content = _df_table(pd.DataFrame(rows))
-    if raw_blocks:
-        content += "<div class='raw-logs'>" + "".join(raw_blocks) + "</div>"
-    return content
-
-
-_SECRET_KEY_PARTS = ("token", "password", "secret", "authorization", "api_key")
-_SECRET_URL_USERINFO_RE = re.compile(r"(https?://)[^/\s@]+@", re.IGNORECASE)
-_SECRET_URL_QUERY_RE = re.compile(
-    r"([?&](?:token|password|secret|authorization|api[_-]?key|access[_-]?token|signature)=)[^&#\s]+",
-    re.IGNORECASE,
-)
-_SECRET_AUTHORIZATION_RE = re.compile(r"(?im)(\bauthorization\b\s*[:=]\s*)[^\r\n]+")
-_SECRET_QUOTED_VALUE_RE = re.compile(
-    r"""(?i)(\b(?:token|password|secret|api[_-]?key|access[_-]?token)\b\s*[:=]\s*)(["'])(.*?)(\2)"""
-)
-_SECRET_UNQUOTED_VALUE_RE = re.compile(
-    r"(?i)(\b(?:token|password|secret|api[_-]?key|access[_-]?token)\b\s*[:=]\s*)[^\s,;}\]]+"
-)
-
-
-def _redact_string(value: str) -> str:
-    text = str(value)
-    text = _SECRET_URL_USERINFO_RE.sub(r"\1***@", text)
-    text = _SECRET_URL_QUERY_RE.sub(r"\1***", text)
-    text = _SECRET_AUTHORIZATION_RE.sub(r"\1***", text)
-    text = _SECRET_QUOTED_VALUE_RE.sub(r"\1\2***\4", text)
-    text = _SECRET_UNQUOTED_VALUE_RE.sub(r"\1***", text)
-    return text
+# Configuration and Lineage
 
 
 def _redact_config(value, key=""):
-    if any(part in key.lower() for part in _SECRET_KEY_PARTS):
+    if str(key).startswith("__"):
         return "***"
     if isinstance(value, dict):
         return {name: _redact_config(item, str(name)) for name, item in value.items()}
     if isinstance(value, list):
         return [_redact_config(item, key) for item in value]
-    if isinstance(value, str):
-        return _redact_string(value)
     return value
 
 
@@ -648,7 +445,7 @@ def _lineage_body(df_lineage: Optional[pd.DataFrame]) -> str:
 
     charts = []
     if "origin" in df_lineage.columns:
-        origin = df_lineage["origin"].astype(str)
+        origin = df_lineage["origin"].fillna("unknown").astype(str)
         counts = (
             origin.value_counts().rename_axis("origin").reset_index(name="scenarios")
         )
@@ -752,94 +549,86 @@ def _full_page(body: str, ts: str) -> str:
 
 # Public API
 def generate_html_report(
-    df_results: pd.DataFrame,
-    df_health: Optional[pd.DataFrame] = None,
-    df_results_all: Optional[pd.DataFrame] = None,
-    df_details: Optional[pd.DataFrame] = None,
-    df_failed: Optional[pd.DataFrame] = None,
+    df_all: pd.DataFrame,
+    run_uuid: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    delta_baseline: Optional[float] = None,
+    delta_prev: Optional[float] = None,
     global_services: Optional[List[str]] = None,
     filtered_scenario_ids: Optional[List] = None,
     anomaly_mode: str = "z_score",
     fitness_items: Optional[List] = None,
     learned_weights: Optional[dict] = None,
-    df_logs: Optional[list[dict]] = None,
     config_data: Optional[dict] = None,
     df_lineage: Optional[pd.DataFrame] = None,
     health_check_recos: Optional[list[dict]] = None,
-    scen_id_to_name: Optional[dict] = None,
 ) -> str:
     """
     Generate a complete HTML report covering every live dashboard section.
 
     Parameters
     ----------
-    df_results           : Filtered scenario results.
-    df_health            : health_check_report.csv data.
-    df_results_all       : Unfiltered results including baseline row.
-    df_details           : Per-request YAML telemetry.
-    df_failed            : Rows where krkn_failure_score < 0.
+    df_all               : Raw or baseline-filtered run DataFrame.
+    run_uuid             : Run identifier shown in the header.
+    output_dir           : Path to the run output directory.
+    delta_baseline       : Overall fitness delta vs baseline (fraction, e.g. +0.25).
+    delta_prev           : Overall fitness delta vs previous run.
     global_services      : Active service filter list.
     filtered_scenario_ids: Active scenario IDs.
     anomaly_mode          : "z_score" or "pct_deviation" — determines which anomaly detectors fire.
     fitness_items        : Per-query fitness metadata from the run config.
     learned_weights      : Weights the engine learned from the run, keyed by query.
-    df_logs              : Parsed scenario log records.
     config_data          : Parsed krkn-ai.yaml configuration.
     df_lineage           : Optional population lineage records.
     health_check_recos   : Health checks discovered but disabled.
-    scen_id_to_name      : Optional scenario ID-to-name lookup for log labels.
 
     Returns
     -------
-    str — complete HTML document.
+    str : Self-contained HTML page.
     """
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    src = df_results_all if df_results_all is not None else df_results
-
-    # Filter df_details
-    df_det: Optional[pd.DataFrame] = None
-    if df_details is not None and not df_details.empty:
-        df_det = df_details.copy()
-        df_det["scenario_id"] = df_det["scenario_id"].astype(str)
-        if filtered_scenario_ids:
-            str_ids = [str(x) for x in filtered_scenario_ids] + ["baseline"]
-            df_det = df_det[df_det["scenario_id"].isin(str_ids)]
-        if global_services:
-            df_det = df_det[df_det["service"].isin(global_services)]
-
-    # Summary metrics
-    non_bl = (
-        src[src["scenario_id"].astype(str) != "baseline"]
-        if src is not None and not src.empty
-        else pd.DataFrame()
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    df_results = (
+        df_all[df_all["scenario_id"] != 0].copy()
+        if (df_all is not None and not df_all.empty and "scenario_id" in df_all.columns)
+        else df_all
     )
-    gens = (
-        int(non_bl["generation_id"].max() + 1)
-        if "generation_id" in non_bl.columns and not non_bl.empty
+    if (
+        filtered_scenario_ids
+        and df_results is not None
+        and not df_results.empty
+        and "scenario_id" in df_results.columns
+    ):
+        df_results = df_results[df_results["scenario_id"].isin(filtered_scenario_ids)]
+
+    # Best scenario
+    best_row = (
+        df_results.sort_values("fitness_score", ascending=False).iloc[0]
+        if (
+            df_results is not None
+            and not df_results.empty
+            and "fitness_score" in df_results.columns
+        )
+        else None
+    )
+    best_fs = f"{best_row['fitness_score']:.4f}" if best_row is not None else "N/A"
+    best_id = f"#{best_row['scenario_id']}" if best_row is not None else "N/A"
+
+    total_scenarios = (
+        len(df_results["scenario_id"].unique())
+        if (
+            df_results is not None
+            and not df_results.empty
+            and "scenario_id" in df_results.columns
+        )
         else 0
     )
-    n_sc = len(non_bl)
-    best_fit = (
-        f"{non_bl['fitness_score'].max():.1f}%"
-        if "fitness_score" in non_bl.columns and not non_bl.empty
-        else "—"
-    )
-    avg_fit = (
-        f"{non_bl['fitness_score'].mean():.1f}%"
-        if "fitness_score" in non_bl.columns and not non_bl.empty
-        else "—"
-    )
-    svc_filter = ", ".join(global_services) if global_services else "All"
-    n_failed = len(df_failed) if df_failed is not None else 0
-
-    # Run anomaly detectors
-    all_anomalies = _run_detectors(
-        src, df_health, df_det, global_services, anomaly_mode
-    )
-    n_anom = len(all_anomalies)
-    n_high = (
-        int((all_anomalies["severity"] == "High").sum())
-        if not all_anomalies.empty
+    total_generations = (
+        int(df_results["generation_id"].max()) + 1
+        if (
+            df_results is not None
+            and not df_results.empty
+            and "generation_id" in df_results.columns
+        )
         else 0
     )
 
@@ -850,7 +639,6 @@ def generate_html_report(
         ("Health Checks", "tab-health"),
         ("Detailed Scenarios", "tab-detailed"),
         ("Anomaly Detection", "tab-anomalies"),
-        ("Logs", "tab-logs"),
         ("Configuration", "tab-config"),
         ("Failed Scenarios", "tab-failed"),
     ]
@@ -859,35 +647,40 @@ def generate_html_report(
 
     # Header
     header = (
-        f"<h1>Krkn-AI Dashboard Report</h1>"
-        f"<p class='meta'>Generated: {ts}"
-        f" &nbsp;|&nbsp; Services: {svc_filter}"
-        f" &nbsp;|&nbsp; Generations: {gens}"
-        f" &nbsp;|&nbsp; Scenarios: {n_sc}"
-        f" &nbsp;|&nbsp; Anomalies: {n_anom} ({n_high} High)"
-        f" &nbsp;|&nbsp; Failed: {n_failed}"
-        f"</p>" + _nav_bar(tab_defs)
+        f"<header>"
+        f"<h1>Krkn-AI Run Report</h1>"
+        f"<p class='meta'>Run ID: {run_uuid or '—'} &nbsp;|&nbsp; Generated: {ts} &nbsp;|&nbsp; Output: {output_dir or '—'}</p>"
+        f"</header>"
     )
 
-    # Dashboard
-    summary_cards = _cards(
-        [
-            ("Generations", gens),
-            ("Scenarios", n_sc),
-            ("Best Fitness", best_fit),
-            ("Avg Fitness", avg_fit),
-            ("Failed Scenarios", n_failed),
-        ]
+    # Tab 1: Dashboard
+    src = df_all if df_all is not None else pd.DataFrame()
+    non_bl = (
+        df_all[df_all["scenario_id"] != 0]
+        if (df_all is not None and not df_all.empty and "scenario_id" in df_all.columns)
+        else pd.DataFrame()
     )
     tab1 = _sec(
-        "Dashboard",
+        "Executive Summary",
         (
-            summary_cards
-            + _subsec("Fitness Evolution", _dash_fitness_evolution(non_bl))
+            _cards(
+                [
+                    ("Total Scenarios", total_scenarios),
+                    ("Generations", total_generations),
+                    ("Best Fitness Score", best_fs),
+                    ("Best Scenario", best_id),
+                    (
+                        "Δ vs Baseline",
+                        f"{delta_baseline:+.1%}"
+                        if delta_baseline is not None
+                        else "N/A",
+                    ),
+                    ("Δ vs Prev Run", f"{delta_prev:+.1%}" if delta_prev is not None else "N/A"),
+                ]
+            )
+            + _subsec("Fitness Score Evolution", _dash_fitness_evolution(non_bl))
             + "<hr class='d'/>"
-            + _subsec("Scenario Distribution", _dash_scenario_distribution(non_bl))
-            + "<hr class='d'/>"
-            + _subsec("Score Delta vs Baseline", _dash_baseline_delta(src))
+            + _subsec("Baseline vs Best Comparison", _dash_baseline_delta(src))
             + "<hr class='d'/>"
             + _subsec(
                 "Fitness Improvement Trend vs Baseline", _dash_improvement_trend(src)
@@ -936,18 +729,18 @@ def generate_html_report(
     tab2 = _sec(
         "Health Checks",
         (
-            _subsec("Service Failure Rate Heatmap", _hc_failure_heatmap(df_health))
+            _subsec(
+                "Response Time Heatmap (per Service / Run)",
+                _hc_failure_heatmap(
+                    pd.DataFrame()
+                ),  # placeholder — caller passes df_health if available
+            )
             + "<hr class='d'/>"
-            + '<div class="two-col">'
-            + "<div>"
-            + _subsec("Success vs Failure Counts", _hc_success_bar(df_health))
-            + "</div>"
-            + "<div>"
-            + _subsec("Avg Response Time Trend", _hc_rt_trend(df_health))
-            + "</div>"
-            + "</div>"
+            + _subsec(
+                "Success vs Failure Counts", _hc_success_failure_bar(pd.DataFrame())
+            )
             + "<hr class='d'/>"
-            + _subsec("All Health Check Data", _hc_worst_table(df_health))
+            + _subsec("Service Health Radar", _hc_radar(pd.DataFrame()))
         ),
         "tab-health",
     )
@@ -957,80 +750,55 @@ def generate_html_report(
         "Detailed Scenarios",
         (
             _subsec(
-                "Runtime Telemetry: Response Time vs Execution Time",
-                _det_rt_chart(df_det),
+                "Response Time per Scenario",
+                _scen_rt_chart(pd.DataFrame(), global_services),
             )
             + "<hr class='d'/>"
             + _subsec(
-                "Service Response Time Heatmap (Scenario × Service)",
-                _det_svc_rt_heatmap(df_det),
+                "Scenario Success Heatmap",
+                _scen_heatmap(pd.DataFrame(), global_services),
             )
-            + "<hr class='d'/>"
-            + _subsec("Success Timeline per Service", _det_success_timeline(df_det))
         ),
         "tab-detailed",
     )
 
     # Anomaly Detection
-    if not all_anomalies.empty:
-        an_high = int((all_anomalies["severity"] == "High").sum())
-        an_medium = int((all_anomalies["severity"] == "Medium").sum())
-        an_low = int((all_anomalies["severity"] == "Low").sum())
-        anom_cards = _cards(
-            [
-                ("Total Anomalies", n_anom),
-                ("High Severity", an_high),
-                ("Medium Severity", an_medium),
-                ("Low Severity", an_low),
-            ]
-        )
-        anom_body = (
-            anom_cards
-            + '<div class="two-col">'
-            + "<div>"
-            + _anom_bubble(all_anomalies, mode=anomaly_mode)
-            + "</div>"
-            + "<div>"
-            + _anom_type_bar(all_anomalies)
-            + "</div>"
-            + "</div>"
-            + "<hr class='d'/>"
-            + _subsec("All Detected Anomalies", _anom_table(all_anomalies))
-        )
-    else:
-        anom_body = "<p class='muted good'>No anomalies detected.</p>"
-
-    mode_badge = (
-        "Z-Score (statistical)"
-        if anomaly_mode == "z_score"
-        else "% Deviation from Baseline"
-    )
     tab4 = _sec(
         "Anomaly Detection",
-        f"<p class='muted'>Detection mode: <strong>{mode_badge}</strong></p>"
-        + anom_body,
+        (
+            _subsec(
+                "Fitness vs Duration Anomaly Map",
+                _anomaly_bubble_map(pd.DataFrame()),
+            )
+            + "<hr class='d'/>"
+            + _subsec(
+                "Detected Anomalies Summary",
+                _anomaly_table(pd.DataFrame(), anomaly_mode=anomaly_mode),
+            )
+        ),
         "tab-anomalies",
     )
 
     # Failed Scenarios
+    df_failed = (
+        df_all[df_all["krkn_failure_score"] > 0]
+        if (
+            df_all is not None
+            and not df_all.empty
+            and "krkn_failure_score" in df_all.columns
+        )
+        else pd.DataFrame()
+    )
     tab5 = _sec(
         "Failed Scenarios",
         (
-            _subsec("Failed Scenario Summary", _failed_bar(df_failed))
+            _subsec("Failure Distribution by Scenario", _failed_bar(df_failed))
             + "<hr class='d'/>"
-            + _subsec(
-                "Failed Scenario Details (krkn_failure_score < 0)",
-                _failed_table(df_failed),
-            )
+            + _subsec("Failed Scenario Runs", _df_table(df_failed))
         ),
         "tab-failed",
     )
 
-    tab_logs = _sec(
-        "Scenario Logs",
-        _logs_body(df_logs, scen_id_to_name),
-        "tab-logs",
-    )
     tab_config = _sec(
         "Krkn-AI Configuration",
         _config_body(config_data, fitness_items, health_check_recos),
@@ -1050,7 +818,6 @@ def generate_html_report(
             tab2,
             tab3,
             tab4,
-            tab_logs,
             tab_config,
             tab5,
             tab_lineage,

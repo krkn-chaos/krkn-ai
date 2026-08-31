@@ -133,7 +133,7 @@ def main():
         st.sidebar.success("Execution completed!")
         auto_refresh = False
     else:
-        st.sidebar.warning("Execution status unknown.")
+        st.sidebar.success("Execution completed!")
         auto_refresh = False
 
     # Load data — loaders return (file_found: bool, df | None)
@@ -201,7 +201,6 @@ def main():
             try:
                 sid_int = int(float(sid))
                 scen_id_to_name[str(sid_int)] = row["scenario"]
-                scen_id_to_name[sid_int] = row["scenario"]
             except (ValueError, TypeError):
                 pass
 
@@ -261,7 +260,7 @@ def main():
         and not df_health.empty
         and "component_name" in df_health.columns
     ):
-        all_services.update(df_health["component_name"].unique().tolist())
+        all_services.update(df_health[component_name := "component_name"].unique().tolist())
     if (
         df_details is not None
         and not df_details.empty
@@ -340,12 +339,13 @@ def main():
     df_failed = None
     if df_results is not None and not df_results.empty:
         # Separating failed scenarios.
-        # If krkn_failure_score < 0, it's considered a misconfiguration or krkn engine failure.
         if "krkn_failure_score" in df_results.columns:
-            # krkn_failure_score < 0 means krkn engine failed / misconfiguration
-            mask_failed = df_results["krkn_failure_score"] < 0
-            df_failed = df_results[mask_failed]
-            df_results = df_results[~mask_failed]
+            df_failed = df_results[df_results["krkn_failure_score"] > 0]
+            # Baseline doesn't count as a failure even if failure_score > 0
+            df_failed = df_failed[
+                df_failed["scenario_id"].astype(str).str.lower() != "baseline"
+            ]
+            df_results = df_results[df_results["krkn_failure_score"] <= 0]
         else:
             df_failed = pd.DataFrame()
 
@@ -451,22 +451,35 @@ def main():
                 raw_mode = st.session_state.get("anom_mode", "Z-Score")
                 amode = "z_score" if "Z-Score" in raw_mode else "pct_deviation"
 
+                run_uuid = None
+                if df_results_all is not None and not df_results_all.empty and "run_uuid" in df_results_all.columns:
+                    run_uuid = df_results_all["run_uuid"].dropna().iloc[0] if not df_results_all["run_uuid"].dropna().empty else None
+
+                delta_bl = None
+                delta_prev = None
+                if df_results_all is not None and not df_results_all.empty and "fitness_score" in df_results_all.columns:
+                    bl_rows = df_results_all[df_results_all["scenario_id"].apply(_norm_id) == "baseline"]
+                    non_bl_rows = df_results_all[df_results_all["scenario_id"].apply(_norm_id) != "baseline"]
+                    if not bl_rows.empty and not non_bl_rows.empty:
+                        bl_fit = bl_rows["fitness_score"].iloc[0]
+                        best_fit = non_bl_rows["fitness_score"].max()
+                        if bl_fit != 0:
+                            delta_bl = (best_fit - bl_fit) / abs(bl_fit)
+
                 html_bytes = generate_html_report(
-                    df_results=df_results,
-                    df_health=report_df_health,
-                    df_results_all=df_results_all,
-                    df_details=df_details,
-                    df_failed=df_failed,
+                    df_all=df_results_all if df_results_all is not None else df_results,
+                    run_uuid=run_uuid,
+                    output_dir=output_dir,
+                    delta_baseline=delta_bl,
+                    delta_prev=delta_prev,
                     global_services=global_services,
                     filtered_scenario_ids=filtered_scenario_ids,
                     anomaly_mode=amode,
                     fitness_items=fitness_items,
                     learned_weights=learned_weights,
-                    df_logs=df_logs,
                     config_data=config_data,
                     df_lineage=df_lineage,
                     health_check_recos=health_check_recos,
-                    scen_id_to_name=scen_id_to_name,
                 ).encode("utf-8")
 
         from datetime import datetime as _dt
@@ -500,7 +513,7 @@ def main():
     with tab1:
         if not has_any_data:
             st.warning(
-                f"The selected folder **`{output_dir}`** does not appear to be a valid "
+                f"No results data found yet in `{output_dir}`. Check that this is a valid "
                 f"Krkn-AI result directory. No recognised data files were found."
             )
         elif results_empty_file:
@@ -517,14 +530,6 @@ def main():
             )
         else:
             render_summary(df_results)
-            st.divider()
-
-            colA, colB = st.columns(2)
-            with colA:
-                render_scenario_distribution(df_results)
-            with colB:
-                render_scenario_fitness_variation(df_results)
-
             st.divider()
             render_fitness_evolution(df_results)
             st.divider()

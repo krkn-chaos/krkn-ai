@@ -194,9 +194,10 @@ The `KRKNAI_RUN_UID` value is used as the owner reference for child
 `KrknScenarioRun` resources. When running outside a `KrknAIRun` controller,
 use a real parent UID or omit owner-reference cleanup expectations.
 
-For the Kubernetes deployment workflow, including the `KrknAIRun` manifest,
-target Secret format, RBAC, dedicated image, and cleanup commands, see
-[`hack/test.md`](hack/test.md) and
+For the Kubernetes deployment workflow, including the per-run configuration
+ConfigMap, `KrknAIRun` manifest, target Secret format, RBAC, dedicated image,
+and cleanup commands, see
+[`hack/README.md`](hack/README.md) and
 [`containers/README.md`](containers/README.md).
 
 ## 💻 CLI Reference

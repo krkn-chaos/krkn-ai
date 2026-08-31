@@ -121,37 +121,32 @@ helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator
 The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 `RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
 Use the `KrknAIRun` and target Secret procedure in
-[`../hack/test.md`](../hack/test.md) for a complete cluster test.
+[`../hack/README.md`](../hack/README.md) for a complete cluster test.
 
-### Configuring krknctl defaults from a ConfigMap
+### Per-run krkn-ai configuration
 
-The operator's scenario controller normally uses the embedded krknctl
-defaults. A namespace-local ConfigMap can override them for registry and
-kubeconfig defaults. Store JSON matching `krknctl/pkg/config.Config` under the
-`config.json` key:
+Each `KrknAIRun` uses a ConfigMap selected in its own manifest. Create one
+with the krkn-ai YAML under `krkn-ai.yaml`:
 
 ```bash
-kubectl -n krkn-operator create configmap krknctl-config \
-  --from-file=config.json=/path/to/krknctl-config.json \
+kubectl -n krkn-operator create configmap mvp-run-config \
+  --from-file=krkn-ai.yaml=/path/to/krkn-ai.yaml \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Install or upgrade the operator with:
+Reference it from the run:
 
-```bash
-helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator \
-  -n krkn-operator --create-namespace \
-  --set krknctl.configMapName=krknctl-config \
-  --set krknctl.configMapKey=config.json
+```yaml
+spec:
+  configMapName: mvp-run-config
+  configMapKey: krkn-ai.yaml
 ```
 
-The manager reads the ConfigMap when it creates each scenario pod. If
-`krknctl.configMapName` is empty, the embedded defaults remain active. A
-missing key or invalid JSON fails that scenario creation with an explicit
-error.
-
-Do not place registry passwords or tokens in a ConfigMap. Use the existing
-registry Secret/image-pull-secret mechanisms for sensitive credentials.
+The controller copies the selected key into the run's private ConfigMap and
+mounts it at `/input/krkn-ai.yaml` in the orchestrator pod. Create a different
+ConfigMap and use a different `configMapName` for each run. The ConfigMap must
+be in the same namespace as the `KrknAIRun`, as required by Kubernetes volume
+mounts.
 
 ## Running the Container
 

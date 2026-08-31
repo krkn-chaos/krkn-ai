@@ -53,7 +53,7 @@ def main():
 @click.option(
     "--runner-type",
     "-r",
-    type=click.Choice(["krknctl", "krknhub"], case_sensitive=False),
+    type=click.Choice(["krknctl", "krknhub", "operator"], case_sensitive=False),
     help="Type of chaos engine to use.",
     default=None,
 )
@@ -142,6 +142,8 @@ def run(
             enum_runner_type = KrknRunnerType.CLI_RUNNER
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
+        elif runner_type.lower() == "operator":
+            enum_runner_type = KrknRunnerType.OPERATOR_RUNNER
 
     dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
 

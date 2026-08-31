@@ -27,6 +27,7 @@ from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
 from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
+from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,11 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
+        self._operator_executor = (
+            OperatorExecutor(self.config)
+            if self.runner_type == KrknRunnerType.OPERATOR_RUNNER
+            else None
+        )
 
     def __check_runner_availability(self):
         krknctl_available = True
@@ -115,36 +121,50 @@ class KrknRunner:
             log, returncode = "", 0
         else:
             assert self.runner_type is not None
-            if isinstance(scenario, CompositeScenario):
-                command = build_graph_command(
-                    scenario, self.config.kubeconfig_file_path, self.output_dir
-                )
-            elif isinstance(scenario, Scenario):
-                command = build_scenario_command(
-                    scenario, self.config, self.runner_type
-                )
-            else:
-                raise NotImplementedError("Scenario unable to run")
-
-            try:
-                health_check_watcher.run()
-
-                log, returncode = run_shell(
-                    inject_es_config(command, self.config, self.runner_type, True),
-                    do_not_log=not is_verbose(),
-                )
-
-                if isinstance(scenario, CompositeScenario):
-                    pass
-                else:
+            if self.runner_type == KrknRunnerType.OPERATOR_RUNNER:
+                command = f"operator:{getattr(scenario, 'krknhub_image', '')}"
+                assert self._operator_executor is not None
+                try:
+                    health_check_watcher.run()
+                    log, returncode = self._operator_executor.execute(scenario)
                     telemetry = extract_telemetry_from_log(log, returncode)
                     returncode = telemetry.exit_status
                     run_uuid = telemetry.run_uuid
                     resiliency_score = telemetry.resiliency_score
-                logger.info("Krkn scenario return code: %d", returncode)
+                    logger.info("Krkn scenario return code: %d", returncode)
+                finally:
+                    health_check_watcher.stop()
+            else:
+                if isinstance(scenario, CompositeScenario):
+                    command = build_graph_command(
+                        scenario, self.config.kubeconfig_file_path, self.output_dir
+                    )
+                elif isinstance(scenario, Scenario):
+                    command = build_scenario_command(
+                        scenario, self.config, self.runner_type
+                    )
+                else:
+                    raise NotImplementedError("Scenario unable to run")
 
-            finally:
-                health_check_watcher.stop()
+                try:
+                    health_check_watcher.run()
+
+                    log, returncode = run_shell(
+                        inject_es_config(command, self.config, self.runner_type, True),
+                        do_not_log=not is_verbose(),
+                    )
+
+                    if isinstance(scenario, CompositeScenario):
+                        pass
+                    else:
+                        telemetry = extract_telemetry_from_log(log, returncode)
+                        returncode = telemetry.exit_status
+                        run_uuid = telemetry.run_uuid
+                        resiliency_score = telemetry.resiliency_score
+                    logger.info("Krkn scenario return code: %d", returncode)
+
+                finally:
+                    health_check_watcher.stop()
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start

@@ -16,6 +16,10 @@ The GitHub Actions image workflow publishes the same tag as
 `quay.io/krkn-chaos/krkn-ai-operator:<tag>` and optionally also publishes
 `quay.io/krkn-chaos/krkn-ai-operator:latest`.
 
+When running the workflow manually, choose `krkn-ai`,
+`krkn-ai-operator`, or `both` in the **Image to build and push** input. The
+same `tag` input is used for the selected image.
+
 `Containerfile.operator` uses Python 3.12, the locked `uv` environment, and
 the existing `containers/entrypoint.sh`. It is intended for `MODE=run` with
 `RUNNER_TYPE=operator`; discovery mode and the local HUB/CLI runners belong

@@ -7,6 +7,15 @@ on:
         description: "Image tag (e.g. 0.0.3)"
         required: true
         default: "0.0.x"
+      image:
+        description: "Image to build and push"
+        required: true
+        type: choice
+        options:
+          - krkn-ai
+          - krkn-ai-operator
+          - both
+        default: both
       push_latest:
         description: "Also tag as latest"
         required: false
@@ -43,6 +52,7 @@ jobs:
           echo "operator_tags=${OPERATOR_TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push krkn-ai image
+        if: ${{ inputs.image == 'krkn-ai' || inputs.image == 'both' }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -53,6 +63,7 @@ jobs:
             SETUPTOOLS_SCM_PRETEND_VERSION=${{ inputs.tag }}
 
       - name: Build and push krkn-ai operator image
+        if: ${{ inputs.image == 'krkn-ai-operator' || inputs.image == 'both' }}
         uses: docker/build-push-action@v5
         with:
           context: .

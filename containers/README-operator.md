@@ -7,10 +7,14 @@ orchestrator image:
 ```bash
 podman build \
   -f containers/Containerfile.operator \
-  -t quay.io/<org>/krkn-ai-operator:mvp \
+  -t quay.io/krkn-chaos/krkn-ai-operator:<tag> \
   .
-podman push quay.io/<org>/krkn-ai-operator:mvp
+podman push quay.io/krkn-chaos/krkn-ai-operator:<tag>
 ```
+
+The GitHub Actions image workflow publishes the same tag as
+`quay.io/krkn-chaos/krkn-ai-operator:<tag>` and optionally also publishes
+`quay.io/krkn-chaos/krkn-ai-operator:latest`.
 
 `Containerfile.operator` uses Python 3.12, the locked `uv` environment, and
 the existing `containers/entrypoint.sh`. It is intended for `MODE=run` with
@@ -75,7 +79,7 @@ podman run --rm \
   -e KRKNAI_CLUSTER=self \
   -e KRKNAI_SCENARIO_MAX_RETRIES=0 \
   -e VERBOSE=2 \
-  quay.io/<org>/krkn-ai-operator:mvp
+  quay.io/krkn-chaos/krkn-ai-operator:<tag>
 ```
 
 The container reads the kubeconfig using the Kubernetes Python client and
@@ -90,7 +94,7 @@ For the controller-managed workflow, set the operator chart's
 ```bash
 helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator \
   -n krkn-operator --create-namespace \
-  --set images.aiOrchestrator.image=quay.io/<org>/krkn-ai-operator:mvp
+  --set images.aiOrchestrator.image=quay.io/krkn-chaos/krkn-ai-operator:<tag>
 ```
 
 The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets

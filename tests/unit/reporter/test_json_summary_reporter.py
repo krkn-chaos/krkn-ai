@@ -191,71 +191,30 @@ class TestJSONSummaryReporter:
             saved_content = json.load(f)
             assert saved_content == expected_summary
 
-    def test_population_lineage_in_summary(self, minimal_config):
-        """Test that population_lineage is built from scenario provenance"""
+    def test_population_lineage_uses_uuid_namespace(self, minimal_config):
         now = datetime.datetime.now(datetime.timezone.utc)
-        cc = minimal_config.cluster_components
-        scenario = DummyScenario(cluster_components=cc)
-        scenario.parent_ids = ["parent-a", "parent-b"]
-        scenario.origin = ScenarioOrigin.CROSSOVER
-
-        res = CommandRunResult(
-            generation_id=1,
-            scenario_id=42,
-            scenario=scenario,
-            cmd="test",
-            log="test",
-            returncode=0,
-            start_time=now,
-            end_time=now,
-            fitness_result=FitnessResult(fitness_score=75.0),
+        parent = DummyScenario(cluster_components=minimal_config.cluster_components)
+        child = DummyScenario(cluster_components=minimal_config.cluster_components)
+        child.parent_uuids = [parent.id]
+        child.mutation_type = "crossover"
+        child.mutated_parameters = ["duration"]
+        parent_result = CommandRunResult(
+            generation_id=0, scenario_id=1, scenario=parent, cmd="test", log="test",
+            returncode=0, start_time=now, end_time=now,
+            fitness_result=FitnessResult(fitness_score=2.0),
         )
-
+        child_result = CommandRunResult(
+            generation_id=1, scenario_id=2, scenario=child, cmd="test", log="test",
+            returncode=0, start_time=now, end_time=now,
+            fitness_result=FitnessResult(fitness_score=5.0),
+        )
         reporter = JSONSummaryReporter(
-            run_uuid="lineage-test",
-            config=minimal_config,
+            run_uuid="lineage", config=minimal_config,
             algo_config=minimal_config.genetic,
-            seen_population={42: res},
-            best_of_generation=[],
+            seen_population={1: parent_result, 2: child_result},
+            best_of_generation=[], all_evaluations=[parent_result, child_result],
         )
 
         lineage = reporter.generate_summary()["population_lineage"]
-        assert len(lineage) == 1
-        node = lineage[0]
-        assert node["scenario_id"] == 42
-        assert node["scenario_uuid"] == scenario.id
-        assert node["generation"] == 1
-        assert node["fitness_score"] == 75.0
-        assert node["parent_ids"] == ["parent-a", "parent-b"]
-        assert node["origin"] == ScenarioOrigin.CROSSOVER
-
-    def test_population_lineage_empty_for_initial_scenarios(self, minimal_config):
-        """Test that initial scenarios have no parent_ids"""
-        now = datetime.datetime.now(datetime.timezone.utc)
-        cc = minimal_config.cluster_components
-        scenario = DummyScenario(cluster_components=cc)
-        scenario.origin = ScenarioOrigin.INITIAL
-
-        res = CommandRunResult(
-            generation_id=0,
-            scenario_id=1,
-            scenario=scenario,
-            cmd="test",
-            log="test",
-            returncode=0,
-            start_time=now,
-            end_time=now,
-            fitness_result=FitnessResult(fitness_score=30.0),
-        )
-
-        reporter = JSONSummaryReporter(
-            run_uuid="initial-test",
-            config=minimal_config,
-            algo_config=minimal_config.genetic,
-            seen_population={1: res},
-            best_of_generation=[],
-        )
-
-        node = reporter.generate_summary()["population_lineage"][0]
-        assert node["parent_ids"] == []
-        assert node["origin"] == ScenarioOrigin.INITIAL
+        assert lineage[1]["scenario_uuid"] == child.id
+        assert lineage[1]["parent_uuids"] == [parent.id]

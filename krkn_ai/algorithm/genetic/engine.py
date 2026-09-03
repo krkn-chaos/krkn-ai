@@ -221,6 +221,7 @@ class GeneticAlgorithm(BaseEngine):
             seen_population=self.seen_population,
             best_of_generation=self.best_of_generation,
             baseline_result=self.baseline_result,
+            all_evaluations=self.all_evaluations,
             start_time=self.start_time,
             end_time=self.end_time,
             completed_generations=self.completed_generations,
@@ -348,6 +349,8 @@ class GeneticAlgorithm(BaseEngine):
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
+            result.scenario = scenario
+            self.all_evaluations.append(result)
             return result
 
         self.stopping.record_new_scenario()
@@ -364,11 +367,28 @@ class GeneticAlgorithm(BaseEngine):
         if rng.random() < self.current_scenario_mutation_rate:
             success, new_scenario = self.scenario_mutation(scenario)
             if success:
+                new_scenario.parent_uuids = [scenario.id]
+                new_scenario.mutation_type = "scenario_mutation"
+                new_scenario.mutated_parameters = []
                 new_scenario.origin = ScenarioOrigin.TYPE_MUTATION
                 return new_scenario
 
         if hasattr(scenario, "mutate"):
+            old_values = {
+                parameter.get_name(): parameter.get_value()
+                for parameter in getattr(scenario, "parameters", [])
+            }
             scenario.mutate()
+            changed = [
+                parameter.get_name()
+                for parameter in getattr(scenario, "parameters", [])
+                if old_values.get(parameter.get_name()) != parameter.get_value()
+            ]
+            if changed:
+                scenario.parent_uuids = [scenario.id]
+                scenario.id = str(uuid.uuid4())
+                scenario.mutation_type = "parameter_mutation"
+                scenario.mutated_parameters = changed
             scenario.origin = ScenarioOrigin.PARAMETER_MUTATION
         else:
             logger.warning("Scenario %s does not have mutate method", scenario)
@@ -450,6 +470,10 @@ class GeneticAlgorithm(BaseEngine):
         return parent1, parent2
 
     def crossover(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
+        parent_a_id = scenario_a.id
+        parent_b_id = scenario_b.id
+        changed_parameters = []
+
         if isinstance(scenario_a, CompositeScenario) and isinstance(
             scenario_b, CompositeScenario
         ):
@@ -457,20 +481,22 @@ class GeneticAlgorithm(BaseEngine):
                 scenario_b.scenario_b,
                 scenario_a.scenario_b,
             )
-            return scenario_a, scenario_b
+            child1, child2 = scenario_a, scenario_b
+            changed_parameters = ["scenario_a", "scenario_b"]
         elif isinstance(scenario_a, CompositeScenario) or isinstance(
             scenario_b, CompositeScenario
         ):
             if isinstance(scenario_a, CompositeScenario):
                 a_b = scenario_a.scenario_b
                 scenario_a.scenario_b = scenario_b
-                return scenario_a, a_b
+                child1, child2 = scenario_a, a_b
             else:
                 b_a = scenario_b.scenario_a
                 scenario_b.scenario_a = scenario_a
-                return b_a, scenario_b
+                child1, child2 = b_a, scenario_b
+            changed_parameters = ["scenario_a", "scenario_b"]
 
-        if not hasattr(scenario_a, "parameters") or not hasattr(
+        elif not hasattr(scenario_a, "parameters") or not hasattr(
             scenario_b, "parameters"
         ):
             logger.warning(
@@ -479,23 +505,34 @@ class GeneticAlgorithm(BaseEngine):
                 scenario_b,
             )
             return scenario_a, scenario_b
-
-        common_params = set([type(x) for x in scenario_a.parameters]) & set(
-            [type(x) for x in scenario_b.parameters]
-        )
-
-        if len(common_params) == 0:
-            return scenario_a, scenario_b
         else:
+            common_params = set([type(x) for x in scenario_a.parameters]) & set(
+                [type(x) for x in scenario_b.parameters]
+            )
+            if len(common_params) == 0:
+                return scenario_a, scenario_b
+
             for param_type in common_params:
                 if rng.random() < self.algo_config.crossover_rate:
                     a_value = self.__get_param_value(scenario_a, param_type)
                     b_value = self.__get_param_value(scenario_b, param_type)
+                    if a_value != b_value:
+                        self.__set_param_value(scenario_a, param_type, b_value)
+                        self.__set_param_value(scenario_b, param_type, a_value)
+                        changed_parameters.append(param_type.__name__)
+            child1, child2 = scenario_a, scenario_b
 
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
+        if changed_parameters:
+            for child, parents in (
+                (child1, [parent_a_id, parent_b_id]),
+                (child2, [parent_b_id, parent_a_id]),
+            ):
+                child.parent_uuids = parents
+                child.id = str(uuid.uuid4())
+                child.mutation_type = "crossover"
+                child.mutated_parameters = changed_parameters.copy()
 
-            return scenario_a, scenario_b
+        return child1, child2
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         dependency = rng.choice(
@@ -510,6 +547,8 @@ class GeneticAlgorithm(BaseEngine):
             scenario_a=scenario_a,
             scenario_b=scenario_b,
             dependency=dependency,
+            parent_uuids=[scenario_a.id, scenario_b.id],
+            mutation_type="composition",
         )
         return composite_scenario
 

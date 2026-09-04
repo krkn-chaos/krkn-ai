@@ -115,6 +115,81 @@ class TestRunCommand:
         finally:
             os.unlink(config_path)
 
+    def test_run_uses_supplied_run_uuid_for_engine_and_output(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        supplied_uuid = "12345678-1234-5678-1234-567812345678"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+                    result = runner.invoke(
+                        main,
+                        [
+                            "run",
+                            "--config",
+                            config_path,
+                            "--output",
+                            temp_output_dir,
+                            "--run-uuid",
+                            supplied_uuid,
+                        ],
+                    )
+
+                    assert result.exit_code == 0, result.exception
+                    assert mock_ga_class.call_args.kwargs["run_uuid"] == supplied_uuid
+                    assert mock_ga_class.call_args.kwargs["output_dir"] == os.path.join(
+                        temp_output_dir, supplied_uuid
+                    )
+        finally:
+            os.unlink(config_path)
+
+    def test_run_generates_uuid_when_run_uuid_is_omitted(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        generated_uuid = "87654321-4321-8765-4321-876543218765"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.uuid.uuid4", return_value=generated_uuid):
+                    with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                        mock_ga = Mock()
+                        mock_ga_class.return_value = mock_ga
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                                "--output",
+                                temp_output_dir,
+                            ],
+                        )
+
+                        assert result.exit_code == 0, result.exception
+                        assert (
+                            mock_ga_class.call_args.kwargs["run_uuid"] == generated_uuid
+                        )
+                        assert mock_ga_class.call_args.kwargs[
+                            "output_dir"
+                        ] == os.path.join(temp_output_dir, generated_uuid)
+        finally:
+            os.unlink(config_path)
+
     def test_run_fails_when_config_missing_or_invalid(self, temp_output_dir):
         """Test command fails when config file is missing or invalid"""
         runner = CliRunner()

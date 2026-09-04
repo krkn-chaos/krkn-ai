@@ -75,7 +75,10 @@ uv run krkn_ai monitor -o ./results/3f8a1c2d-9b4e-4f1a-8c7d-1234567890ab
 
 ## Understanding the Output Directory Layout
 
-Each `krkn_ai run` invocation creates a subdirectory named by its UUID inside `--output`:
+Each `krkn_ai run` invocation creates a subdirectory inside `--output`.
+Ordinary CLI and HUB runs use a random UUID; operator runs use the parent
+`KrknAIRun.metadata.uid` so the directory remains stable if the pod is
+recreated:
 
 ```
 results/

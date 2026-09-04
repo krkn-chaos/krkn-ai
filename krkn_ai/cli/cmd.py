@@ -88,6 +88,12 @@ def main():
     is_flag=True,
     help="Allow scenarios with a cluster-critical blast radius (e.g. service disruption).",
 )
+@click.option(
+    "--run-uuid",
+    type=click.UUID,
+    default=None,
+    help="Run UUID used for the output directory name.",
+)
 @click.pass_context
 def run(
     ctx,
@@ -102,13 +108,14 @@ def run(
     monitoring: bool = False,
     port: int = 8501,
     allow_dangerous_scenarios: bool = False,
+    run_uuid: uuid.UUID = None,
 ):
-    run_uuid = str(uuid.uuid4())
-    new_output_path = os.path.join(output, run_uuid)
+    run_uuid_str = str(run_uuid) if run_uuid is not None else str(uuid.uuid4())
+    new_output_path = os.path.join(output, run_uuid_str)
     init_logger(new_output_path, verbose >= 2)
     logger = get_logger(__name__)
 
-    logger.info("Krkn-AI run UUID: %s", run_uuid)
+    logger.info("Krkn-AI run UUID: %s", run_uuid_str)
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
@@ -166,7 +173,7 @@ def run(
             # Dispatch to the selected algorithm engine
             if parsed_config.algorithm == AlgorithmType.genetic:
                 engine = GeneticAlgorithm(
-                    run_uuid=run_uuid,
+                    run_uuid=run_uuid_str,
                     config=parsed_config,
                     output_dir=new_output_path,
                     format=format,

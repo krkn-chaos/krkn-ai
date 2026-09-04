@@ -42,7 +42,6 @@ export KRKNAI_RUN_UID=$(uuidgen)
 export KRKNAI_TARGET_REQUEST_ID=self
 export KRKNAI_PROVIDER=krkn-operator
 export KRKNAI_CLUSTER=self
-export KRKNAI_SCENARIO_MAX_RETRIES=0
 ```
 
 Run directly from a source checkout:
@@ -81,7 +80,6 @@ podman run --rm \
   -e KRKNAI_TARGET_REQUEST_ID=self \
   -e KRKNAI_PROVIDER=krkn-operator \
   -e KRKNAI_CLUSTER=self \
-  -e KRKNAI_SCENARIO_MAX_RETRIES=0 \
   -e VERBOSE=2 \
   quay.io/krkn-chaos/krkn-ai-operator:<tag>
 ```
@@ -105,3 +103,42 @@ The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 `RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
 Use the `KrknAIRun` and target Secret procedure in
 [`../hack/README.md`](../hack/README.md) for a complete cluster test.
+
+### Results storage for `KrknAIRun`
+
+- `shared` (default) creates one retained claim. It defaults to
+  `ReadWriteMany`; set `aiOrchestrator.storage.storageClassName` to an
+  RWX-capable class or set `aiOrchestrator.storage.existingClaim` to a
+  pre-created claim. `ReadWriteOnce` is only suitable when runs are serialized.
+- `dedicated` creates one controller-owned claim per run. It defaults to
+  `ReadWriteOnce`, so it works with EBS classes such as `gp3-csi`. Configure
+  `aiOrchestrator.storage.accessMode` when a different mode is required.
+
+Installation defaults are configured with:
+
+```yaml
+aiOrchestrator:
+  storage:
+    mode: dedicated
+    storageClassName: gp3-csi
+    accessMode: ReadWriteOnce
+    size: 5Gi
+```
+
+Run-level `spec.storage` settings override those defaults. Set `pvcName` to
+mount an exact pre-existing claim without changing or owning it:
+
+```yaml
+spec:
+  storage:
+    pvcName: my-results-pvc
+```
+
+Without `pvcName`, setting `storageClassName`, `accessMode`, or `size` creates
+a dedicated claim for that run. Without `spec.storage`, the installation mode
+is used. Do not combine `pvcName` with dynamic-claim fields.
+
+All operator runs write to `/output/<KrknAIRun.metadata.uid>/`. The selected
+claim name is recorded in `.status.pvcName`. Shared and user-managed claims
+survive run deletion; controller-created dedicated claims and their results
+are deleted with the run.

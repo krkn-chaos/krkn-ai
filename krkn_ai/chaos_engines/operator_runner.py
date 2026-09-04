@@ -24,7 +24,6 @@ class OperatorEnv:
     target_request_id: str
     provider: str
     cluster: str
-    scenario_max_retries: int
 
     @classmethod
     def from_environ(cls) -> "OperatorEnv":
@@ -47,12 +46,6 @@ class OperatorEnv:
                 + ", ".join(missing)
             )
 
-        raw_retries = os.environ.get("KRKNAI_SCENARIO_MAX_RETRIES", "0")
-        try:
-            retries = int(raw_retries)
-        except ValueError as exc:
-            raise ValueError("KRKNAI_SCENARIO_MAX_RETRIES must be an integer") from exc
-
         return cls(
             namespace=os.environ["KRKNAI_NAMESPACE"],
             run_name=os.environ["KRKNAI_RUN_NAME"],
@@ -60,7 +53,6 @@ class OperatorEnv:
             target_request_id=os.environ["KRKNAI_TARGET_REQUEST_ID"],
             provider=os.environ["KRKNAI_PROVIDER"],
             cluster=os.environ["KRKNAI_CLUSTER"],
-            scenario_max_retries=retries,
         )
 
 
@@ -129,7 +121,6 @@ class OperatorExecutor:
             "scenarioName": scenario.krknctl_name or scenario.name,
             "scenarioImage": scenario.krknhub_image,
             "environment": {key: str(value) for key, value in env.items()},
-            "maxRetries": self.env.scenario_max_retries,
         }
         return {
             "apiVersion": f"{GROUP}/{VERSION}",

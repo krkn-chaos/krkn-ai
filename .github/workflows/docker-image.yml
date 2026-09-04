@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Docker Images CI
 
 on:
   workflow_dispatch:
@@ -7,6 +7,15 @@ on:
         description: "Image tag (e.g. 0.0.3)"
         required: true
         default: "0.0.x"
+      image:
+        description: "Image to build and push"
+        required: true
+        type: choice
+        options:
+          - krkn-ai
+          - krkn-ai-operator
+          - both
+        default: both
       push_latest:
         description: "Also tag as latest"
         required: false
@@ -34,17 +43,32 @@ jobs:
         id: tags
         run: |
           TAGS="quay.io/krkn-chaos/krkn-ai:${{ inputs.tag }}"
+          OPERATOR_TAGS="quay.io/krkn-chaos/krkn-ai-operator:${{ inputs.tag }}"
           if [ "${{ inputs.push_latest }}" = "true" ]; then
             TAGS="${TAGS},quay.io/krkn-chaos/krkn-ai:latest"
+            OPERATOR_TAGS="${OPERATOR_TAGS},quay.io/krkn-chaos/krkn-ai-operator:latest"
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "operator_tags=${OPERATOR_TAGS}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push image
+      - name: Build and push krkn-ai image
+        if: ${{ inputs.image == 'krkn-ai' || inputs.image == 'both' }}
         uses: docker/build-push-action@v5
         with:
           context: .
           file: containers/Containerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=${{ inputs.tag }}
+
+      - name: Build and push krkn-ai operator image
+        if: ${{ inputs.image == 'krkn-ai-operator' || inputs.image == 'both' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: containers/Containerfile.operator
+          push: true
+          tags: ${{ steps.tags.outputs.operator_tags }}
           build-args: |
             SETUPTOOLS_SCM_PRETEND_VERSION=${{ inputs.tag }}

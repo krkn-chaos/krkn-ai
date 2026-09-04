@@ -14,7 +14,7 @@ usage() {
     echo ""
     echo "For RUN mode:"
     echo "  Required: CONFIG_FILE"
-    echo "  Optional: OUTPUT_DIR, FORMAT, RUNNER_TYPE, EXTRA_PARAMS, VERBOSE"
+    echo "  Optional: OUTPUT_DIR, FORMAT, RUNNER_TYPE, EXTRA_PARAMS, VERBOSE, KRKNAI_RUN_UID"
     echo ""
     echo "Example (discover):"
     echo "  podman run -v ./input:/input -v ./output:/output \\"
@@ -95,6 +95,9 @@ case "$MODE_LOWER" in
 
         # Build the command array
         CMD=(krkn_ai run --config "$CONFIG_FILE" --output "$OUTPUT_DIR" --kubeconfig "$KUBECONFIG")
+        if [ -n "$KRKNAI_RUN_UID" ]; then
+            CMD+=(--run-uuid "$KRKNAI_RUN_UID")
+        fi
 
         # Add optional parameters
         if [ -n "$FORMAT" ]; then
@@ -130,7 +133,12 @@ case "$MODE_LOWER" in
         ;;
 esac
 
-# Set permissions on output directory (best effort, may fail if directory was pre-created with different ownership)
-chmod -R 777 "$OUTPUT_DIR" 2>/dev/null || echo "Warning: Could not set permissions on $OUTPUT_DIR"
+# Set permissions on the run's output directory (best effort). Operator runs
+# use their stable child directory so a shared results volume is not recursed.
+PERMISSION_TARGET="$OUTPUT_DIR"
+if [ -n "$KRKNAI_RUN_UID" ]; then
+    PERMISSION_TARGET="$OUTPUT_DIR/$KRKNAI_RUN_UID"
+fi
+chmod -R 777 "$PERMISSION_TARGET" 2>/dev/null || echo "Warning: Could not set permissions on $PERMISSION_TARGET"
 
 echo "Execution completed!"

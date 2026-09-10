@@ -3,7 +3,7 @@ import time
 from typing import Dict, Optional, Tuple
 
 from krkn_ai.chaos_engines.commands import build_scenario_command, inject_es_config
-from krkn_ai.chaos_engines.composite import build_graph_command
+from krkn_ai.chaos_engines.composite import build_graph_command, cleanup_graph_file
 from krkn_ai.chaos_engines.fitness import FitnessCalculator
 from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
@@ -105,6 +105,7 @@ class KrknRunner:
 
         log, returncode, run_uuid, resiliency_score = None, None, None, None
         command = ""
+        graph_file: Optional[str] = None
 
         health_check_watcher = HealthCheckWatcher(
             self.config.health_checks, self.config.parameters
@@ -116,9 +117,11 @@ class KrknRunner:
         else:
             assert self.runner_type is not None
             if isinstance(scenario, CompositeScenario):
-                command = build_graph_command(
+                graph_command = build_graph_command(
                     scenario, self.config.kubeconfig_file_path, self.output_dir
                 )
+                command = graph_command.command
+                graph_file = graph_command.graph_file
             elif isinstance(scenario, Scenario):
                 command = build_scenario_command(
                     scenario, self.config, self.runner_type
@@ -144,7 +147,11 @@ class KrknRunner:
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:
-                health_check_watcher.stop()
+                try:
+                    health_check_watcher.stop()
+                finally:
+                    if graph_file is not None:
+                        cleanup_graph_file(graph_file)
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start
@@ -259,4 +266,4 @@ class KrknRunner:
     def graph_command(self, scenario: CompositeScenario) -> str:
         return build_graph_command(
             scenario, self.config.kubeconfig_file_path, self.output_dir
-        )
+        ).command

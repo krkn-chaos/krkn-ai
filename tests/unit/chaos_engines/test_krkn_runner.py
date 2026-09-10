@@ -7,6 +7,7 @@ import datetime
 import pytest
 from unittest.mock import Mock, patch
 
+from krkn_ai.chaos_engines.composite import GraphCommand
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
 from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
@@ -138,6 +139,83 @@ class TestKrknRunnerRun:
 
             with pytest.raises(NotImplementedError, match="Scenario unable to run"):
                 runner.run(unsupported_scenario, generation_id=0)
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
+    @patch("krkn_ai.chaos_engines.krkn_runner.cleanup_graph_file")
+    @patch("krkn_ai.chaos_engines.krkn_runner.build_graph_command")
+    @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
+    def test_run_cleans_up_graph_file_after_composite_command(
+        self,
+        mock_run_shell,
+        mock_build_graph_command,
+        mock_cleanup_graph_file,
+        mock_is_mock_enabled,
+        minimal_config,
+        temp_output_dir,
+    ):
+        minimal_config.fitness_function = FitnessFunction(
+            query="test_query", type=FitnessFunctionType.point
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+        mock_run_shell.return_value = ("", 0)
+        mock_build_graph_command.return_value = GraphCommand(
+            command="krknctl graph run /tmp/graph.json --kubeconfig /tmp/kubeconfig",
+            graph_file="/tmp/graph.json",
+        )
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
+            composite = CompositeScenario(
+                scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+                scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+                dependency=CompositeDependency.NONE,
+            )
+
+            runner.run(composite, generation_id=0)
+
+        mock_cleanup_graph_file.assert_called_once_with("/tmp/graph.json")
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
+    @patch("krkn_ai.chaos_engines.krkn_runner.cleanup_graph_file")
+    @patch("krkn_ai.chaos_engines.krkn_runner.build_graph_command")
+    @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
+    def test_run_cleans_up_graph_file_when_composite_command_fails(
+        self,
+        mock_run_shell,
+        mock_build_graph_command,
+        mock_cleanup_graph_file,
+        mock_is_mock_enabled,
+        minimal_config,
+        temp_output_dir,
+    ):
+        minimal_config.health_checks = HealthCheckConfig()
+        mock_run_shell.side_effect = RuntimeError("krknctl failed")
+        mock_build_graph_command.return_value = GraphCommand(
+            command="krknctl graph run /tmp/graph.json --kubeconfig /tmp/kubeconfig",
+            graph_file="/tmp/graph.json",
+        )
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            composite = CompositeScenario(
+                scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+                scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+                dependency=CompositeDependency.NONE,
+            )
+
+            with pytest.raises(RuntimeError, match="krknctl failed"):
+                runner.run(composite, generation_id=0)
+
+        mock_cleanup_graph_file.assert_called_once_with("/tmp/graph.json")
 
 
 class TestKrknRunnerCommandGeneration:

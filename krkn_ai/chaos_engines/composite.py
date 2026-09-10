@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+from dataclasses import dataclass
 
 from krkn_ai.models.scenario.base import (
     Scenario,
@@ -15,9 +16,17 @@ logger = get_logger(__name__)
 KRKNCTL_GRAPH_RUN_TEMPLATE = "krknctl graph run {path} --kubeconfig {kubeconfig}"
 
 
+@dataclass(frozen=True)
+class GraphCommand:
+    """A graph command together with the temporary graph file it consumes."""
+
+    command: str
+    graph_file: str
+
+
 def build_graph_command(
     scenario: CompositeScenario, kubeconfig_path: str, output_dir: str
-) -> str:
+) -> GraphCommand:
     graph_json_directory = os.path.join(output_dir, "graphs")
     os.makedirs(graph_json_directory, exist_ok=True)
 
@@ -37,7 +46,18 @@ def build_graph_command(
         path=json_file,
         kubeconfig=kubeconfig_path,
     )
-    return command
+    return GraphCommand(command=command, graph_file=json_file)
+
+
+def cleanup_graph_file(graph_file: str) -> None:
+    """Remove a graph JSON file after its corresponding command has finished."""
+    try:
+        os.unlink(graph_file)
+        logger.debug("Removed scenario graph json: %s", graph_file)
+    except FileNotFoundError:
+        logger.debug("Scenario graph json was already removed: %s", graph_file)
+    except OSError as error:
+        logger.warning("Failed to remove scenario graph json %s: %s", graph_file, error)
 
 
 def _expand_composite_json(

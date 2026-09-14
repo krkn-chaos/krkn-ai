@@ -25,16 +25,23 @@ algorithm: genetic
 
 # Genetic algorithm configuration
 genetic:
+{%- if genetic %}
+  generations: {{ genetic.generations }}
+  population_size: {{ genetic.population_size }}
+  composition_rate: {{ genetic.composition_rate }}
+  population_injection_rate: {{ genetic.population_injection_rate }}
+{%- else %}
   generations: 2
   population_size: 2
   composition_rate: 0
   population_injection_rate: 0
+{%- endif %}
 
   # Uncomment this to enable overall run timeout
   # duration: 600
 
   selection_strategy: "tournament"
-  tournament_size: 6
+  tournament_size: {{ genetic.tournament_size if genetic else 6 }}
   # selection_strategy: "roulette"
 
   adaptive_mutation:
@@ -46,6 +53,20 @@ genetic:
 
   # Stopping criteria configuration
   # Multiple criteria can be set - the algorithm stops when ANY criterion is met
+{%- if genetic %}
+  stopping_criteria:
+    # Stop if best fitness doesn't improve for N consecutive generations
+    generation_saturation: {{ genetic.generation_saturation }}
+
+    # Stop if no new unique scenarios are discovered for N consecutive generations
+    exploration_saturation: {{ genetic.exploration_saturation }}
+
+    # Stop when best fitness score reaches or exceeds this value
+    # fitness_threshold: 0.95
+
+    # Minimum improvement threshold for generation saturation (default: 0.0001)
+    # saturation_threshold: 0.0001
+{%- else %}
   # stopping_criteria:
   #   # Stop when best fitness score reaches or exceeds this value
   #   fitness_threshold: 0.95
@@ -58,6 +79,7 @@ genetic:
   #
   #   # Minimum improvement threshold for generation saturation (default: 0.0001)
   #   saturation_threshold: 0.0001
+{%- endif %}
 
 output:
   result_name_fmt: "scenario_%s.yaml"

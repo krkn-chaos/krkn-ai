@@ -1,4 +1,5 @@
 import datetime
+import os
 import time
 from typing import Dict, Optional, Tuple
 
@@ -26,7 +27,10 @@ from krkn_ai.utils.mock import (
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
-from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
+from krkn_ai.chaos_engines.telemetry_parser import (
+    extract_telemetry_from_graph_logs,
+    extract_telemetry_from_log,
+)
 
 logger = get_logger(__name__)
 
@@ -129,18 +133,29 @@ class KrknRunner:
             try:
                 health_check_watcher.run()
 
+                # krknctl has no --log-dir flag for graph run; it writes
+                # per-node log files into its current working directory, so
+                # we run it with cwd set to the graph_logs directory.
+                graph_log_dir = None
+                if isinstance(scenario, CompositeScenario):
+                    graph_log_dir = os.path.join(self.output_dir, "graph_logs")
+
                 log, returncode = run_shell(
                     inject_es_config(command, self.config, self.runner_type, True),
                     do_not_log=not is_verbose(),
+                    cwd=graph_log_dir,
                 )
 
+                # Composite scenarios need special handling since logs are in separate files
                 if isinstance(scenario, CompositeScenario):
-                    pass
+                    telemetry = extract_telemetry_from_graph_logs(
+                        graph_log_dir, returncode
+                    )
                 else:
                     telemetry = extract_telemetry_from_log(log, returncode)
-                    returncode = telemetry.exit_status
-                    run_uuid = telemetry.run_uuid
-                    resiliency_score = telemetry.resiliency_score
+                returncode = telemetry.exit_status
+                run_uuid = telemetry.run_uuid
+                resiliency_score = telemetry.resiliency_score
                 logger.info("Krkn scenario return code: %d", returncode)
 
             finally:

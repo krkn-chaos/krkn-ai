@@ -83,7 +83,7 @@ class CompositeScenario(BaseScenario):
     dependency: CompositeDependency
 
     def __str__(self):
-        return f"{self.name}"
+        return f"composite({id(self.scenario_a)}|{self.dependency.name}|{id(self.scenario_b)})"
 
     def __eq__(self, other):
         if not isinstance(other, CompositeScenario):

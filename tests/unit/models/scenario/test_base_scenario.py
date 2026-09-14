@@ -2,6 +2,8 @@
 BaseScenario and CompositeScenario model tests
 """
 
+import re
+
 from krkn_ai.models.scenario.base import (
     BaseParameter,
     CompositeScenario,
@@ -157,5 +159,9 @@ class TestCompositeScenario:
         # Different scenario order should have different hash
         assert hash(composite1) != hash(composite3)
 
-        # Test string representation (used in logging)
-        assert str(composite1) == "composite1"
+        # Test string representation (used in logging): ID-based naming avoids
+        # verbose output for deeply-nested composite graph scenarios.
+        str_repr = str(composite1)
+        assert re.fullmatch(r"composite\(\d+\|NONE\|\d+\)", str_repr), (
+            f"Unexpected __str__ format: {str_repr!r}"
+        )

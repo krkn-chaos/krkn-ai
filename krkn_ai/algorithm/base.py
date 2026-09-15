@@ -49,6 +49,9 @@ class BaseEngine(ABC):
 
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)
         self.seen_population: Dict[BaseScenario, CommandRunResult] = {}
+        # Keep every evaluation, including cache hits, so lineage and
+        # generation-level analytics do not lose repeated scenario references.
+        self.all_evaluations = []
 
         self.baseline_result: Optional[CommandRunResult] = None
 
@@ -103,6 +106,7 @@ class BaseEngine(ABC):
     ) -> CommandRunResult:
         scenario_result = self.krkn_client.run(scenario, generation_id)
         self.seen_population[scenario] = scenario_result
+        self.all_evaluations.append(scenario_result)
 
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)

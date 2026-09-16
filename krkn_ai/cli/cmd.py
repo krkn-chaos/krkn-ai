@@ -25,8 +25,13 @@ from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.catalog import recommend_fitness_queries
 from krkn_ai.utils.weight_learning import load_learned_weights
+from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
+
+
+class DiscoveryError(RuntimeError):
+    """Raised when cluster discovery cannot produce a configuration."""
 
 
 @click.group(context_settings={"show_default": True})
@@ -53,7 +58,7 @@ def main():
 @click.option(
     "--runner-type",
     "-r",
-    type=click.Choice(["krknctl", "krknhub"], case_sensitive=False),
+    type=click.Choice(["krknctl", "krknhub", "operator"], case_sensitive=False),
     help="Type of chaos engine to use.",
     default=None,
 )
@@ -88,6 +93,12 @@ def main():
     is_flag=True,
     help="Allow scenarios with a cluster-critical blast radius (e.g. service disruption).",
 )
+@click.option(
+    "--run-uuid",
+    type=click.UUID,
+    default=None,
+    help="Run UUID used for the output directory name.",
+)
 @click.pass_context
 def run(
     ctx,
@@ -102,13 +113,14 @@ def run(
     monitoring: bool = False,
     port: int = 8501,
     allow_dangerous_scenarios: bool = False,
+    run_uuid: uuid.UUID = None,
 ):
-    run_uuid = str(uuid.uuid4())
-    new_output_path = os.path.join(output, run_uuid)
+    run_uuid_str = str(run_uuid) if run_uuid is not None else str(uuid.uuid4())
+    new_output_path = os.path.join(output, run_uuid_str)
     init_logger(new_output_path, verbose >= 2)
     logger = get_logger(__name__)
 
-    logger.info("Krkn-AI run UUID: %s", run_uuid)
+    logger.info("Krkn-AI run UUID: %s", run_uuid_str)
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
@@ -142,6 +154,8 @@ def run(
             enum_runner_type = KrknRunnerType.CLI_RUNNER
         elif runner_type.lower() == "krknhub":
             enum_runner_type = KrknRunnerType.HUB_RUNNER
+        elif runner_type.lower() == "operator":
+            enum_runner_type = KrknRunnerType.OPERATOR_RUNNER
 
     dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
 
@@ -164,7 +178,7 @@ def run(
             # Dispatch to the selected algorithm engine
             if parsed_config.algorithm == AlgorithmType.genetic:
                 engine = GeneticAlgorithm(
-                    run_uuid=run_uuid,
+                    run_uuid=run_uuid_str,
                     config=parsed_config,
                     output_dir=new_output_path,
                     format=format,
@@ -292,32 +306,70 @@ def discover(
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
+    try:
+        (
+            cluster_components,
+            scenario_enables,
+            fitness_queries,
+            health_checks,
+        ) = _discover_data(
+            kubeconfig,
+            namespace,
+            pod_label,
+            node_label,
+            skip_pod_name,
+            fresh_write=not os.path.exists(output)
+            or save_strategy.lower() == "overwrite",
+            strict_prometheus=False,
+            learned_weights=learned_weights,
+        )
+    except DiscoveryError as error:
+        logger.error("%s", error)
+        sys.exit(1)
+    save_discovery(
+        output,
+        save_strategy,
+        cluster_components,
+        kubeconfig,
+        scenario_enables=scenario_enables,
+        fitness_queries=fitness_queries,
+        health_checks=health_checks,
+    )
 
-    if kubeconfig == "" or kubeconfig is None or not os.path.exists(kubeconfig):
-        logger.error("Kubeconfig file not found.")
-        exit(1)
+
+def _discover_data(
+    kubeconfig: str,
+    namespace: str,
+    pod_label: str,
+    node_label: str,
+    skip_pod_name: str | None,
+    *,
+    fresh_write: bool,
+    strict_prometheus: bool,
+    learned_weights: str | None,
+):
+    if not kubeconfig or not os.path.exists(kubeconfig):
+        raise DiscoveryError("Kubeconfig file not found.")
 
     try:
         cluster_manager = ClusterManager(kubeconfig)
-
         cluster_components = cluster_manager.discover_components(
             namespace_pattern=namespace,
             pod_label_pattern=pod_label,
             node_label_pattern=node_label,
             skip_pod_name=skip_pod_name,
         )
-    except ApiException as e:
-        logger.error("Kubernetes API error: %s", e)
-        sys.exit(1)
-    except MaxRetryError as e:
-        logger.error("Failed to connect to Kubernetes cluster: %s", e)
-        sys.exit(1)
-    except Exception as e:
-        logger.error("An unexpected error occurred during discovery: %s", e)
-        sys.exit(1)
+    except ApiException as error:
+        raise DiscoveryError(f"Kubernetes API error: {error}") from error
+    except MaxRetryError as error:
+        raise DiscoveryError(
+            f"Failed to connect to Kubernetes cluster: {error}"
+        ) from error
+    except Exception as error:
+        raise DiscoveryError(
+            f"An unexpected error occurred during discovery: {error}"
+        ) from error
 
-    # recommend only for overwrite, or when no file exists for other strategies
-    fresh_write = not os.path.exists(output) or save_strategy.lower() == "overwrite"
     scenario_enables = (
         ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
         if fresh_write
@@ -328,10 +380,8 @@ def discover(
         if fresh_write
         else None
     )
-    # recommend fitness queries on fresh writes and merges; else keep the static default.
-    recommend_fitness = fresh_write or save_strategy.lower() == "merge"
     fitness_queries = None
-    if recommend_fitness:
+    if fresh_write:
         try:
             prom_client = create_prometheus_client(kubeconfig)
             fitness_queries = recommend_fitness_queries(
@@ -339,16 +389,50 @@ def discover(
                 prom_client,
                 load_learned_weights(learned_weights),
             )
-        except PrometheusConnectionError as e:
-            logger.info("Prometheus unavailable; using static fitness default (%s).", e)
-        except Exception as e:
-            logger.warning("Fitness query recommendation failed: %s", e)
-    save_discovery(
-        output,
-        save_strategy,
+        except PrometheusConnectionError:
+            if strict_prometheus:
+                raise
+            get_logger(__name__).info(
+                "Prometheus unavailable; using static fitness default."
+            )
+        except Exception as error:
+            get_logger(__name__).warning(
+                "Fitness query recommendation failed: %s", error
+            )
+    return cluster_components, scenario_enables, fitness_queries, health_checks
+
+
+def discover_config(
+    kubeconfig: str,
+    *,
+    namespace: str = ".*",
+    pod_label: str = ".*",
+    node_label: str = ".*",
+    skip_pod_name: str | None = None,
+    rendered_kubeconfig: str | None = None,
+) -> str:
+    """Discover a fresh configuration without writing it to disk."""
+    (
         cluster_components,
+        scenario_enables,
+        fitness_queries,
+        health_checks,
+    ) = _discover_data(
         kubeconfig,
-        scenario_enables=scenario_enables,
-        fitness_queries=fitness_queries,
+        namespace,
+        pod_label,
+        node_label,
+        skip_pod_name,
+        fresh_write=True,
+        strict_prometheus=True,
+        learned_weights=None,
+    )
+    return create_krkn_ai_template(
+        rendered_kubeconfig or kubeconfig,
+        cluster_components.model_dump(
+            mode="json", warnings="none", exclude_defaults=True
+        ),
+        scenario_enables,
         health_checks=health_checks,
+        fitness_queries=fitness_queries,
     )

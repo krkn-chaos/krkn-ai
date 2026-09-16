@@ -164,7 +164,7 @@ krkn_ai run \
 | Command | Key Options |
 |---------|-------------|
 | `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
-| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
+| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
 | `monitor` | `-o` results dir, `-p` port |
 
 Run any command with `--help` for full details.
@@ -198,7 +198,28 @@ View results from a completed run:
 krkn_ai monitor -o ./tmp/results/
 ```
 
+## 🏷️ Operator Workload Labels
+
+Operator-backed runs label workloads for direct Kubernetes filtering. The
+orchestrator Pod has `krkn.dev/component=orchestrator` and
+`krkn.dev/ai-run=<KrknAIRun name>`. Each scenario Pod has
+`krkn.dev/component=scenario` plus `krkn.dev/ai-run`,
+`krkn.dev/orchestrator-pod`, `krkn.dev/scenario-id`,
+`krkn.dev/generation-id`, and `krkn.dev/scenario-name`.
+
+```bash
+# The one orchestrator for an AI run
+oc -n krkn-operator get pods -l krkn.dev/ai-run=my-ai-run,krkn.dev/component=orchestrator
+
+# Every scenario Pod created by that AI run
+oc -n krkn-operator get pods -l krkn.dev/ai-run=my-ai-run,krkn.dev/component=scenario
+```
+
 ## 📁 Output Structure
+
+Ordinary CLI and HUB runs use a random UUID for the child directory. Operator
+`KrknAIRun` runs pass the parent resource UID, which remains stable if the
+orchestrator pod is recreated.
 
 ```
 results/

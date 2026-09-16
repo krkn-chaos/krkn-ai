@@ -306,6 +306,7 @@ def discover(
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
+    fresh_write = not os.path.exists(output) or save_strategy.lower() == "overwrite"
     try:
         (
             cluster_components,
@@ -318,8 +319,8 @@ def discover(
             pod_label,
             node_label,
             skip_pod_name,
-            fresh_write=not os.path.exists(output)
-            or save_strategy.lower() == "overwrite",
+            fresh_write=fresh_write,
+            recommend_fitness=fresh_write or save_strategy.lower() == "merge",
             strict_prometheus=False,
             learned_weights=learned_weights,
         )
@@ -345,8 +346,10 @@ def _discover_data(
     skip_pod_name: str | None,
     *,
     fresh_write: bool,
+    recommend_fitness: bool,
     strict_prometheus: bool,
     learned_weights: str | None,
+    warnings: list[str] | None = None,
 ):
     if not kubeconfig or not os.path.exists(kubeconfig):
         raise DiscoveryError("Kubeconfig file not found.")
@@ -381,7 +384,7 @@ def _discover_data(
         else None
     )
     fitness_queries = None
-    if fresh_write:
+    if recommend_fitness:
         try:
             prom_client = create_prometheus_client(kubeconfig)
             fitness_queries = recommend_fitness_queries(
@@ -392,9 +395,10 @@ def _discover_data(
         except PrometheusConnectionError:
             if strict_prometheus:
                 raise
-            get_logger(__name__).info(
-                "Prometheus unavailable; using static fitness default."
-            )
+            message = "Prometheus unavailable; generated configuration omits fitness recommendations."
+            get_logger(__name__).info(message)
+            if warnings is not None:
+                warnings.append(message)
         except Exception as error:
             get_logger(__name__).warning(
                 "Fitness query recommendation failed: %s", error
@@ -410,6 +414,7 @@ def discover_config(
     node_label: str = ".*",
     skip_pod_name: str | None = None,
     rendered_kubeconfig: str | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Discover a fresh configuration without writing it to disk."""
     (
@@ -424,8 +429,10 @@ def discover_config(
         node_label,
         skip_pod_name,
         fresh_write=True,
-        strict_prometheus=True,
+        recommend_fitness=True,
+        strict_prometheus=False,
         learned_weights=None,
+        warnings=warnings,
     )
     return create_krkn_ai_template(
         rendered_kubeconfig or kubeconfig,

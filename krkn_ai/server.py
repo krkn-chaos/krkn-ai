@@ -21,11 +21,25 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
-from krkn_ai.models.custom_errors import PrometheusConnectionError
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
 MANIFEST_NAME = "manifest.json"
 COMPLETE_MARKER = ".krkn-ai-complete"
+DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
+DEFAULT_MAX_RUN_BYTES = 1024 * 1024 * 1024
+MAX_REQUEST_ATTEMPTS = 5
+MAX_RETRY_DELAY_SECONDS = 30
+
+
+def _configured_limit(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        limit = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if limit <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return limit
 
 
 class DiscoveryRequest(BaseModel):
@@ -49,6 +63,7 @@ class CommitRequest(BaseModel):
 def _safe_uid(uid: str) -> str:
     if (
         not uid
+        or uid in (".", "..")
         or len(uid) > 253
         or any(
             c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -84,14 +99,35 @@ def _sha256(path: Path) -> tuple[str, int]:
 
 
 class ArtifactStore:
-    def __init__(self, root: str | Path):
+    def __init__(
+        self,
+        root: str | Path,
+        max_artifact_bytes: int = DEFAULT_MAX_ARTIFACT_BYTES,
+        max_run_bytes: int = DEFAULT_MAX_RUN_BYTES,
+    ):
+        if max_artifact_bytes <= 0 or max_run_bytes <= 0:
+            raise ValueError("artifact size limits must be positive")
         self.root = Path(root)
+        self.max_artifact_bytes = max_artifact_bytes
+        self.max_run_bytes = max_run_bytes
 
     def run_dir(self, uid: str) -> Path:
         return self.root / "runs" / _safe_uid(uid)
 
     def _manifest_path(self, uid: str) -> Path:
         return self.run_dir(uid) / MANIFEST_NAME
+
+    @staticmethod
+    def _run_size(run_dir: Path) -> int:
+        if not run_dir.exists():
+            return 0
+        return sum(
+            file.stat().st_size
+            for file in run_dir.rglob("*")
+            if file.is_file()
+            and file.name != MANIFEST_NAME
+            and not file.name.startswith(".upload-")
+        )
 
     async def upload(
         self, uid: str, path: str, stream: Any, expected_sha256: str
@@ -108,6 +144,8 @@ class ArtifactStore:
         run_dir = self.run_dir(uid)
         destination = run_dir / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
+        existing_size = destination.stat().st_size if destination.is_file() else 0
+        run_size = self._run_size(run_dir)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=".upload-", dir=destination.parent
         )
@@ -116,8 +154,16 @@ class ArtifactStore:
         try:
             with os.fdopen(descriptor, "wb") as temporary:
                 async for chunk in stream:
-                    digest.update(chunk)
                     size += len(chunk)
+                    if (
+                        size > self.max_artifact_bytes
+                        or run_size - existing_size + size > self.max_run_bytes
+                    ):
+                        raise HTTPException(
+                            status.HTTP_413_CONTENT_TOO_LARGE,
+                            "artifact upload exceeds configured storage limit",
+                        )
+                    digest.update(chunk)
                     temporary.write(chunk)
                 temporary.flush()
                 os.fsync(temporary.fileno())
@@ -212,9 +258,20 @@ class ArtifactStore:
         return candidate
 
 
-def create_app(root: str | Path | None = None, token: str | None = None) -> FastAPI:
+def create_app(
+    root: str | Path | None = None,
+    token: str | None = None,
+    max_artifact_bytes: int | None = None,
+    max_run_bytes: int | None = None,
+) -> FastAPI:
     store = ArtifactStore(
-        root or os.environ.get("KRKNAI_ARTIFACT_ROOT", DEFAULT_ARTIFACT_ROOT)
+        root or os.environ.get("KRKNAI_ARTIFACT_ROOT", DEFAULT_ARTIFACT_ROOT),
+        max_artifact_bytes
+        if max_artifact_bytes is not None
+        else _configured_limit("KRKNAI_MAX_ARTIFACT_BYTES", DEFAULT_MAX_ARTIFACT_BYTES),
+        max_run_bytes
+        if max_run_bytes is not None
+        else _configured_limit("KRKNAI_MAX_RUN_BYTES", DEFAULT_MAX_RUN_BYTES),
     )
     service_token = (
         token if token is not None else os.environ.get("KRKNAI_SERVICE_TOKEN", "")
@@ -243,6 +300,7 @@ def create_app(root: str | Path | None = None, token: str | None = None) -> Fast
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as temporary:
                 temporary.write(kubeconfig)
+            warnings: list[str] = []
             try:
                 config_yaml = discover_config(
                     temporary_name,
@@ -251,13 +309,8 @@ def create_app(root: str | Path | None = None, token: str | None = None) -> Fast
                     node_label=request.nodeLabelPattern,
                     skip_pod_name=request.skipPodName,
                     rendered_kubeconfig="/input/kubeconfig",
+                    warnings=warnings,
                 )
-                warnings: list[str] = []
-            except PrometheusConnectionError:
-                config_yaml = "kubeconfig_file_path: /input/kubeconfig\n"
-                warnings = [
-                    "Prometheus discovery failed; generated configuration omits Prometheus data."
-                ]
             except DiscoveryError as exc:
                 raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
             return {"configYaml": config_yaml, "warnings": warnings}
@@ -314,20 +367,34 @@ def _load_state() -> dict[str, dict[str, Any]]:
 
 
 def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Response:
-    while True:
+    last_response: requests.Response | None = None
+    last_error: requests.RequestException | None = None
+    for attempt in range(MAX_REQUEST_ATTEMPTS):
+        body = kwargs.get("data")
+        if body is not None and hasattr(body, "seek"):
+            body.seek(0)
         try:
             response = requests.request(method, url, timeout=(5, 30), **kwargs)
             if response.status_code < 500:
                 response.raise_for_status()
                 return response
-        except requests.RequestException:
-            pass
-        time.sleep(2)
+            last_response = response
+        except requests.HTTPError:
+            raise
+        except requests.RequestException as error:
+            last_error = error
+        if attempt < MAX_REQUEST_ATTEMPTS - 1:
+            time.sleep(min(2**attempt, MAX_RETRY_DELAY_SECONDS))
+
+    if last_response is not None:
+        last_response.raise_for_status()
+    assert last_error is not None
+    raise last_error
 
 
 def upload_results() -> None:
-    output = Path(os.environ.get("KRKNAI_OUTPUT_DIR", "/output"))
     uid = _safe_uid(os.environ["KRKNAI_RUN_UID"])
+    output = Path(os.environ.get("KRKNAI_OUTPUT_DIR", "/output")) / uid
     service_url = os.environ["KRKNAI_SERVICE_URL"].rstrip("/")
     token = os.environ["KRKNAI_SERVICE_TOKEN"]
     marker = output / COMPLETE_MARKER

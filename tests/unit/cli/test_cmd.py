@@ -556,6 +556,58 @@ class TestDiscoverCommand:
         finally:
             os.unlink(kubeconfig_path)
 
+    def test_discover_recommends_fitness_queries_when_merging(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        with open(output_file, "w") as output:
+            output.write("existing: true\n")
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as kubeconfig:
+            kubeconfig.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = kubeconfig.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch("krkn_ai.cli.cmd.save_discovery") as save_discovery,
+                patch("krkn_ai.cli.cmd.create_prometheus_client"),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_fitness_queries",
+                    return_value=[
+                        {
+                            "query": "up",
+                            "type": "point",
+                            "weight": 1,
+                            "enabled": True,
+                        }
+                    ],
+                ) as recommend_fitness,
+            ):
+                mock_manager_class.return_value.discover_components.return_value = (
+                    mock_cluster_components
+                )
+                result = runner.invoke(
+                    main,
+                    [
+                        "discover",
+                        "-k",
+                        kubeconfig_path,
+                        "-o",
+                        output_file,
+                        "--save-strategy",
+                        "merge",
+                    ],
+                )
+
+            assert result.exit_code == 0
+            recommend_fitness.assert_called_once()
+            assert save_discovery.call_args.kwargs["fitness_queries"] == [
+                {"query": "up", "type": "point", "weight": 1, "enabled": True}
+            ]
+        finally:
+            os.unlink(kubeconfig_path)
+
     def test_discover_writes_recommended_scenarios_to_file(
         self, mock_cluster_components, temp_output_dir
     ):

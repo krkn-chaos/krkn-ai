@@ -57,9 +57,9 @@ uv run krkn_ai run \
 The executor first tries in-cluster authentication and falls back to the
 kubeconfig supplied to `--kubeconfig`, so the same command works inside or
 outside Kubernetes. Each generated child CR is labeled
-`krkn.dev/ai-run=manual-run`. Because this example uses a generated UID
-without a parent `KrknAIRun`, delete the child resources explicitly after
-the run.
+`krkn.dev/ai-run=manual-run` but has no owner reference, so delete child
+resources explicitly after the run. Set `KRKNAI_SCENARIO_TIMEOUT_SECONDS` to
+override the one-hour default terminal-status wait.
 
 ### Run the dedicated image manually
 
@@ -104,6 +104,10 @@ The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 Use the `KrknAIRun` and target Secret procedure in
 [`../hack/README.md`](../hack/README.md) for a complete cluster test.
 
+Elasticsearch forwarding is not supported by the operator runner. It is
+deliberately disabled until the operator can inject credentials through a
+Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
+
 ### Results storage for `KrknAIRun`
 
 `KrknAIRun` Pods use `EmptyDir` for transient output. The orchestrator writes a
@@ -124,6 +128,11 @@ aiService:
     storageClassName: ""    # empty selects the cluster default
     size: 5Gi
 ```
+
+
+The artifact service limits each upload to 100 MiB and each run to 1 GiB by
+default. Set `KRKNAI_MAX_ARTIFACT_BYTES` and `KRKNAI_MAX_RUN_BYTES` on the
+artifact-service Pod to override those limits.
 
 Set `aiService.storage.existingClaim` to mount a PVC you created in the
 operator namespace. Otherwise, the chart creates its default PVC. The PVC is

@@ -68,11 +68,14 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
-        self._operator_executor = (
-            OperatorExecutor(self.config)
-            if self.runner_type == KrknRunnerType.OPERATOR_RUNNER
-            else None
-        )
+        self._operator_executor: Optional[OperatorExecutor] = None
+        if (
+            self.runner_type == KrknRunnerType.OPERATOR_RUNNER
+            and self.config.genetic.composition_rate > 0
+        ):
+            raise ValueError(
+                "operator runner does not support genetic.composition_rate > 0"
+            )
 
     def __check_runner_availability(self):
         krknctl_available = True
@@ -131,14 +134,19 @@ class KrknRunner:
             assert self.runner_type is not None
             if self.runner_type == KrknRunnerType.OPERATOR_RUNNER:
                 command = f"operator:{getattr(scenario, 'krknhub_image', '')}"
-                assert self._operator_executor is not None
+                if self._operator_executor is None:
+                    self._operator_executor = OperatorExecutor(self.config)
                 try:
                     health_check_watcher.run()
-                    log, returncode = self._operator_executor.execute(
+                    log, executor_returncode = self._operator_executor.execute(
                         scenario, generation_id, scenario_id
                     )
-                    telemetry = extract_telemetry_from_log(log, returncode)
-                    returncode = telemetry.exit_status
+                    telemetry = extract_telemetry_from_log(log, executor_returncode)
+                    returncode = (
+                        executor_returncode
+                        if executor_returncode != 0
+                        else telemetry.exit_status
+                    )
                     run_uuid = telemetry.run_uuid
                     resiliency_score = telemetry.resiliency_score
                     logger.info("Krkn scenario return code: %d", returncode)

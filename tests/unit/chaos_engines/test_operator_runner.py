@@ -1,6 +1,8 @@
 import os
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from kubernetes.config.config_exception import ConfigException
 
@@ -71,3 +73,78 @@ class TestOperatorExecutorScenarioRun:
             "krkn.dev/generation-id": "3",
             "krkn.dev/scenario-name": "dummy-scenario",
         }
+        assert body["metadata"]["ownerReferences"][0]["uid"] == "run-uid"
+
+    def test_manual_scenario_run_has_no_owner_reference(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="manual-run",
+            orchestrator_pod_name=None,
+            run_uid="manual-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        scenario = SimpleNamespace(
+            name="dummy-scenario",
+            krknctl_name="dummy-scenario",
+            parameters=[],
+            scenario_wait_duration=lambda _: 120,
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=3, scenario_id=7)
+
+        assert "ownerReferences" not in body["metadata"]
+        assert "krkn.dev/orchestrator-pod" not in body["metadata"]["labels"]
+
+    def test_operator_scenario_run_omits_elasticsearch_credentials(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(
+            wait_duration=120,
+            elastic=SimpleNamespace(
+                enable=True,
+                server="https://elasticsearch.example.test",
+                port=9200,
+                username="username",
+                password="password",
+                verify_certs=True,
+            ),
+        )
+        scenario = SimpleNamespace(
+            name="dummy-scenario",
+            krknctl_name="dummy-scenario",
+            parameters=[],
+            scenario_wait_duration=lambda _: 120,
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=3, scenario_id=7)
+
+        assert "ES_PASSWORD" not in body["spec"]["environment"]
+        assert "ES_USERNAME" not in body["spec"]["environment"]
+
+    def test_polling_times_out_when_scenario_run_never_terminates(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            namespace="krkn-operator", scenario_timeout_seconds=10
+        )
+        executor.co = Mock()
+        executor.poll_interval = 5
+
+        with (
+            patch(
+                "krkn_ai.chaos_engines.operator_runner.time.monotonic",
+                side_effect=[0, 0, 0, 10],
+            ),
+            patch("krkn_ai.chaos_engines.operator_runner.time.sleep"),
+            pytest.raises(TimeoutError, match="did not reach a terminal phase"),
+        ):
+            executor._poll_until_terminal("scenario-run")

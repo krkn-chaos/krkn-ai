@@ -10,9 +10,10 @@ import hmac
 import json
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 import requests
@@ -29,6 +30,7 @@ DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 DEFAULT_MAX_RUN_BYTES = 1024 * 1024 * 1024
 MAX_REQUEST_ATTEMPTS = 5
 MAX_RETRY_DELAY_SECONDS = 30
+DEFAULT_UPLOAD_INTERVAL_SECONDS = 150
 
 
 def _configured_limit(name: str, default: int) -> int:
@@ -58,6 +60,7 @@ class ManifestFile(BaseModel):
 
 class CommitRequest(BaseModel):
     files: list[ManifestFile]
+    status: Literal["in_progress", "succeeded", "failed"] = "succeeded"
 
 
 def _safe_uid(uid: str) -> str:
@@ -110,6 +113,7 @@ class ArtifactStore:
         self.root = Path(root)
         self.max_artifact_bytes = max_artifact_bytes
         self.max_run_bytes = max_run_bytes
+        self._commit_lock = threading.Lock()
 
     def run_dir(self, uid: str) -> Path:
         return self.root / "runs" / _safe_uid(uid)
@@ -206,38 +210,37 @@ class ArtifactStore:
             files.append(
                 {"path": normalized, "sha256": entry.sha256, "size": entry.size}
             )
-        manifest = {"files": sorted(files, key=lambda entry: entry["path"])}
+        manifest = {
+            "status": request.status,
+            "files": sorted(files, key=lambda entry: entry["path"]),
+        }
         manifest_path = self._manifest_path(uid)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         encoded = (
             json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode()
-        if manifest_path.exists():
-            if manifest_path.read_bytes() == encoded:
-                return manifest
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "run artifacts are already committed"
+        with self._commit_lock:
+            if manifest_path.exists():
+                existing = json.loads(manifest_path.read_text())
+                if existing.get("status", "succeeded") in {"succeeded", "failed"}:
+                    if manifest_path.read_bytes() == encoded:
+                        return manifest
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "run artifacts are already committed"
+                    )
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".manifest-", dir=manifest_path.parent
             )
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=".manifest-", dir=manifest_path.parent
-        )
-        try:
-            with os.fdopen(descriptor, "wb") as temporary:
-                temporary.write(encoded)
-                temporary.flush()
-                os.fsync(temporary.fileno())
             try:
-                os.link(temporary_name, manifest_path)
-            except FileExistsError:
-                if manifest_path.read_bytes() == encoded:
-                    return manifest
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "run artifacts are already committed"
-                )
-            return manifest
-        finally:
-            if os.path.exists(temporary_name):
-                os.unlink(temporary_name)
+                with os.fdopen(descriptor, "wb") as temporary:
+                    temporary.write(encoded)
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                os.replace(temporary_name, manifest_path)
+            finally:
+                if os.path.exists(temporary_name):
+                    os.unlink(temporary_name)
+        return manifest
 
     def manifest(self, uid: str) -> dict[str, Any]:
         try:
@@ -392,17 +395,15 @@ def _request_with_retry(method: str, url: str, **kwargs: Any) -> requests.Respon
     raise last_error
 
 
-def upload_results() -> None:
-    uid = _safe_uid(os.environ["KRKNAI_RUN_UID"])
-    output = Path(os.environ.get("KRKNAI_OUTPUT_DIR", "/output")) / uid
-    service_url = os.environ["KRKNAI_SERVICE_URL"].rstrip("/")
-    token = os.environ["KRKNAI_SERVICE_TOKEN"]
-    marker = output / COMPLETE_MARKER
-    while not marker.exists():
-        time.sleep(1)
-    headers = {"Authorization": f"Bearer {token}"}
-    state = _load_state()
+def _upload_files(
+    output: Path,
+    uid: str,
+    service_url: str,
+    headers: dict[str, str],
+    state: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     files: list[dict[str, Any]] = []
+    marker = output / COMPLETE_MARKER
     for source in sorted(
         path for path in output.rglob("*") if path.is_file() and path != marker
     ):
@@ -420,12 +421,53 @@ def upload_results() -> None:
             state[relative_path] = entry
             _save_state(state)
         files.append(entry)
+    return files
+
+
+def _commit_files(
+    service_url: str,
+    uid: str,
+    headers: dict[str, str],
+    files: list[dict[str, Any]],
+    run_status: Literal["in_progress", "succeeded", "failed"],
+) -> None:
     _request_with_retry(
         "POST",
         f"{service_url}/v1/runs/{quote(uid, safe='')}/commit",
         headers=headers,
-        json={"files": files},
+        json={"files": files, "status": run_status},
     )
+
+
+def _final_status(marker: Path) -> Literal["succeeded", "failed"]:
+    try:
+        return (
+            "succeeded" if json.loads(marker.read_text())["exitCode"] == 0 else "failed"
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return "failed"
+
+
+def upload_results() -> None:
+    uid = _safe_uid(os.environ["KRKNAI_RUN_UID"])
+    output = Path(os.environ.get("KRKNAI_OUTPUT_DIR", "/output")) / uid
+    service_url = os.environ["KRKNAI_SERVICE_URL"].rstrip("/")
+    token = os.environ["KRKNAI_SERVICE_TOKEN"]
+    marker = output / COMPLETE_MARKER
+    interval = _configured_limit(
+        "KRKNAI_UPLOAD_INTERVAL_SECONDS", DEFAULT_UPLOAD_INTERVAL_SECONDS
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    state = _load_state()
+    while not marker.exists():
+        files = _upload_files(output, uid, service_url, headers, state)
+        _commit_files(service_url, uid, headers, files, "in_progress")
+        for _ in range(interval):
+            if marker.exists():
+                break
+            time.sleep(1)
+    files = _upload_files(output, uid, service_url, headers, state)
+    _commit_files(service_url, uid, headers, files, _final_status(marker))
 
 
 def main() -> None:

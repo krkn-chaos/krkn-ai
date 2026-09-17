@@ -52,7 +52,7 @@ def test_discovery_preserves_results_when_prometheus_is_unavailable(tmp_path: Pa
     }
 
 
-def test_artifacts_are_hidden_until_manifest_commit(tmp_path: Path):
+def test_artifacts_become_visible_with_in_progress_manifest(tmp_path: Path):
     client = TestClient(create_app(tmp_path, "service-token"))
     payload = b"run result"
     digest = hashlib.sha256(payload).hexdigest()
@@ -65,29 +65,69 @@ def test_artifacts_are_hidden_until_manifest_commit(tmp_path: Path):
     assert (
         client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).status_code == 404
     )
-    assert (
-        client.get(
-            "/v1/runs/run-1/files/nested/result.txt", headers=TOKEN_HEADERS
-        ).status_code
-        == 404
-    )
-    manifest = {
-        "files": [{"path": "nested/result.txt", "sha256": digest, "size": len(payload)}]
+    in_progress = {
+        "status": "in_progress",
+        "files": [
+            {"path": "nested/result.txt", "sha256": digest, "size": len(payload)}
+        ],
     }
     assert (
         client.post(
-            "/v1/runs/run-1/commit", headers=TOKEN_HEADERS, json=manifest
+            "/v1/runs/run-1/commit", headers=TOKEN_HEADERS, json=in_progress
         ).status_code
         == 200
     )
     assert (
-        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json() == manifest
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
+        == in_progress
     )
     assert (
         client.get(
             "/v1/runs/run-1/files/nested/result.txt", headers=TOKEN_HEADERS
         ).content
         == payload
+    )
+    updated_payload = b"updated result"
+    updated_digest = hashlib.sha256(updated_payload).hexdigest()
+    assert (
+        client.put(
+            "/v1/runs/run-1/files/nested/result.txt",
+            headers={**TOKEN_HEADERS, "X-Checksum-Sha256": updated_digest},
+            content=updated_payload,
+        ).status_code
+        == 201
+    )
+    updated_in_progress = {
+        "status": "in_progress",
+        "files": [
+            {
+                "path": "nested/result.txt",
+                "sha256": updated_digest,
+                "size": len(updated_payload),
+            }
+        ],
+    }
+    assert (
+        client.post(
+            "/v1/runs/run-1/commit",
+            headers=TOKEN_HEADERS,
+            json=updated_in_progress,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
+        == updated_in_progress
+    )
+    completed = {**updated_in_progress, "status": "succeeded"}
+    assert (
+        client.post(
+            "/v1/runs/run-1/commit", headers=TOKEN_HEADERS, json=completed
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json() == completed
     )
 
 
@@ -138,7 +178,8 @@ def test_manifest_commit_is_idempotent(tmp_path: Path):
         == 201
     )
     manifest = {
-        "files": [{"path": "result.txt", "sha256": digest, "size": len(payload)}]
+        "status": "succeeded",
+        "files": [{"path": "result.txt", "sha256": digest, "size": len(payload)}],
     }
     assert (
         client.post(
@@ -151,6 +192,14 @@ def test_manifest_commit_is_idempotent(tmp_path: Path):
             "/v1/runs/run-1/commit", headers=TOKEN_HEADERS, json=manifest
         ).status_code
         == 200
+    )
+    assert (
+        client.post(
+            "/v1/runs/run-1/commit",
+            headers=TOKEN_HEADERS,
+            json={**manifest, "status": "in_progress"},
+        ).status_code
+        == 409
     )
 
 
@@ -223,6 +272,48 @@ def test_uploader_retries_and_commits_after_failure_marker(tmp_path: Path, monke
     assert [method for method, _, _, _ in calls] == ["PUT", "PUT", "POST"]
     assert [call[3] for call in calls[:2]] == [b"result", b"result"]
     assert calls[-1][2]["json"]["files"][0]["path"] == "result.txt"
+    assert calls[-1][2]["json"]["status"] == "failed"
+
+
+def test_uploader_checkpoints_then_finalizes_on_completion(tmp_path: Path, monkeypatch):
+    output = tmp_path / "output"
+    state = tmp_path / "state"
+    run_output = output / "run-1"
+    run_output.mkdir(parents=True)
+    marker = run_output / ".krkn-ai-complete"
+    (run_output / "result.txt").write_text("result")
+    calls = []
+
+    def request(method, url, **kwargs):
+        body = kwargs.get("data")
+        calls.append((method, url, kwargs, body.read() if body else None))
+
+        class Response:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+        return Response()
+
+    def complete_run(_: int) -> None:
+        marker.write_text('{"exitCode":0}\n')
+
+    monkeypatch.setenv("KRKNAI_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(state))
+    monkeypatch.setenv("KRKNAI_RUN_UID", "run-1")
+    monkeypatch.setenv("KRKNAI_SERVICE_URL", "http://service")
+    monkeypatch.setenv("KRKNAI_SERVICE_TOKEN", "token")
+    monkeypatch.setattr("krkn_ai.server.requests.request", request)
+    monkeypatch.setattr("krkn_ai.server.time.sleep", complete_run)
+
+    upload_results()
+
+    assert [method for method, _, _, _ in calls] == ["PUT", "POST", "POST"]
+    assert [call[2]["json"]["status"] for call in calls[1:]] == [
+        "in_progress",
+        "succeeded",
+    ]
 
 
 def test_request_retry_does_not_retry_client_errors(monkeypatch):

@@ -2,7 +2,6 @@ from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
-    NamespaceParameter,
     NetworkScenarioEgressParamsParameter,
     NetworkScenarioExecutionParameter,
     NetworkScenarioImageParameter,
@@ -27,7 +26,6 @@ class NetworkScenario(Scenario):
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:network-chaos"
 
     traffic_type: NetworkScenarioTypeParameter = NetworkScenarioTypeParameter()
-    namespace: NamespaceParameter = NamespaceParameter()
     image: NetworkScenarioImageParameter = NetworkScenarioImageParameter()
     duration: StandardDurationParameter = StandardDurationParameter()
     label_selector: NetworkScenarioLabelSelectorParameter = (
@@ -55,7 +53,6 @@ class NetworkScenario(Scenario):
     @property
     def parameters(self):
         common = [
-            self.namespace,
             self.traffic_type,
             self.image,
             self.duration,
@@ -79,12 +76,6 @@ class NetworkScenario(Scenario):
         return config_wait_duration
 
     def mutate(self):
-        namespaces = self._cluster_components.namespaces
-        if not namespaces:
-            raise ScenarioParameterInitError(
-                "No namespaces found in cluster components for network scenario"
-            )
-
         # Get nodes with interfaces
         nodes = [
             node for node in self._cluster_components.nodes if len(node.interfaces) > 0
@@ -98,7 +89,6 @@ class NetworkScenario(Scenario):
         self.traffic_type.mutate()
         self.execution.mutate()
 
-        self.namespace.value = rng.choice(namespaces).name
         node = rng.choice(nodes)
         self.node_name.value = node.name
         self.interfaces.value = f"[{rng.choice(node.interfaces)}]"

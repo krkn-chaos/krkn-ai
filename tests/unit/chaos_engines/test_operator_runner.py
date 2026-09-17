@@ -7,6 +7,8 @@ import pytest
 from kubernetes.config.config_exception import ConfigException
 
 from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Node
+from krkn_ai.models.scenario.scenario_network import NetworkScenario
 
 
 class TestOperatorExecutorAuthentication:
@@ -74,6 +76,28 @@ class TestOperatorExecutorScenarioRun:
             "krkn.dev/scenario-name": "dummy-scenario",
         }
         assert body["metadata"]["ownerReferences"][0]["uid"] == "run-uid"
+
+    def test_network_scenario_emits_discovered_namespace_to_environment(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        scenario = NetworkScenario(
+            cluster_components=ClusterComponents(
+                namespaces=[Namespace(name="robot-shop")],
+                nodes=[Node(name="worker-0", interfaces=["eth0"])],
+            )
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=3, scenario_id=7)
+
+        assert body["spec"]["environment"]["NAMESPACE"] == "robot-shop"
 
     def test_manual_scenario_run_has_no_owner_reference(self):
         executor = OperatorExecutor.__new__(OperatorExecutor)

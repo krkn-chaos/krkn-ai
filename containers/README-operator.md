@@ -110,11 +110,14 @@ Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
 
 ### Results storage for `KrknAIRun`
 
-`KrknAIRun` Pods use `EmptyDir` for transient output. The orchestrator writes a
-completion marker with its exit code after both successful and failed runs, so
-the uploader sidecar can commit diagnostic artifacts before the Pod terminates.
-The standalone `quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores committed
-results on its single PVC.
+`KrknAIRun` Pods use `EmptyDir` for transient output. The uploader sidecar
+checkpoints new or changed artifacts to the service every 150 seconds while the
+run is active. Each checkpoint exposes a manifest with `status: in_progress`.
+When the orchestrator writes its completion marker, the uploader immediately
+syncs once more and commits a final manifest with `status: succeeded` or
+`status: failed`. The standalone
+`quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores artifacts and manifests
+on its single PVC.
 
 Configure that PVC at the installation level:
 
@@ -139,5 +142,6 @@ operator namespace. Otherwise, the chart creates its default PVC. The PVC is
 retained on Helm uninstall; delete it manually only after preserving the
 stored results.
 
-No `KrknAIRun.spec.storage` setting exists. Results are available only after
-the uploader commits the run manifest to the service.
+No `KrknAIRun.spec.storage` setting exists. Results are available after the
+first checkpoint; clients must inspect the manifest status before treating
+artifacts as final.

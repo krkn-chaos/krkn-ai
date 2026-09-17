@@ -411,8 +411,7 @@ class TestNetworkScenario:
     def test_network_scenario_initialization_with_nodes_with_interfaces(self):
         """Test that NetworkScenario initializes when nodes with interfaces exist"""
         node = Node(name="test-node", interfaces=["eth0", "eth1"])
-        namespace = Namespace(name="robot-shop")
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[node])
+        cluster = ClusterComponents(namespaces=[], nodes=[node])
 
         scenario = NetworkScenario(cluster_components=cluster)
         assert scenario.name == "network-chaos"
@@ -420,33 +419,13 @@ class TestNetworkScenario:
         assert scenario.node_name.value == "test-node"
         assert scenario.interfaces.value != ""
 
-        assert scenario.namespace.value == "robot-shop"
-        for traffic_type in ("ingress", "egress"):
-            scenario.traffic_type.value = traffic_type
-            assert "NAMESPACE" in [
-                parameter.get_name(return_krknhub_name=True)
-                for parameter in scenario.parameters
-            ]
-
     def test_network_scenario_raises_error_when_no_nodes_with_interfaces(self):
         """Test that NetworkScenario raises error when no nodes have interfaces"""
         node = Node(name="test-node", interfaces=[])
-        namespace = Namespace(name="robot-shop")
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[node])
-
-        with pytest.raises(
-            ScenarioParameterInitError, match="No nodes found with interfaces"
-        ):
-            NetworkScenario(cluster_components=cluster)
-
-    def test_network_scenario_raises_error_when_no_namespaces(self):
-        """Test that NetworkScenario requires a discovered target namespace."""
-        node = Node(name="test-node", interfaces=["eth0"])
         cluster = ClusterComponents(namespaces=[], nodes=[node])
 
         with pytest.raises(
-            ScenarioParameterInitError,
-            match="No namespaces found in cluster components",
+            ScenarioParameterInitError, match="No nodes found with interfaces"
         ):
             NetworkScenario(cluster_components=cluster)
 

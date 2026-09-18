@@ -10,6 +10,7 @@ from krkn_ai.models.scenario.base import (
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.parameters import (
+    HogScenarioImageParameter,
     IOBlockSizeParameter,
     IOWriteBytesParameter,
     NetworkScenarioEgressParamsParameter,
@@ -17,6 +18,7 @@ from krkn_ai.models.scenario.parameters import (
     NodeMemoryPercentageParameter,
     PodNameParameter,
     ReadBPSParameter,
+    SynFloodImageParameter,
     WriteBPSParameter,
 )
 
@@ -57,6 +59,49 @@ class TestBaseParameter:
 
         for parameter in parameters:
             assert parameter.get_value(return_krknhub_name=True) is not None
+
+    def test_workload_image_parameters_defaults(self):
+        """Hog and SYN-flood image parameters default to krkn-hub multiarch workloads (#480)."""
+        hog_param = HogScenarioImageParameter()
+        assert (
+            hog_param.value == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+        assert hog_param.get_name(return_krknhub_name=False) == "image"
+        assert hog_param.get_name(return_krknhub_name=True) == "IMAGE"
+        assert (
+            hog_param.get_value(return_krknhub_name=False)
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+        assert (
+            hog_param.get_value(return_krknhub_name=True)
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+        assert hog_param.value != "quay.io/krkn-chaos/krkn-hog"
+
+        custom_hog = HogScenarioImageParameter(value="quay.io/custom/hog:param-test")
+        assert custom_hog.value == "quay.io/custom/hog:param-test"
+        assert custom_hog.get_value() == "quay.io/custom/hog:param-test"
+
+        syn_param = SynFloodImageParameter()
+        assert (
+            syn_param.value
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
+        )
+        assert syn_param.get_name(return_krknhub_name=False) == "image"
+        assert syn_param.get_name(return_krknhub_name=True) == "IMAGE"
+        assert (
+            syn_param.get_value(return_krknhub_name=False)
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
+        )
+        assert (
+            syn_param.get_value(return_krknhub_name=True)
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
+        )
+        assert syn_param.value != "quay.io/krkn-chaos/krkn-syn-flood:latest"
+
+        custom_syn = SynFloodImageParameter(value="quay.io/custom/syn:param-test")
+        assert custom_syn.value == "quay.io/custom/syn:param-test"
+        assert custom_syn.get_value() == "quay.io/custom/syn:param-test"
 
 
 class TestScenario:

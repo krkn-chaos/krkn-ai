@@ -7,8 +7,19 @@ import pytest
 from kubernetes.config.config_exception import ConfigException
 
 from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
-from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Pod
+from krkn_ai.models.cluster_components import (
+    ClusterComponents,
+    Namespace,
+    Node,
+    Pod,
+    Service,
+    ServicePort,
+)
+from krkn_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
 from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
+from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
+from krkn_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
+from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
 
 
 class TestOperatorExecutorAuthentication:
@@ -99,6 +110,144 @@ class TestOperatorExecutorScenarioRun:
 
         assert body["spec"]["environment"]["NAMESPACE"] == "robot-shop"
         assert body["spec"]["environment"]["POD_NAME"] == "payment"
+
+    def test_node_cpu_hog_operator_scenario_run_uses_multiarch_workload_image(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        scenario = NodeCPUHogScenario(
+            cluster_components=ClusterComponents(
+                namespaces=[],
+                nodes=[Node(name="worker-0", free_cpu=4.0, free_mem=8.0)],
+            )
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=1, scenario_id=2)
+        assert (
+            body["spec"]["environment"]["IMAGE"]
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+
+        # Overridden image
+        scenario.hog_scenario_image.value = "quay.io/custom/hog:test"
+        body_override = executor._to_scenariorun(
+            scenario, generation_id=1, scenario_id=2
+        )
+        assert (
+            body_override["spec"]["environment"]["IMAGE"] == "quay.io/custom/hog:test"
+        )
+
+    def test_node_memory_hog_operator_scenario_run_uses_multiarch_workload_image(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        scenario = NodeMemoryHogScenario(
+            cluster_components=ClusterComponents(
+                namespaces=[],
+                nodes=[Node(name="worker-0", free_cpu=4.0, free_mem=8.0)],
+            )
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=1, scenario_id=2)
+        assert (
+            body["spec"]["environment"]["IMAGE"]
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+
+        # Overridden image
+        scenario.hog_scenario_image.value = "quay.io/custom/memory-hog:test"
+        body_override = executor._to_scenariorun(
+            scenario, generation_id=1, scenario_id=2
+        )
+        assert (
+            body_override["spec"]["environment"]["IMAGE"]
+            == "quay.io/custom/memory-hog:test"
+        )
+
+    def test_node_io_hog_operator_scenario_run_uses_multiarch_workload_image(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        scenario = NodeIOHogScenario(
+            cluster_components=ClusterComponents(
+                namespaces=[],
+                nodes=[Node(name="worker-0", free_cpu=4.0, free_mem=8.0)],
+            )
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=1, scenario_id=2)
+        assert (
+            body["spec"]["environment"]["IMAGE"]
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
+        )
+
+        # Overridden image
+        scenario.hog_scenario_image.value = "quay.io/custom/io-hog:test"
+        body_override = executor._to_scenariorun(
+            scenario, generation_id=1, scenario_id=2
+        )
+        assert (
+            body_override["spec"]["environment"]["IMAGE"]
+            == "quay.io/custom/io-hog:test"
+        )
+
+    def test_syn_flood_operator_scenario_run_uses_multiarch_workload_image(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name="ai-run-a1b2c3d4",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        service = Service(
+            name="test-service", ports=[ServicePort(port=80, target_port=8080)]
+        )
+        scenario = SynFloodScenario(
+            cluster_components=ClusterComponents(
+                namespaces=[Namespace(name="test-ns", services=[service])],
+                nodes=[],
+            )
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=1, scenario_id=2)
+        assert (
+            body["spec"]["environment"]["IMAGE"]
+            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
+        )
+
+        # Overridden image
+        scenario.image.value = "quay.io/custom/syn-flood:test"
+        body_override = executor._to_scenariorun(
+            scenario, generation_id=1, scenario_id=2
+        )
+        assert (
+            body_override["spec"]["environment"]["IMAGE"]
+            == "quay.io/custom/syn-flood:test"
+        )
 
     def test_manual_scenario_run_has_no_owner_reference(self):
         executor = OperatorExecutor.__new__(OperatorExecutor)

@@ -195,7 +195,7 @@ class NumberOfNodesParameter(BaseParameter):
 class HogScenarioImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
-    value: str = "quay.io/krkn-chaos/krkn-hog"
+    value: str = "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
 
 
 class ObjectTypeParameter(BaseParameter):
@@ -446,7 +446,7 @@ class SynFloodNumberOfPodsParameter(BaseParameter):
 class SynFloodImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
-    value: str = "quay.io/krkn-chaos/krkn-syn-flood:latest"
+    value: str = "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
 
 
 class SynFloodNodeSelectorsParameter(BaseParameter):

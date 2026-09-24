@@ -16,7 +16,8 @@ def use_relative_baseline(baseline, scores):
     return abs(baseline) > max(ZERO_BASELINE_EPS, RELATIVE_BASELINE_FRACTION * scale)
 
 
-def render_summary(df):
+
+def render_summary(df, results_summary=None):
     st.header("Experiment Summary")
     if df is None or df.empty:
         st.warning("Results data not yet available. Waiting for Krkn-AI engine...")
@@ -35,6 +36,87 @@ def render_summary(df):
     col2.metric("Scenarios Executed", scenarios_executed)
     col3.metric("Best Fitness Score", f"{best_fitness:.1f}%")
     col4.metric("Avg Fitness Score", f"{avg_fitness:.1f}%")
+
+    lineage = (results_summary or {}).get("population_lineage", [])
+    if lineage:
+        render_lineage_analysis(lineage)
+
+
+def create_lineage_graph(records):
+    """Create a generation-oriented graph for the exported UUID lineage."""
+    if not records:
+        return None
+    by_generation = {}
+    for record in records:
+        by_generation.setdefault(record.get("generation", 0), []).append(record)
+    positions = {}
+    for generation, generation_records in by_generation.items():
+        for index, record in enumerate(generation_records):
+            positions[record.get("scenario_uuid")] = (index, -generation)
+
+    edge_x, edge_y = [], []
+    for edge in build_lineage_edges(records):
+        parent = positions.get(edge["parent_uuid"])
+        child = positions.get(edge["child_uuid"])
+        if parent is None or child is None:
+            continue
+        edge_x.extend([parent[0], child[0], None])
+        edge_y.extend([parent[1], child[1], None])
+
+    node_x, node_y, text = [], [], []
+    for record in records:
+        position = positions.get(record.get("scenario_uuid"))
+        if position is None:
+            continue
+        node_x.append(position[0])
+        node_y.append(position[1])
+        text.append(
+            f"{record.get('mutation_type') or 'initial'}<br>"
+            f"fitness: {float(record.get('fitness_score', 0)):.4f}"
+        )
+
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line={"color": "#94a3b8", "width": 1},
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode="markers",
+            marker={"size": 12, "color": node_y, "colorscale": "Viridis"},
+            text=text,
+            hovertemplate="%{text}<extra></extra>",
+            showlegend=False,
+        )
+    )
+    figure.update_layout(
+        title="Evolutionary Lineage",
+        xaxis={"visible": False},
+        yaxis_title="Generation",
+        yaxis={"dtick": 1},
+        height=420,
+        margin={"l": 20, "r": 20, "t": 50, "b": 20},
+    )
+    return figure
+
+
+def render_lineage_analysis(records):
+    st.subheader("Evolutionary Lineage Analytics")
+    figure = create_lineage_graph(records)
+    if figure is not None:
+        st.plotly_chart(figure, width="stretch")
+    impact = summarize_mutation_impact(records)
+    if impact:
+        st.caption("Positive deltas indicate improvement over the average parent fitness.")
+        st.dataframe(impact, hide_index=True, width="stretch")
 
 
 def create_fitness_evolution_plot(df):

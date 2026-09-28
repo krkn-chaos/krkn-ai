@@ -7,12 +7,72 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from requests import ConnectionError, HTTPError, Response
 
-from krkn_ai.server import _request_with_retry, create_app, upload_results
+from krkn_ai.run_results import parse_run_artifacts
+from krkn_ai.server import (
+    _request_with_retry,
+    _upload_files,
+    create_app,
+    upload_results,
+)
 
 TOKEN_HEADERS = {"Authorization": "Bearer service-token"}
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["initial", "crossover", "composition", "parameter_mutation", "type_mutation"],
+)
+def test_legacy_scenario_origin_tag_is_normalized_safely(origin: str):
+    path = "yaml/generation_0/scenario_7.yaml"
+    content = f"""\
+generation_id: 0
+scenario_id: 7
+scenario:
+  name: pod_scenarios
+  origin: !!python/object/apply:krkn_ai.models.scenario.base.ScenarioOrigin
+    - {origin}
+fitness_result:
+  fitness_score: 10
+""".encode()
+    checksum = hashlib.sha256(content).hexdigest()
+    with pytest.raises(HTTPException) as error:
+        parse_run_artifacts({path: (content, checksum)})
+    assert error.value.status_code == 503
+
+    progress = json.dumps(
+        {
+            "resultChecksums": {"0:7": checksum},
+            "fitnessFinalByScenario": {"0:7": False},
+        }
+    ).encode()
+    parsed = parse_run_artifacts(
+        {
+            path: (content, checksum),
+            "progress.json": (progress, hashlib.sha256(progress).hexdigest()),
+        }
+    )
+    assert parsed.scenarios["0:7"].value["scenario"]["origin"] == origin
+
+    arbitrary_tag = content.replace(
+        b"python/object/apply:krkn_ai.models.scenario.base.ScenarioOrigin",
+        b"python/object/apply:os.system",
+    )
+    with pytest.raises(HTTPException) as error:
+        parse_run_artifacts(
+            {path: (arbitrary_tag, hashlib.sha256(arbitrary_tag).hexdigest())}
+        )
+    assert error.value.status_code == 502
+
+    invalid_value = content.replace(origin.encode(), b"not-an-origin")
+    with pytest.raises(HTTPException) as error:
+        parse_run_artifacts(
+            {path: (invalid_value, hashlib.sha256(invalid_value).hexdigest())}
+        )
+    assert error.value.status_code == 502
 
 
 def test_discovery_renders_runner_kubeconfig(tmp_path: Path):
@@ -248,6 +308,8 @@ def test_uploader_retries_and_commits_after_failure_marker(tmp_path: Path, monke
     run_output.mkdir(parents=True)
     (run_output / ".krkn-ai-complete").write_text('{"exitCode":42}\n')
     (run_output / "result.txt").write_text("result")
+    (run_output / ".krkn-ai-tmp-progress.json").write_text("partial")
+    (run_output / ".upload-staging").write_text("partial")
     calls = []
 
     def request(method, url, **kwargs):
@@ -274,6 +336,11 @@ def test_uploader_retries_and_commits_after_failure_marker(tmp_path: Path, monke
     upload_results()
     assert [method for method, _, _, _ in calls] == ["PUT", "PUT", "POST"]
     assert [call[3] for call in calls[:2]] == [b"result", b"result"]
+    assert all(call[1].endswith("/result.txt") for call in calls if call[0] == "PUT")
+    assert all(
+        call[2]["headers"]["X-Checksum-SHA256"] == hashlib.sha256(call[3]).hexdigest()
+        for call in calls[:2]
+    )
     assert calls[-1][2]["json"]["files"][0]["path"] == "result.txt"
     assert calls[-1][2]["json"]["status"] == "failed"
 
@@ -319,6 +386,36 @@ def test_uploader_checkpoints_then_finalizes_on_completion(tmp_path: Path, monke
     ]
 
 
+def test_uploader_hashes_the_exact_opened_snapshot(tmp_path: Path, monkeypatch):
+    output = tmp_path / "run-1"
+    output.mkdir()
+    source = output / "result.txt"
+    snapshot = b"old committed bytes"
+    source.write_bytes(snapshot)
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(tmp_path / "state"))
+    uploads = []
+
+    def upload(method, url, **kwargs):
+        body = kwargs["data"].read()
+        uploads.append((method, url, body, kwargs["headers"]["X-Checksum-SHA256"]))
+        source.write_bytes(b"new bytes")
+
+    monkeypatch.setattr("krkn_ai.server._request_with_retry", upload)
+    entries = _upload_files(output, "run-1", "http://service", {}, {})
+
+    expected_digest = hashlib.sha256(snapshot).hexdigest()
+    assert uploads == [
+        (
+            "PUT",
+            "http://service/v1/runs/run-1/files/result.txt",
+            snapshot,
+            expected_digest,
+        )
+    ]
+    assert entries[0]["sha256"] == expected_digest
+    assert source.read_bytes() == b"new bytes"
+
+
 def test_request_retry_does_not_retry_client_errors(monkeypatch):
     calls = []
     response = Response()
@@ -335,6 +432,87 @@ def test_request_retry_does_not_retry_client_errors(monkeypatch):
         _request_with_retry("PUT", "http://service")
 
     assert len(calls) == 1
+
+
+def test_final_best_scenarios_restore_parameters_by_generation_and_id(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    artifacts = {}
+    result_checksums = {}
+    for generation in (0, 1):
+        path = f"yaml/generation_{generation}/custom-result.yaml"
+        content = yaml.safe_dump(
+            {
+                "generation_id": generation,
+                "scenario_id": 7,
+                "scenario": {
+                    "name": "pod_scenarios",
+                    "origin": "initial",
+                    "parent_ids": [],
+                },
+                "fitness_result": {"fitness_score": generation + 10, "scores": []},
+            }
+        ).encode()
+        checksum = hashlib.sha256(content).hexdigest()
+        artifacts[path] = content
+        result_checksums[f"{generation}:7"] = checksum
+
+    progress = json.dumps(
+        {
+            "resultChecksums": result_checksums,
+            "fitnessFinalByScenario": {
+                "0:7": True,
+                "1:7": True,
+            },
+        }
+    ).encode()
+    final_results = json.dumps(
+        {
+            "best_scenarios": [
+                {
+                    "generation": 0,
+                    "scenario_id": 7,
+                    "parameters": {"namespace": "older-generation"},
+                },
+                {
+                    "generation": 1,
+                    "scenario_id": 7,
+                    "parameters": {"namespace": "newer-generation"},
+                },
+            ]
+        }
+    ).encode()
+    artifacts["progress.json"] = progress
+    artifacts["results.json"] = final_results
+
+    manifest_files = []
+    for path, content in artifacts.items():
+        checksum = hashlib.sha256(content).hexdigest()
+        upload = client.put(
+            f"/v1/runs/run-1/files/{path}",
+            headers={**TOKEN_HEADERS, "X-Checksum-Sha256": checksum},
+            content=content,
+        )
+        assert upload.status_code == 201
+        manifest_files.append({"path": path, "sha256": checksum, "size": len(content)})
+    commit = client.post(
+        "/v1/runs/run-1/commit",
+        headers=TOKEN_HEADERS,
+        json={"status": "succeeded", "files": manifest_files},
+    )
+    assert commit.status_code == 200
+
+    older = client.get("/v1/runs/run-1/scenarios/0/7", headers=TOKEN_HEADERS)
+    newer = client.get("/v1/runs/run-1/scenarios/1/7", headers=TOKEN_HEADERS)
+    assert older.status_code == 200
+    assert newer.status_code == 200
+    assert older.json()["parameters"] == [
+        {"name": "namespace", "value": "older-generation"}
+    ]
+    assert newer.json()["parameters"] == [
+        {"name": "namespace", "value": "newer-generation"}
+    ]
 
 
 def test_typed_partial_results_validation_and_manifest_consistency(

@@ -11,6 +11,39 @@ from typing import Any
 import yaml
 from fastapi import HTTPException, status
 
+_SCENARIO_ORIGIN_TAG = (
+    "tag:yaml.org,2002:python/object/apply:krkn_ai.models.scenario.base.ScenarioOrigin"
+)
+_SCENARIO_ORIGINS = {
+    "initial",
+    "crossover",
+    "composition",
+    "parameter_mutation",
+    "type_mutation",
+}
+
+
+class _ArtifactSafeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_legacy_scenario_origin(loader, node):
+    values = loader.construct_sequence(node, deep=True)
+    if (
+        len(values) != 1
+        or type(values[0]) is not str
+        or values[0] not in _SCENARIO_ORIGINS
+    ):
+        raise yaml.constructor.ConstructorError(
+            None, None, "invalid legacy ScenarioOrigin value", node.start_mark
+        )
+    return values[0]
+
+
+_ArtifactSafeLoader.add_constructor(
+    _SCENARIO_ORIGIN_TAG, _construct_legacy_scenario_origin
+)
+
 
 _RESULT_PATH = re.compile(r"^(?:yaml|json)/generation_(\d+)/[^/]+\.(?:yaml|yml|json)$")
 
@@ -26,7 +59,11 @@ def _updating() -> HTTPException:
 def _decode_document(path: str, content: bytes) -> dict[str, Any]:
     try:
         text = content.decode("utf-8")
-        value = json.loads(text) if path.endswith(".json") else yaml.safe_load(text)
+        value = (
+            json.loads(text)
+            if path.endswith(".json")
+            else yaml.load(text, Loader=_ArtifactSafeLoader)
+        )
     except (UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError) as exc:
         raise _bad_artifact() from exc
     if not isinstance(value, dict):
@@ -39,12 +76,10 @@ def _scenario_key(generation: Any, scenario_id: Any) -> str:
         isinstance(generation, bool)
         or not isinstance(generation, int)
         or generation < 0
+        or isinstance(scenario_id, bool)
+        or not isinstance(scenario_id, (str, int))
     ):
         raise _bad_artifact()
-    if isinstance(scenario_id, bool) or not isinstance(scenario_id, (str, int, float)):
-        raise _bad_artifact()
-    if isinstance(scenario_id, float) and scenario_id.is_integer():
-        scenario_id = int(scenario_id)
     identifier = str(scenario_id)
     if not identifier:
         raise _bad_artifact()
@@ -94,17 +129,28 @@ def parse_run_artifacts(
                 raise _bad_artifact()
             scenarios[key] = ScenarioArtifact(path, checksum, key, value)
 
+    if scenarios and progress is None:
+        raise _updating()
     if progress is not None:
-        result_checksums = progress.get("resultChecksums", {})
-        finality = progress.get("fitnessFinalByScenario", {})
+        result_checksums = progress.get("resultChecksums")
+        finality = progress.get("fitnessFinalByScenario")
         if not isinstance(result_checksums, dict) or not isinstance(finality, dict):
             raise _bad_artifact()
         for key, checksum in result_checksums.items():
+            if (
+                not isinstance(key, str)
+                or not re.fullmatch(r"\d+:.+", key)
+                or not isinstance(checksum, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", checksum)
+            ):
+                raise _bad_artifact()
             scenario = scenarios.get(key)
             if scenario is None or checksum != scenario.checksum:
                 raise _updating()
+        if any(key not in result_checksums for key in scenarios):
+            raise _updating()
         for key, is_final in finality.items():
-            if not isinstance(is_final, bool):
+            if not isinstance(key, str) or not isinstance(is_final, bool):
                 raise _bad_artifact()
             if key not in result_checksums or key not in scenarios:
                 raise _updating()
@@ -162,6 +208,30 @@ def _elapsed_seconds(timestamp: Any, start_time: Any) -> float | None:
         return None
 
 
+def _final_scenario_parameters(
+    final_results: dict[str, Any] | None, scenario_key: str
+) -> list[dict[str, Any]]:
+    if final_results is None:
+        return []
+    best_scenarios = final_results.get("best_scenarios", [])
+    if not isinstance(best_scenarios, list):
+        raise _bad_artifact()
+    for best in best_scenarios:
+        if not isinstance(best, dict):
+            raise _bad_artifact()
+        key = _scenario_key(best.get("generation"), best.get("scenario_id"))
+        parameters = best.get("parameters", {})
+        if not isinstance(parameters, dict) or any(
+            not isinstance(name, str) for name in parameters
+        ):
+            raise _bad_artifact()
+        if key == scenario_key:
+            return [
+                {"name": name, "value": value} for name, value in parameters.items()
+            ]
+    return []
+
+
 def scenario_detail(
     artifact: ScenarioArtifact, artifacts: ParsedRunArtifacts, terminal: bool
 ) -> dict[str, Any]:
@@ -202,11 +272,16 @@ def scenario_detail(
     log_path = value.get("log")
     if isinstance(log_path, str):
         log_path = f"logs/{log_path.rsplit('/', 1)[-1]}"
+    parameters = scenario.get("parameters")
+    if parameters is not None and not isinstance(parameters, list):
+        raise _bad_artifact()
+    if not parameters:
+        parameters = _final_scenario_parameters(artifacts.final_results, artifact.key)
     return {
         "generation": value["generation_id"],
         "scenarioId": str(value["scenario_id"]),
         "scenarioType": scenario_type(scenario),
-        "parameters": scenario.get("parameters", []),
+        "parameters": parameters,
         "command": value.get("cmd"),
         "origin": scenario.get("origin"),
         "parentIds": parents,

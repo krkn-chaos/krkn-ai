@@ -194,16 +194,25 @@ class BaseEngine(ABC):
         logger.debug(
             "Saving scenario result for scenario %s", fitness_result.scenario_id
         )
-        result = fitness_result.model_dump()
+        result = fitness_result.model_dump(mode="json")
         result["scenario"]["name"] = fitness_result.scenario.name
+        parameters = getattr(fitness_result.scenario, "parameters", None)
+        if parameters is not None:
+            result["scenario"]["parameters"] = [
+                {
+                    "name": parameter.get_name(),
+                    "value": parameter.model_dump(mode="json")["value"],
+                }
+                for parameter in parameters
+            ]
         generation_id = result["generation_id"]
         scenario_id = str(result["scenario_id"])
         result["job_id"] = fitness_result.scenario_id
 
         log_path = self.save_log_file(fitness_result)
         result["log"] = log_path
-        result["start_time"] = result["start_time"].isoformat()
-        result["end_time"] = result["end_time"].isoformat()
+        # JSON-mode serialization turns nested enums and timestamps into plain values,
+        # so the YAML writer never emits Python-specific object tags.
 
         output_dir = os.path.join(
             self.output_dir, self.format, "generation_%s" % generation_id

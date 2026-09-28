@@ -13,6 +13,8 @@ from pydantic import ValidationError
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.config import FitnessFunctionItem, GeneticAlgorithmConfig
+from krkn_ai.models.scenario.base import ScenarioOrigin
+from krkn_ai.run_results import parse_run_artifacts, scenario_detail
 
 
 class TestGeneticAlgorithmInitialization:
@@ -130,12 +132,36 @@ class TestGeneticAlgorithmCoreMethods:
     ):
         engine = genetic_algorithm
         engine.config.fitness_function.items = [FitnessFunctionItem(query="up")]
-
+        mock_command_run_result.scenario.origin = ScenarioOrigin.INITIAL
         engine.save_scenario_result(mock_command_run_result)
         result_path = Path(engine.output_dir) / "yaml/generation_0/scenario_1.yaml"
         progress_path = Path(engine.output_dir) / "progress.json"
         provisional = json.loads(progress_path.read_text())
-        assert yaml.safe_load(result_path.read_text())["scenario_id"] == 1
+        document = yaml.safe_load(result_path.read_text())
+        assert document["scenario_id"] == 1
+        assert document["scenario"]["origin"] == "initial"
+        assert document["scenario"]["parameters"] == [
+            {"name": "duration", "value": 10},
+            {"name": "exit-status", "value": 0},
+        ]
+        assert "!!python/" not in result_path.read_text()
+        artifact_bytes = result_path.read_bytes()
+        progress_bytes = progress_path.read_bytes()
+        parsed = parse_run_artifacts(
+            {
+                "yaml/generation_0/scenario_1.yaml": (
+                    artifact_bytes,
+                    hashlib.sha256(artifact_bytes).hexdigest(),
+                ),
+                "progress.json": (
+                    progress_bytes,
+                    hashlib.sha256(progress_bytes).hexdigest(),
+                ),
+            }
+        )
+        detail = scenario_detail(parsed.scenarios["0:1"], parsed, False)
+        assert detail["origin"] == "initial"
+        assert detail["parameters"] == document["scenario"]["parameters"]
         assert provisional["completedScenarios"] == 1
         assert provisional["fitnessFinalByScenario"] == {"0:1": False}
         assert (

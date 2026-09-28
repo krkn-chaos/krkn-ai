@@ -12,6 +12,8 @@ from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.constants import STATUS_COMPLETED
 
+from krkn_ai.utils.atomic import atomic_write_text
+
 logger = get_logger(__name__)
 
 
@@ -208,6 +210,5 @@ class JSONSummaryReporter:
         """
         summary = self.generate_summary()
         output_path = os.path.join(output_dir, "results.json")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+        atomic_write_text(output_path, json.dumps(summary, indent=2))
         logger.info("Results summary saved to %s", output_path)

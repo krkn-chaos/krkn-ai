@@ -2,12 +2,17 @@
 GeneticAlgorithm core functionality tests
 """
 
-import pytest
+import hashlib
+import json
+from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
+import yaml
 from pydantic import ValidationError
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
-from krkn_ai.models.config import GeneticAlgorithmConfig
+from krkn_ai.models.config import FitnessFunctionItem, GeneticAlgorithmConfig
 
 
 class TestGeneticAlgorithmInitialization:
@@ -119,3 +124,32 @@ class TestGeneticAlgorithmCoreMethods:
                                 == 2
                             )
                             assert mock_reporter_instance.save.called
+
+    def test_scenario_artifact_progress_finality_and_hash(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        engine.config.fitness_function.items = [FitnessFunctionItem(query="up")]
+
+        engine.save_scenario_result(mock_command_run_result)
+        result_path = Path(engine.output_dir) / "yaml/generation_0/scenario_1.yaml"
+        progress_path = Path(engine.output_dir) / "progress.json"
+        provisional = json.loads(progress_path.read_text())
+        assert yaml.safe_load(result_path.read_text())["scenario_id"] == 1
+        assert provisional["completedScenarios"] == 1
+        assert provisional["fitnessFinalByScenario"] == {"0:1": False}
+        assert (
+            provisional["resultChecksums"]["0:1"]
+            == hashlib.sha256(result_path.read_bytes()).hexdigest()
+        )
+        assert (
+            Path(engine.output_dir) / "logs/scenario_1.log"
+        ).read_text() == "test-log"
+
+        engine.update_scenario_results([mock_command_run_result])
+        finalized = json.loads(progress_path.read_text())
+        assert finalized["fitnessFinalByScenario"] == {"0:1": True}
+        assert (
+            finalized["resultChecksums"]["0:1"]
+            == hashlib.sha256(result_path.read_bytes()).hexdigest()
+        )

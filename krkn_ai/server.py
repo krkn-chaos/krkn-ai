@@ -7,21 +7,27 @@ import base64
 import binascii
 import hashlib
 import hmac
+import io
 import json
 import os
+import re
 import tempfile
 import threading
 import time
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, BinaryIO, Literal
 from urllib.parse import quote
 
 import requests
+import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field, ValidationError
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
+from krkn_ai.models.config import ConfigFile
+from krkn_ai.run_results import parse_run_artifacts, scenario_detail, scenario_index_row
+
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
 MANIFEST_NAME = "manifest.json"
@@ -244,21 +250,88 @@ class ArtifactStore:
 
     def manifest(self, uid: str) -> dict[str, Any]:
         try:
-            return json.loads(self._manifest_path(uid).read_text())
+            value = json.loads(self._manifest_path(uid).read_text())
         except FileNotFoundError as exc:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND, "run artifacts are not committed"
             ) from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            ) from exc
+        if not isinstance(value, dict) or not isinstance(value.get("files"), list):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
+        return value
 
-    def file(self, uid: str, path: str) -> Path:
+    @staticmethod
+    def _manifest_entry(manifest: dict[str, Any], relative_path: PurePosixPath):
+        normalized = str(relative_path)
+        for entry in manifest["files"]:
+            if isinstance(entry, dict) and entry.get("path") == normalized:
+                if (
+                    not isinstance(entry.get("sha256"), str)
+                    or not isinstance(entry.get("size"), int)
+                    or entry["size"] < 0
+                ):
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+                    )
+                return entry
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
+
+    def read_verified(
+        self, uid: str, path: str, manifest: dict[str, Any]
+    ) -> tuple[bytes, str]:
         relative_path = _safe_path(path)
-        manifest = self.manifest(uid)
-        if str(relative_path) not in {entry["path"] for entry in manifest["files"]}:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
+        entry = self._manifest_entry(manifest, relative_path)
         candidate = self.run_dir(uid) / relative_path
-        if not candidate.is_file():
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
-        return candidate
+        try:
+            with candidate.open("rb") as source:
+                content = source.read()
+        except OSError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+            ) from exc
+        actual_checksum = hashlib.sha256(content).hexdigest()
+        if len(content) != entry["size"] or not hmac.compare_digest(
+            actual_checksum, entry["sha256"]
+        ):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+            )
+        return content, actual_checksum
+
+    def open_verified(
+        self, uid: str, path: str, manifest: dict[str, Any]
+    ) -> tuple[BinaryIO, int]:
+        relative_path = _safe_path(path)
+        entry = self._manifest_entry(manifest, relative_path)
+        candidate = self.run_dir(uid) / relative_path
+        try:
+            source = candidate.open("rb")
+        except OSError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+            ) from exc
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            while chunk := source.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+            if size != entry["size"] or not hmac.compare_digest(
+                digest.hexdigest(), entry["sha256"]
+            ):
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+                )
+            source.seek(0)
+            return source, size
+        except Exception:
+            source.close()
+            raise
 
 
 def create_app(
@@ -289,6 +362,291 @@ def create_app(
             or not hmac.compare_digest(authorization, expected)
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid service token")
+
+    def typed_snapshot(uid: str):
+        try:
+            manifest = store.manifest(uid)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                return None, None
+            raise
+        selected_files: dict[str, tuple[bytes, str]] = {}
+        for entry in manifest["files"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+                )
+            path = entry["path"]
+            if path in {"progress.json", "results.json"} or re.fullmatch(
+                r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)", path
+            ):
+                selected_files[path] = store.read_verified(uid, path, manifest)
+        return manifest, parse_run_artifacts(selected_files)
+
+    def not_available_summary() -> dict[str, Any]:
+        return {
+            "artifactStatus": "not_available",
+            "completedGenerations": None,
+            "completedScenarios": None,
+            "configuredGenerations": None,
+            "populationSize": None,
+            "bestFitness": None,
+            "averageFitness": None,
+            "baselineFitness": None,
+            "fitnessProgression": [],
+        }
+
+    def summary_payload(manifest: dict[str, Any] | None, artifacts: Any):
+        if manifest is None:
+            return not_available_summary()
+        run_status = manifest.get("status")
+        if run_status not in {"in_progress", "succeeded", "failed"}:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
+        terminal = run_status in {"succeeded", "failed"}
+        final = artifacts.final_results if terminal else None
+        if final is not None:
+            summary = final.get("summary") or {}
+            config = final.get("config") or {}
+            baseline = final.get("baseline") or {}
+            progression = final.get("fitness_progression", [])
+            values = {
+                "completedGenerations": summary.get("generations_completed"),
+                "completedScenarios": summary.get("total_scenarios_executed"),
+                "configuredGenerations": config.get("generations"),
+                "populationSize": config.get("population_size"),
+                "bestFitness": summary.get("best_fitness_score"),
+                "averageFitness": summary.get("average_fitness_score"),
+                "baselineFitness": baseline.get("fitness_score"),
+                "fitnessProgression": progression,
+            }
+        else:
+            progress = artifacts.progress or {}
+            values = {
+                "completedGenerations": progress.get("completedGenerations"),
+                "completedScenarios": progress.get("completedScenarios"),
+                "configuredGenerations": progress.get("configuredGenerations"),
+                "populationSize": progress.get("populationSize"),
+                "bestFitness": progress.get("bestFitness"),
+                "averageFitness": progress.get("averageFitness"),
+                "baselineFitness": progress.get("baselineFitness"),
+                "fitnessProgression": progress.get("fitnessProgression", []),
+            }
+        for field in (
+            "completedGenerations",
+            "completedScenarios",
+            "configuredGenerations",
+            "populationSize",
+        ):
+            value = values[field]
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
+                )
+        for field in ("bestFitness", "averageFitness", "baselineFitness"):
+            value = values[field]
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
+                )
+        if not isinstance(values["fitnessProgression"], list):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
+            )
+        return {
+            "artifactStatus": run_status,
+            **values,
+        }
+
+    @app.post("/v1/configs/validate", dependencies=[Depends(authenticate)])
+    async def validate_config(request: Request):
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("configYaml"), str
+        ):
+            return JSONResponse(
+                {"errors": [{"path": "configYaml", "message": "Invalid value"}]},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        try:
+            config_data = yaml.safe_load(payload["configYaml"])
+        except yaml.YAMLError:
+            config_data = None
+        if not isinstance(config_data, dict):
+            return JSONResponse(
+                {"errors": [{"path": "", "message": "Invalid value"}]},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        config_data["kubeconfig_file_path"] = "/input/kubeconfig"
+        try:
+            config = ConfigFile.model_validate(config_data)
+        except ValidationError as exc:
+            errors = [
+                {
+                    "path": ".".join(str(part) for part in error.get("loc", ())),
+                    "message": "Invalid value",
+                }
+                for error in exc.errors(include_input=False)
+            ]
+            return JSONResponse(
+                {"errors": errors}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+            )
+        if config.genetic.composition_rate > 0:
+            return JSONResponse(
+                {
+                    "errors": [
+                        {
+                            "path": "genetic.composition_rate",
+                            "message": "Invalid value",
+                        }
+                    ]
+                },
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        return {"valid": True}
+
+    @app.get(
+        "/v1/runs/{uid}/summary",
+        dependencies=[Depends(authenticate)],
+    )
+    def typed_summary(uid: str) -> dict[str, Any]:
+        manifest, artifacts = typed_snapshot(uid)
+        return summary_payload(manifest, artifacts)
+
+    @app.get(
+        "/v1/runs/{uid}/scenarios",
+        dependencies=[Depends(authenticate)],
+    )
+    def scenario_index(uid: str, request: Request) -> dict[str, Any]:
+        allowed = {
+            "page",
+            "limit",
+            "generation",
+            "scenarioType",
+            "search",
+            "sort",
+            "direction",
+        }
+        params = request.query_params
+        if set(params.keys()) - allowed:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query")
+        try:
+            page = int(params.get("page", "1"))
+            limit = int(params.get("limit", "100"))
+            generation_filter = (
+                int(params["generation"]) if "generation" in params else None
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query") from exc
+        sort = params.get("sort", "generation")
+        direction = params.get("direction", "asc")
+        sort_fields = {
+            "generation",
+            "scenarioId",
+            "scenarioType",
+            "fitnessScore",
+            "outcome",
+            "durationSeconds",
+        }
+        if (
+            page < 1
+            or limit < 1
+            or limit > 500
+            or (generation_filter is not None and generation_filter < 0)
+            or sort not in sort_fields
+            or direction not in {"asc", "desc"}
+        ):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query")
+        manifest, artifacts = typed_snapshot(uid)
+        if manifest is None:
+            rows = []
+            terminal = False
+        else:
+            terminal = manifest["status"] in {"succeeded", "failed"}
+            rows = [
+                scenario_index_row(value, artifacts, terminal)
+                for value in artifacts.scenarios.values()
+                if value.value.get("scenario_id") != "baseline"
+            ]
+        scenario_type_filter = params.get("scenarioType")
+        search = params.get("search", "").casefold()
+        rows = [
+            row
+            for row in rows
+            if (generation_filter is None or row["generation"] == generation_filter)
+            and (
+                scenario_type_filter is None
+                or (row["scenarioType"] or "").casefold()
+                == scenario_type_filter.casefold()
+            )
+            and (
+                not search
+                or search in row["scenarioId"].casefold()
+                or search in (row["scenarioType"] or "").casefold()
+            )
+        ]
+
+        def sort_value(row: dict[str, Any]):
+            value = row[sort]
+            if value is None:
+                return (1, "")
+            if sort == "scenarioId":
+                try:
+                    return (0, float(value))
+                except (TypeError, ValueError):
+                    pass
+            if isinstance(value, str):
+                value = value.casefold()
+            return (0, value)
+
+        rows.sort(key=sort_value, reverse=direction == "desc")
+        total = len(rows)
+        start = (page - 1) * limit
+        return {
+            "scenarios": rows[start : start + limit],
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total,
+                "totalPages": (total + limit - 1) // limit,
+            },
+        }
+
+    @app.get(
+        "/v1/runs/{uid}/scenarios/{generation}/{scenario_id}",
+        dependencies=[Depends(authenticate)],
+    )
+    def scenario_detail_route(
+        uid: str, generation: str, scenario_id: str
+    ) -> dict[str, Any]:
+        try:
+            generation_id = int(generation)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "invalid generation"
+            ) from exc
+        if generation_id < 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid generation")
+        manifest, artifacts = typed_snapshot(uid)
+        if manifest is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "scenario not found")
+        key = f"{generation_id}:{scenario_id}"
+        artifact = artifacts.scenarios.get(key)
+        if artifact is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "scenario not found")
+        return scenario_detail(
+            artifact,
+            artifacts,
+            manifest["status"] in {"succeeded", "failed"},
+        )
 
     @app.post("/v1/discoveries", dependencies=[Depends(authenticate)])
     def discover(request: DiscoveryRequest) -> dict[str, Any]:
@@ -340,8 +698,22 @@ def create_app(
         return store.manifest(uid)
 
     @app.get("/v1/runs/{uid}/files/{path:path}", dependencies=[Depends(authenticate)])
-    def artifact(uid: str, path: str) -> FileResponse:
-        return FileResponse(store.file(uid, path))
+    def artifact(uid: str, path: str) -> StreamingResponse:
+        manifest = store.manifest(uid)
+        source, size = store.open_verified(uid, path, manifest)
+
+        def stream():
+            try:
+                while chunk := source.read(64 * 1024):
+                    yield chunk
+            finally:
+                source.close()
+
+        return StreamingResponse(
+            stream(),
+            media_type="application/octet-stream",
+            headers={"Content-Length": str(size)},
+        )
 
     return app
 
@@ -405,19 +777,24 @@ def _upload_files(
     files: list[dict[str, Any]] = []
     marker = output / COMPLETE_MARKER
     for source in sorted(
-        path for path in output.rglob("*") if path.is_file() and path != marker
+        path
+        for path in output.rglob("*")
+        if path.is_file()
+        and path != marker
+        and not path.name.startswith((".krkn-ai-tmp-", ".upload-", ".manifest-"))
     ):
         relative_path = source.relative_to(output).as_posix()
-        checksum, size = _sha256(source)
-        entry = {"path": relative_path, "sha256": checksum, "size": size}
+        with source.open("rb") as snapshot:
+            content = snapshot.read()
+        checksum = hashlib.sha256(content).hexdigest()
+        entry = {"path": relative_path, "sha256": checksum, "size": len(content)}
         if state.get(relative_path) != entry:
-            with source.open("rb") as body:
-                _request_with_retry(
-                    "PUT",
-                    f"{service_url}/v1/runs/{quote(uid, safe='')}/files/{quote(relative_path, safe='/')}",
-                    headers={**headers, "X-Checksum-SHA256": checksum},
-                    data=body,
-                )
+            _request_with_retry(
+                "PUT",
+                f"{service_url}/v1/runs/{quote(uid, safe='')}/files/{quote(relative_path, safe='/')}",
+                headers={**headers, "X-Checksum-SHA256": checksum},
+                data=io.BytesIO(content),
+            )
             state[relative_path] = entry
             _save_state(state)
         files.append(entry)

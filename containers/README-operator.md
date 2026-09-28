@@ -111,13 +111,20 @@ Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
 ### Results storage for `KrknAIRun`
 
 `KrknAIRun` Pods use `EmptyDir` for transient output. The uploader sidecar
-checkpoints new or changed artifacts to the service every 150 seconds while the
-run is active. Each checkpoint exposes a manifest with `status: in_progress`.
-When the orchestrator writes its completion marker, the uploader immediately
-syncs once more and commits a final manifest with `status: succeeded` or
-`status: failed`. The standalone
+checkpoints new or changed artifacts every 10 seconds for operator-managed
+runs; the standalone uploader retains its 150-second default. Each checkpoint
+exposes a manifest with `status: in_progress`. When the orchestrator writes its
+completion marker, the uploader immediately syncs once more and commits a final
+manifest with `status: succeeded` or `status: failed`. The standalone
 `quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores artifacts and manifests
 on its single PVC.
+
+The service-token-protected API validates configs at `POST /v1/configs/validate`
+and exposes committed run summaries, scenario indexes, and individual scenario
+details under `/v1/runs/{uid}/`. Partial fitness is sourced from `progress.json`;
+typed reads verify result bytes against the copied manifest and return
+`503 artifact_updating` during an upload/normalization boundary. Retry the next
+poll rather than treating a transient mismatch as a missing result.
 
 Configure that PVC at the installation level:
 

@@ -1,6 +1,7 @@
-import os
 import datetime
+import hashlib
 import json
+import os
 import uuid
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
@@ -14,6 +15,7 @@ from krkn_ai.models.scenario.base import BaseScenario
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.elastic_client import ElasticSearchClient
+from krkn_ai.utils.atomic import atomic_write_bytes, atomic_write_text
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_result_filename
 from krkn_ai.utils.rng import rng
@@ -63,6 +65,13 @@ class BaseEngine(ABC):
         self.start_time: Optional[datetime.datetime] = None
         self.end_time: Optional[datetime.datetime] = None
         self.seed: Optional[int] = self.config.seed
+
+        self.current_generation = 0
+        self.completed_generations = 0
+        self._fitness_progression: list[dict[str, float | int]] = []
+        self._partial_scenario_results: dict[str, CommandRunResult] = {}
+        self._progress_checksums: dict[str, str] = {}
+        self._fitness_finality: dict[str, bool] = {}
 
         self.save_config()
         if self.elastic_client is not None:
@@ -133,45 +142,123 @@ class BaseEngine(ABC):
             self.config.output.log_name_fmt, command_result
         )
         log_save_path = os.path.join(dir_path, log_filename)
-        with open(log_save_path, "w", encoding="utf-8") as f:
-            f.write(command_result.log)
+        atomic_write_text(log_save_path, command_result.log)
         return log_save_path
 
+    def set_current_generation(self, generation: int) -> None:
+        self.current_generation = generation
+        self._write_progress()
+
+    def complete_generation(self, generation: int, results: list) -> None:
+        scores = [
+            result.fitness_result.fitness_score
+            for result in results
+            if result.scenario_id != "baseline"
+        ]
+        self.completed_generations = max(self.completed_generations, generation + 1)
+        if scores:
+            entry = {
+                "generation": generation,
+                "best": max(scores),
+                "average": sum(scores) / len(scores),
+            }
+            self._fitness_progression = [
+                item
+                for item in self._fitness_progression
+                if item["generation"] != generation
+            ]
+            self._fitness_progression.append(entry)
+            self._fitness_progression.sort(key=lambda item: item["generation"])
+        self._write_progress()
+
     def update_scenario_results(self, results: list) -> None:
-        """Re-save scenario result files after in-place mutation (e.g. normalization)."""
+        """Atomically publish normalized results before marking their scores final."""
         for result in results:
-            self.save_scenario_result(result)
+            self._write_scenario_result(result, write_progress=False, finalized=True)
+        self._write_progress()
 
     def save_scenario_result(self, fitness_result: CommandRunResult):
+        self._write_scenario_result(
+            fitness_result,
+            write_progress=True,
+            finalized=not self.config.fitness_function.items,
+        )
+
+    def _write_scenario_result(
+        self,
+        fitness_result: CommandRunResult,
+        *,
+        write_progress: bool,
+        finalized: bool,
+    ) -> None:
         logger.debug(
             "Saving scenario result for scenario %s", fitness_result.scenario_id
         )
         result = fitness_result.model_dump()
-        scenario_name = fitness_result.scenario.name
-        result["scenario"]["name"] = scenario_name
+        result["scenario"]["name"] = fitness_result.scenario.name
         generation_id = result["generation_id"]
+        scenario_id = str(result["scenario_id"])
         result["job_id"] = fitness_result.scenario_id
 
-        result["log"] = self.save_log_file(fitness_result)
-        result["start_time"] = (result["start_time"]).isoformat()
-        result["end_time"] = (result["end_time"]).isoformat()
+        log_path = self.save_log_file(fitness_result)
+        result["log"] = log_path
+        result["start_time"] = result["start_time"].isoformat()
+        result["end_time"] = result["end_time"].isoformat()
 
         output_dir = os.path.join(
             self.output_dir, self.format, "generation_%s" % generation_id
         )
         os.makedirs(output_dir, exist_ok=True)
-
         filename = format_result_filename(
             self.config.output.result_name_fmt, fitness_result
         )
         if not filename.endswith(f".{self.format}"):
-            base_name = os.path.splitext(filename)[0]
-            filename = f"{base_name}.{self.format}"
+            filename = f"{os.path.splitext(filename)[0]}.{self.format}"
+        destination = os.path.join(output_dir, filename)
+        if self.format == "json":
+            content = json.dumps(result, indent=4).encode("utf-8")
+        elif self.format == "yaml":
+            content = yaml.dump(result, sort_keys=False, width=float("inf")).encode(
+                "utf-8"
+            )
+        else:
+            raise ValueError(f"Unsupported result format: {self.format}")
+        atomic_write_bytes(destination, content)
 
-        with open(
-            os.path.join(output_dir, filename), "w", encoding="utf-8"
-        ) as file_handler:
-            if self.format == "json":
-                json.dump(result, file_handler, indent=4)
-            elif self.format == "yaml":
-                yaml.dump(result, file_handler, sort_keys=False, width=float("inf"))
+        key = f"{generation_id}:{scenario_id}"
+        self._partial_scenario_results[key] = fitness_result
+        self._progress_checksums[key] = hashlib.sha256(content).hexdigest()
+        was_final = self._fitness_finality.get(key, False)
+        self._fitness_finality[key] = (
+            finalized or was_final or not self.config.fitness_function.items
+        )
+        if write_progress:
+            self._write_progress()
+
+    def _write_progress(self) -> None:
+        ordinary = [
+            result
+            for result in self._partial_scenario_results.values()
+            if result.scenario_id != "baseline"
+        ]
+        scores = [result.fitness_result.fitness_score for result in ordinary]
+        baseline = self._partial_scenario_results.get("0:baseline")
+        progress = {
+            "completedGenerations": self.completed_generations,
+            "currentGeneration": self.current_generation,
+            "completedScenarios": len(ordinary),
+            "configuredGenerations": self.config.genetic.generations,
+            "populationSize": self.config.genetic.population_size,
+            "bestFitness": max(scores) if scores else None,
+            "averageFitness": sum(scores) / len(scores) if scores else None,
+            "baselineFitness": (
+                baseline.fitness_result.fitness_score if baseline is not None else None
+            ),
+            "fitnessProgression": self._fitness_progression,
+            "fitnessFinalByScenario": self._fitness_finality,
+            "resultChecksums": self._progress_checksums,
+        }
+        atomic_write_text(
+            os.path.join(self.output_dir, "progress.json"),
+            json.dumps(progress, indent=2),
+        )

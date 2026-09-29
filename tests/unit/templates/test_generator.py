@@ -4,7 +4,7 @@ import yaml
 
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.models.scenario.factory import scenario_specs
-from krkn_ai.models.config import HealthCheckConfig
+from krkn_ai.models.config import GeneticAlgorithmConfig, HealthCheckConfig
 
 KUBECONFIG = "/tmp/kubeconfig"
 DATA: dict = {"namespaces": []}
@@ -180,3 +180,27 @@ class TestHealthCheckRendering:
         assert '# - name: "web"' in rendered
         assert "(no probe)" in rendered
         HealthCheckConfig(**block)
+
+
+class TestGeneticDefaults:
+    def test_template_defaults_match_config_model(self):
+        defaults = GeneticAlgorithmConfig()
+        generated = yaml.safe_load(create_krkn_ai_template(KUBECONFIG, DATA))
+        genetic = generated["genetic"]
+
+        assert generated["algorithm"] == "genetic"
+        assert genetic["generations"] == defaults.generations
+        assert genetic["population_size"] == defaults.population_size
+        assert genetic["mutation_rate"] == defaults.mutation_rate
+        assert genetic["scenario_mutation_rate"] == defaults.scenario_mutation_rate
+        assert genetic["crossover_rate"] == defaults.crossover_rate
+        assert genetic["composition_rate"] == defaults.composition_rate
+        assert genetic["selection_strategy"] == defaults.selection_strategy.value
+        assert genetic["tournament_size"] == defaults.tournament_size
+        assert (
+            genetic["population_injection_rate"] == defaults.population_injection_rate
+        )
+        assert (
+            genetic["population_injection_size"] == defaults.population_injection_size
+        )
+        assert genetic.get("duration") is None

@@ -689,8 +689,18 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     }
     index = client.get("/v1/runs/run-1/scenarios", headers=auth)
     assert index.status_code == 200
-    assert index.json()["scenarios"] == [
-        {
+    scenarios_by_id = {row["scenarioId"]: row for row in index.json()["scenarios"]}
+    assert scenarios_by_id == {
+        "baseline": {
+            "generation": 0,
+            "scenarioId": "baseline",
+            "scenarioType": "pod_scenarios",
+            "outcome": "succeeded",
+            "durationSeconds": 10.0,
+            "fitnessScore": 15.0,
+            "fitnessState": "provisional",
+        },
+        "9": {
             "generation": 0,
             "scenarioId": "9",
             "scenarioType": "pod_scenarios",
@@ -698,8 +708,24 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             "durationSeconds": 10.0,
             "fitnessScore": 30.0,
             "fitnessState": "provisional",
-        }
-    ]
+        },
+    }
+    for direction, expected_ids in (
+        ("asc", ["9", "baseline"]),
+        ("desc", ["baseline", "9"]),
+    ):
+        sorted_index = client.get(
+            f"/v1/runs/run-1/scenarios?sort=scenarioId&direction={direction}",
+            headers=auth,
+        )
+        assert sorted_index.status_code == 200
+        assert [
+            row["scenarioId"] for row in sorted_index.json()["scenarios"]
+        ] == expected_ids
+    baseline_detail = client.get("/v1/runs/run-1/scenarios/0/baseline", headers=auth)
+    assert baseline_detail.status_code == 200
+    assert baseline_detail.json()["fitnessResult"]["fitnessScore"] == 15.0
+    assert baseline_detail.json()["fitnessState"] == "provisional"
     detail = client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).json()
     assert detail["fitnessResult"]["fitnessScore"] == 30.0
     assert detail["fitnessState"] == "provisional"
@@ -757,6 +783,19 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         progress(21.0, 75.0, finalized=True, completed=1, best=75.0)
     ).encode()
     commit(files)
+    baseline_index = client.get(
+        "/v1/runs/run-1/scenarios?search=baseline", headers=auth
+    )
+    assert baseline_index.status_code == 200
+    assert len(baseline_index.json()["scenarios"]) == 1
+    baseline_row = baseline_index.json()["scenarios"][0]
+    assert baseline_row["fitnessScore"] == 21.0
+    assert baseline_row["fitnessState"] == "final"
+    baseline_detail = client.get(
+        "/v1/runs/run-1/scenarios/0/baseline", headers=auth
+    ).json()
+    assert baseline_detail["fitnessResult"]["fitnessScore"] == 21.0
+    assert baseline_detail["fitnessState"] == "final"
     detail = client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).json()
     assert detail["fitnessResult"]["fitnessScore"] == 75.0
     assert detail["fitnessState"] == "final"

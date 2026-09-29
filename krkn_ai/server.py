@@ -574,7 +574,6 @@ def create_app(
             rows = [
                 scenario_index_row(value, artifacts, terminal)
                 for value in artifacts.scenarios.values()
-                if value.value.get("scenario_id") != "baseline"
             ]
         scenario_type_filter = params.get("scenarioType")
         search = params.get("search", "").casefold()
@@ -597,15 +596,15 @@ def create_app(
         def sort_value(row: dict[str, Any]):
             value = row[sort]
             if value is None:
-                return (1, "")
+                return (1, 0, "")
             if sort == "scenarioId":
                 try:
-                    return (0, float(value))
+                    return (0, 0, float(value))
                 except (TypeError, ValueError):
-                    pass
+                    return (0, 1, str(value).casefold())
             if isinstance(value, str):
                 value = value.casefold()
-            return (0, value)
+            return (0, 0, value)
 
         rows.sort(key=sort_value, reverse=direction == "desc")
         total = len(rows)

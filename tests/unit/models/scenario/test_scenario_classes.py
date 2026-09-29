@@ -34,10 +34,6 @@ from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.chaos_engines.commands import build_scenario_command
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile, FitnessFunction
-from krkn_ai.models.scenario.parameters import (
-    HogScenarioImageParameter,
-    SynFloodImageParameter,
-)
 
 
 class TestDummyScenario:
@@ -276,110 +272,6 @@ class TestNodeCPUHogScenario:
         assert scenario.node_cpu_percentage.value <= 100
         assert scenario.number_of_nodes.value >= 1
 
-    def test_node_cpu_hog_default_image_parameter(self):
-        """Test that NodeCPUHogScenario uses krkn-hub multiarch workload image by default (#480)"""
-        node = Node(
-            name="test-node",
-            labels={"kubernetes.io/os": "linux"},
-            free_cpu=4.0,
-            free_mem=8.0,
-            interfaces=["eth0"],
-            taints=[],
-        )
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeCPUHogScenario(cluster_components=cluster)
-
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        assert (
-            scenario.hog_scenario_image.get_name(return_krknhub_name=False) == "image"
-        )
-        assert scenario.hog_scenario_image.get_name(return_krknhub_name=True) == "IMAGE"
-        assert scenario.hog_scenario_image.value != "quay.io/krkn-chaos/krkn-hog"
-
-    def test_node_cpu_hog_command_building_image_default_and_override(self):
-        """Test build_scenario_command defaults to multiarch image and preserves explicit override (#480)"""
-        node = Node(
-            name="test-node",
-            labels={"kubernetes.io/os": "linux"},
-            free_cpu=4.0,
-            free_mem=8.0,
-            interfaces=["eth0"],
-            taints=[],
-        )
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeCPUHogScenario(cluster_components=cluster)
-        config = ConfigFile(
-            kubeconfig_file_path="/tmp/kubeconfig",
-            fitness_function=FitnessFunction(query="dummy"),
-            cluster_components=cluster,
-        )
-
-        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
-        assert (
-            '--image "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in cli_cmd
-        )
-
-        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
-        assert (
-            '-e IMAGE="quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in hub_cmd
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom-repo/custom-hog:latest"
-        cli_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom-repo/custom-hog:latest"' in cli_cmd_override
-        hub_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.HUB_RUNNER
-        )
-        assert '-e IMAGE="quay.io/custom-repo/custom-hog:latest"' in hub_cmd_override
-        # Test initialization with explicit custom HogScenarioImageParameter
-        custom_scenario = NodeCPUHogScenario(
-            cluster_components=cluster,
-            hog_scenario_image=HogScenarioImageParameter(
-                value="quay.io/custom-repo/init-hog:v1"
-            ),
-        )
-        assert (
-            custom_scenario.hog_scenario_image.value
-            == "quay.io/custom-repo/init-hog:v1"
-        )
-        cli_cmd_custom = build_scenario_command(
-            custom_scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom-repo/init-hog:v1"' in cli_cmd_custom
-
-    def test_node_cpu_hog_mutation_preserves_image(self):
-        """Test that scenario mutation does not overwrite default or overridden image (#480)"""
-        node = Node(
-            name="test-node",
-            labels={"kubernetes.io/os": "linux"},
-            free_cpu=4.0,
-            free_mem=8.0,
-            interfaces=["eth0"],
-            taints=[],
-        )
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeCPUHogScenario(cluster_components=cluster)
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        scenario.mutate()
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom/hog:custom-tag"
-        scenario.mutate()
-        assert scenario.hog_scenario_image.value == "quay.io/custom/hog:custom-tag"
-
 
 class TestAppOutageScenario:
     """Test AppOutageScenario class"""
@@ -467,74 +359,6 @@ class TestNodeMemoryHogScenario:
             in hub_cmd
         )
 
-    def test_node_memory_hog_default_image_parameter(self):
-        """Test that NodeMemoryHogScenario uses krkn-hub multiarch workload image by default (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeMemoryHogScenario(cluster_components=cluster)
-
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        assert (
-            scenario.hog_scenario_image.get_name(return_krknhub_name=False) == "image"
-        )
-        assert scenario.hog_scenario_image.get_name(return_krknhub_name=True) == "IMAGE"
-        assert scenario.hog_scenario_image.value != "quay.io/krkn-chaos/krkn-hog"
-
-    def test_node_memory_hog_command_building_image_default_and_override(self):
-        """Test build_scenario_command uses multiarch image default and preserves override for memory hog (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeMemoryHogScenario(cluster_components=cluster)
-        config = ConfigFile(
-            kubeconfig_file_path="/tmp/kubeconfig",
-            fitness_function=FitnessFunction(query="dummy"),
-            cluster_components=cluster,
-        )
-
-        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
-        assert (
-            '--image "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in cli_cmd
-        )
-
-        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
-        assert (
-            '-e IMAGE="quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in hub_cmd
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom-repo/custom-hog:v1"
-        cli_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom-repo/custom-hog:v1"' in cli_cmd_override
-        hub_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.HUB_RUNNER
-        )
-        assert '-e IMAGE="quay.io/custom-repo/custom-hog:v1"' in hub_cmd_override
-
-    def test_node_memory_hog_mutation_preserves_image(self):
-        """Test that memory hog mutation does not overwrite default or overridden image (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeMemoryHogScenario(cluster_components=cluster)
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        scenario.mutate()
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom/hog:custom-tag"
-        scenario.mutate()
-        assert scenario.hog_scenario_image.value == "quay.io/custom/hog:custom-tag"
-
 
 class TestNodeIOHogScenario:
     """Test NodeIOHogScenario class"""
@@ -556,74 +380,6 @@ class TestNodeIOHogScenario:
 
         with pytest.raises(ScenarioParameterInitError, match="No nodes found"):
             NodeIOHogScenario(cluster_components=cluster)
-
-    def test_node_io_hog_default_image_parameter(self):
-        """Test that NodeIOHogScenario uses krkn-hub multiarch workload image by default (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeIOHogScenario(cluster_components=cluster)
-
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        assert (
-            scenario.hog_scenario_image.get_name(return_krknhub_name=False) == "image"
-        )
-        assert scenario.hog_scenario_image.get_name(return_krknhub_name=True) == "IMAGE"
-        assert scenario.hog_scenario_image.value != "quay.io/krkn-chaos/krkn-hog"
-
-    def test_node_io_hog_command_building_image_default_and_override(self):
-        """Test build_scenario_command uses multiarch image default and preserves override for io hog (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeIOHogScenario(cluster_components=cluster)
-        config = ConfigFile(
-            kubeconfig_file_path="/tmp/kubeconfig",
-            fitness_function=FitnessFunction(query="dummy"),
-            cluster_components=cluster,
-        )
-
-        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
-        assert (
-            '--image "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in cli_cmd
-        )
-
-        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
-        assert (
-            '-e IMAGE="quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"'
-            in hub_cmd
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom-repo/custom-hog:v1"
-        cli_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom-repo/custom-hog:v1"' in cli_cmd_override
-        hub_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.HUB_RUNNER
-        )
-        assert '-e IMAGE="quay.io/custom-repo/custom-hog:v1"' in hub_cmd_override
-
-    def test_node_io_hog_mutation_preserves_image(self):
-        """Test that io hog mutation does not overwrite default or overridden image (#480)"""
-        node = Node(name="test-node", free_cpu=4.0, free_mem=8.0)
-        cluster = ClusterComponents(namespaces=[], nodes=[node])
-        scenario = NodeIOHogScenario(cluster_components=cluster)
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-        scenario.mutate()
-        assert (
-            scenario.hog_scenario_image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog"
-        )
-
-        scenario.hog_scenario_image.value = "quay.io/custom/hog:custom-tag"
-        scenario.mutate()
-        assert scenario.hog_scenario_image.value == "quay.io/custom/hog:custom-tag"
 
 
 class TestTimeScenario:
@@ -726,91 +482,6 @@ class TestSynFloodScenario:
             ScenarioParameterInitError, match="No services with ports found"
         ):
             SynFloodScenario(cluster_components=cluster)
-
-    def test_syn_flood_default_image_parameter(self):
-        """Test that SynFloodScenario uses krkn-hub multiarch workload image by default (#480)"""
-        service = Service(
-            name="test-service", ports=[ServicePort(port=80, target_port=8080)]
-        )
-        namespace = Namespace(name="test-ns", services=[service])
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
-        scenario = SynFloodScenario(cluster_components=cluster)
-
-        assert (
-            scenario.image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
-        )
-        assert scenario.image.get_name(return_krknhub_name=False) == "image"
-        assert scenario.image.get_name(return_krknhub_name=True) == "IMAGE"
-        assert scenario.image.value != "quay.io/krkn-chaos/krkn-syn-flood:latest"
-
-    def test_syn_flood_command_building_default_and_override_image(self):
-        """Test build_scenario_command defaults to multiarch image and preserves explicit override for syn-flood (#480)"""
-        service = Service(
-            name="test-service", ports=[ServicePort(port=80, target_port=8080)]
-        )
-        namespace = Namespace(name="test-ns", services=[service])
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
-        scenario = SynFloodScenario(cluster_components=cluster)
-        config = ConfigFile(
-            kubeconfig_file_path="/tmp/kubeconfig",
-            fitness_function=FitnessFunction(query="dummy"),
-            cluster_components=cluster,
-        )
-
-        cli_cmd = build_scenario_command(scenario, config, KrknRunnerType.CLI_RUNNER)
-        assert (
-            '--image "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"'
-            in cli_cmd
-        )
-
-        hub_cmd = build_scenario_command(scenario, config, KrknRunnerType.HUB_RUNNER)
-        assert (
-            '-e IMAGE="quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"'
-            in hub_cmd
-        )
-
-        scenario.image.value = "quay.io/custom/syn-flood:custom-tag"
-        cli_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom/syn-flood:custom-tag"' in cli_cmd_override
-        hub_cmd_override = build_scenario_command(
-            scenario, config, KrknRunnerType.HUB_RUNNER
-        )
-        assert '-e IMAGE="quay.io/custom/syn-flood:custom-tag"' in hub_cmd_override
-        # Test initialization with explicit custom SynFloodImageParameter
-        custom_scenario = SynFloodScenario(
-            cluster_components=cluster,
-            image=SynFloodImageParameter(value="quay.io/custom/init-syn:v1"),
-        )
-        assert custom_scenario.image.value == "quay.io/custom/init-syn:v1"
-        cli_cmd_custom = build_scenario_command(
-            custom_scenario, config, KrknRunnerType.CLI_RUNNER
-        )
-        assert '--image "quay.io/custom/init-syn:v1"' in cli_cmd_custom
-
-    def test_syn_flood_mutation_preserves_image(self):
-        """Test that syn-flood mutation does not overwrite default or overridden image (#480)"""
-        service = Service(
-            name="test-service", ports=[ServicePort(port=80, target_port=8080)]
-        )
-        namespace = Namespace(name="test-ns", services=[service])
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
-        scenario = SynFloodScenario(cluster_components=cluster)
-        assert (
-            scenario.image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
-        )
-        scenario.mutate()
-        assert (
-            scenario.image.value
-            == "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood"
-        )
-
-        scenario.image.value = "quay.io/custom/syn-flood:custom-tag"
-        scenario.mutate()
-        assert scenario.image.value == "quay.io/custom/syn-flood:custom-tag"
 
 
 class TestPVCScenario:
@@ -989,3 +660,64 @@ class TestServiceDisruptionScenario:
             ScenarioParameterInitError, match="No namespaces with services"
         ):
             ServiceDisruptionScenario(cluster_components=cluster)
+
+
+class TestWorkloadImageSerialization:
+    @pytest.mark.parametrize(
+        ("scenario_type", "default_image"),
+        [
+            (
+                NodeCPUHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                NodeMemoryHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                NodeIOHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                SynFloodScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood",
+            ),
+        ],
+    )
+    def test_cli_and_hub_serialize_default_and_custom_images(
+        self, scenario_type, default_image
+    ):
+        if scenario_type is SynFloodScenario:
+            service = Service(
+                name="test-service", ports=[ServicePort(port=80, target_port=8080)]
+            )
+            cluster = ClusterComponents(
+                namespaces=[Namespace(name="test-ns", services=[service])], nodes=[]
+            )
+        else:
+            cluster = ClusterComponents(
+                namespaces=[],
+                nodes=[Node(name="worker-0", free_cpu=4.0, free_mem=8.0)],
+            )
+
+        scenario = scenario_type(cluster_components=cluster)
+        image_parameter = next(
+            parameter
+            for parameter in scenario.parameters
+            if parameter.get_name(return_krknhub_name=True) == "IMAGE"
+        )
+        assert image_parameter.value == default_image
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="dummy"),
+            cluster_components=cluster,
+        )
+
+        for image in (default_image, "quay.io/custom/workload:test"):
+            image_parameter.value = image
+            for runner_type, argument in (
+                (KrknRunnerType.CLI_RUNNER, f'--image "{image}"'),
+                (KrknRunnerType.HUB_RUNNER, f'-e IMAGE="{image}"'),
+            ):
+                command = build_scenario_command(scenario, config, runner_type)
+                assert argument in command

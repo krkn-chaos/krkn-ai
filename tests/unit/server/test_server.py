@@ -606,20 +606,20 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         }
 
     files = {
-        "yaml/generation_0/custom-baseline-name.yaml": yaml.safe_dump(
-            result_doc(
-                "baseline",
-                15.0,
-                "2025-01-01T00:00:00+00:00",
-                "2025-01-01T00:01:00+00:00",
-            )
-        ).encode(),
         "yaml/generation_0/custom-result-name.yaml": yaml.safe_dump(
             result_doc(
                 9,
                 30.0,
                 "2025-01-01T00:00:00+00:00",
                 "2025-01-01T00:00:10+00:00",
+            )
+        ).encode(),
+        "yaml/generation_0/custom-baseline-name.yaml": yaml.safe_dump(
+            result_doc(
+                "baseline",
+                15.0,
+                "2025-01-01T00:00:00+00:00",
+                "2025-01-01T00:01:00+00:00",
             )
         ).encode(),
     }
@@ -711,8 +711,8 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         },
     }
     for direction, expected_ids in (
-        ("asc", ["9", "baseline"]),
-        ("desc", ["baseline", "9"]),
+        ("asc", ["baseline", "9"]),
+        ("desc", ["9", "baseline"]),
     ):
         sorted_index = client.get(
             f"/v1/runs/run-1/scenarios?sort=scenarioId&direction={direction}",
@@ -722,6 +722,14 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         assert [
             row["scenarioId"] for row in sorted_index.json()["scenarios"]
         ] == expected_ids
+    generation_index = client.get(
+        "/v1/runs/run-1/scenarios?sort=generation&direction=asc", headers=auth
+    )
+    assert generation_index.status_code == 200
+    assert [row["scenarioId"] for row in generation_index.json()["scenarios"]] == [
+        "baseline",
+        "9",
+    ]
     baseline_detail = client.get("/v1/runs/run-1/scenarios/0/baseline", headers=auth)
     assert baseline_detail.status_code == 200
     assert baseline_detail.json()["fitnessResult"]["fitnessScore"] == 15.0

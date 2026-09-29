@@ -597,11 +597,16 @@ def create_app(
             value = row[sort]
             if value is None:
                 return (1, 0, "")
+            if sort == "generation":
+                baseline_rank = 0 if row["scenarioId"] == "baseline" else 1
+                return (0, value, baseline_rank)
             if sort == "scenarioId":
+                if row["scenarioId"] == "baseline":
+                    return (0, 0, 0.0)
                 try:
-                    return (0, 0, float(value))
+                    return (0, 1, float(value))
                 except (TypeError, ValueError):
-                    return (0, 1, str(value).casefold())
+                    return (0, 2, str(value).casefold())
             if isinstance(value, str):
                 value = value.casefold()
             return (0, 0, value)

@@ -524,15 +524,28 @@ class TestNormalizeGenerationScores:
         assert r_bad.fitness_result.fitness_score == -1.0
         assert r_bad.fitness_result.scores[0].normalized_score is None
 
-    def test_single_result_is_noop(self):
-        """With only one valid result, normalization is skipped."""
+    @pytest.mark.parametrize("include_failed_partner", [False, True])
+    def test_single_valid_result_recomputes_bounded_fitness(
+        self, include_failed_partner
+    ):
         items = [FitnessFunctionItem(id=1, query="q1", weight=1)]
-        r = _make_result([(1, 42.0, 42.0)], fitness=42.0)
+        result = _make_result(
+            [(1, 65_200_128.0, 65_200_128.0)],
+            hc_response=0.299,
+            krkn=0.03,
+            fitness=74_091_064.0698,
+        )
+        failed = _make_result([], fitness=-1.0)
+        cohort = [result, failed] if include_failed_partner else [result]
 
-        normalize_generation_scores([r], items)
+        normalize_generation_scores(cohort, items)
 
-        assert r.fitness_result.scores[0].normalized_score is None
-        assert r.fitness_result.fitness_score == 42.0
+        score = result.fitness_result.scores[0]
+        assert score.fitness_score == 65_200_128.0
+        assert score.normalized_score == 0.0
+        assert score.weighted_score == 0.0
+        assert result.fitness_result.fitness_score == pytest.approx(8.225)
+        assert failed.fitness_result.fitness_score == -1.0
 
     def test_identical_values_normalize_to_zero(self):
         """When all scenarios return the same raw score, normalize to 0.0 (no signal)."""

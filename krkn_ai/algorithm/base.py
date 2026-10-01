@@ -66,12 +66,13 @@ class BaseEngine(ABC):
         self.end_time: Optional[datetime.datetime] = None
         self.seed: Optional[int] = self.config.seed
 
-        self.current_generation = 0
+        self.current_generation: Optional[int] = None
         self.completed_generations = 0
         self._fitness_progression: list[dict[str, float | int]] = []
         self._partial_scenario_results: dict[str, CommandRunResult] = {}
         self._progress_checksums: dict[str, str] = {}
         self._fitness_finality: dict[str, bool] = {}
+        self._score_query_metadata: dict[str, dict[str, dict[str, str | None]]] = {}
 
         self.save_config()
         if self.elastic_client is not None:
@@ -156,6 +157,12 @@ class BaseEngine(ABC):
             if result.scenario_id != "baseline"
         ]
         self.completed_generations = max(self.completed_generations, generation + 1)
+        for result in results:
+            key = f"{generation}:{result.scenario_id}"
+            if key in self._fitness_finality:
+                self._fitness_finality[key] = True
+        if generation == 0 and "0:baseline" in self._fitness_finality:
+            self._fitness_finality["0:baseline"] = True
         if scores:
             entry = {
                 "generation": generation,
@@ -169,27 +176,23 @@ class BaseEngine(ABC):
             ]
             self._fitness_progression.append(entry)
             self._fitness_progression.sort(key=lambda item: item["generation"])
+        self.current_generation = None
         self._write_progress()
 
     def update_scenario_results(self, results: list) -> None:
-        """Atomically publish normalized results before marking their scores final."""
+        """Publish updated result artifacts before finalizing their generation."""
         for result in results:
-            self._write_scenario_result(result, write_progress=False, finalized=True)
+            self._write_scenario_result(result, write_progress=False)
         self._write_progress()
 
     def save_scenario_result(self, fitness_result: CommandRunResult):
-        self._write_scenario_result(
-            fitness_result,
-            write_progress=True,
-            finalized=not self.config.fitness_function.items,
-        )
+        self._write_scenario_result(fitness_result, write_progress=True)
 
     def _write_scenario_result(
         self,
         fitness_result: CommandRunResult,
         *,
         write_progress: bool,
-        finalized: bool,
     ) -> None:
         logger.debug(
             "Saving scenario result for scenario %s", fitness_result.scenario_id
@@ -224,6 +227,26 @@ class BaseEngine(ABC):
         if not filename.endswith(f".{self.format}"):
             filename = f"{os.path.splitext(filename)[0]}.{self.format}"
         destination = os.path.join(output_dir, filename)
+        key = f"{generation_id}:{scenario_id}"
+        if key not in self._score_query_metadata:
+            configured_items = {
+                str(item.id): {
+                    "query": item.query,
+                    "query_type": item.type.value,
+                }
+                for item in self.config.fitness_function.items
+            }
+            self._score_query_metadata[key] = {
+                str(score["id"]): configured_items.get(
+                    str(score.get("id")), {"query": None, "query_type": None}
+                )
+                for score in result["fitness_result"]["scores"]
+            }
+        for score in result["fitness_result"]["scores"]:
+            metadata = self._score_query_metadata[key].get(str(score["id"]), {})
+            score["query"] = metadata.get("query")
+            score["query_type"] = metadata.get("query_type")
+
         if self.format == "json":
             content = json.dumps(result, indent=4).encode("utf-8")
         elif self.format == "yaml":
@@ -234,13 +257,9 @@ class BaseEngine(ABC):
             raise ValueError(f"Unsupported result format: {self.format}")
         atomic_write_bytes(destination, content)
 
-        key = f"{generation_id}:{scenario_id}"
         self._partial_scenario_results[key] = fitness_result
         self._progress_checksums[key] = hashlib.sha256(content).hexdigest()
-        was_final = self._fitness_finality.get(key, False)
-        self._fitness_finality[key] = (
-            finalized or was_final or not self.config.fitness_function.items
-        )
+        self._fitness_finality[key] = self._fitness_finality.get(key, False)
         if write_progress:
             self._write_progress()
 
@@ -250,8 +269,20 @@ class BaseEngine(ABC):
             for result in self._partial_scenario_results.values()
             if result.scenario_id != "baseline"
         ]
-        scores = [result.fitness_result.fitness_score for result in ordinary]
+        completed = [
+            result
+            for result in ordinary
+            if result.generation_id < self.completed_generations
+            and self._fitness_finality.get(
+                f"{result.generation_id}:{result.scenario_id}"
+            )
+        ]
+        scores = [result.fitness_result.fitness_score for result in completed]
         baseline = self._partial_scenario_results.get("0:baseline")
+        if self.completed_generations == 0 or not self._fitness_finality.get(
+            "0:baseline"
+        ):
+            baseline = None
         progress = {
             "completedGenerations": self.completed_generations,
             "currentGeneration": self.current_generation,

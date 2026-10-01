@@ -451,7 +451,17 @@ def test_final_best_scenarios_restore_parameters_by_generation_and_id(
                     "origin": "initial",
                     "parent_ids": [],
                 },
-                "fitness_result": {"fitness_score": generation + 10, "scores": []},
+                "fitness_result": {
+                    "fitness_score": generation + 10,
+                    "scores": [
+                        {
+                            "id": 1,
+                            "fitness_score": generation + 2,
+                            "weighted_score": generation + 1,
+                            "normalized_score": 0.25,
+                        }
+                    ],
+                },
             }
         ).encode()
         checksum = hashlib.sha256(content).hexdigest()
@@ -513,6 +523,15 @@ def test_final_best_scenarios_restore_parameters_by_generation_and_id(
     assert newer.json()["parameters"] == [
         {"name": "namespace", "value": "newer-generation"}
     ]
+    assert older.json()["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 2,
+            "normalizedScore": None,
+            "query": None,
+            "queryType": None,
+        }
+    ]
 
 
 def test_typed_partial_results_validation_and_manifest_consistency(
@@ -523,6 +542,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     assert client.get("/v1/runs/run-1/summary", headers=auth).json() == {
         "artifactStatus": "not_available",
         "completedGenerations": None,
+        "currentGeneration": None,
         "completedScenarios": None,
         "configuredGenerations": None,
         "populationSize": None,
@@ -576,7 +596,9 @@ def test_typed_partial_results_validation_and_manifest_consistency(
                         "id": 1,
                         "fitness_score": fitness / 2,
                         "weighted_score": fitness / 4,
-                        "normalized_score": None,
+                        "normalized_score": fitness / 100,
+                        "query": "up",
+                        "query_type": "range",
                     }
                 ],
                 "health_check_failure_score": 0.25,
@@ -627,7 +649,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     def progress(baseline, scenario, *, finalized, completed=0, best=30.0):
         return {
             "completedGenerations": completed,
-            "currentGeneration": 0,
+            "currentGeneration": None if completed else 0,
             "completedScenarios": 1,
             "configuredGenerations": 2,
             "populationSize": 2,
@@ -679,12 +701,13 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     assert summary.json() == {
         "artifactStatus": "in_progress",
         "completedGenerations": 0,
+        "currentGeneration": 0,
         "completedScenarios": 1,
         "configuredGenerations": 2,
         "populationSize": 2,
-        "bestFitness": 30.0,
-        "averageFitness": 30.0,
-        "baselineFitness": 15.0,
+        "bestFitness": None,
+        "averageFitness": None,
+        "baselineFitness": None,
         "fitnessProgression": [],
     }
     index = client.get("/v1/runs/run-1/scenarios", headers=auth)
@@ -697,7 +720,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             "scenarioType": "pod_scenarios",
             "outcome": "succeeded",
             "durationSeconds": 10.0,
-            "fitnessScore": 15.0,
+            "fitnessScore": None,
             "fitnessState": "provisional",
         },
         "9": {
@@ -706,7 +729,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             "scenarioType": "pod_scenarios",
             "outcome": "succeeded",
             "durationSeconds": 10.0,
-            "fitnessScore": 30.0,
+            "fitnessScore": None,
             "fitnessState": "provisional",
         },
     }
@@ -731,12 +754,20 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         "9",
     ]
     baseline_detail = client.get("/v1/runs/run-1/scenarios/0/baseline", headers=auth)
-    assert baseline_detail.status_code == 200
-    assert baseline_detail.json()["fitnessResult"]["fitnessScore"] == 15.0
+    assert baseline_detail.json()["fitnessResult"]["fitnessScore"] is None
     assert baseline_detail.json()["fitnessState"] == "provisional"
     detail = client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).json()
-    assert detail["fitnessResult"]["fitnessScore"] == 30.0
+    assert detail["fitnessResult"]["fitnessScore"] is None
     assert detail["fitnessState"] == "provisional"
+    assert detail["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 15.0,
+            "normalizedScore": None,
+            "query": "up",
+            "queryType": "range",
+        }
+    ]
     assert [sample["responseTimeSeconds"] for sample in detail["healthChecks"]] == [
         0.12,
         0.2,
@@ -803,9 +834,27 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         "/v1/runs/run-1/scenarios/0/baseline", headers=auth
     ).json()
     assert baseline_detail["fitnessResult"]["fitnessScore"] == 21.0
+    assert baseline_detail["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 10.5,
+            "normalizedScore": 0.21,
+            "query": "up",
+            "queryType": "range",
+        }
+    ]
     assert baseline_detail["fitnessState"] == "final"
     detail = client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).json()
     assert detail["fitnessResult"]["fitnessScore"] == 75.0
+    assert detail["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 37.5,
+            "normalizedScore": 0.75,
+            "query": "up",
+            "queryType": "range",
+        }
+    ]
     assert detail["fitnessState"] == "final"
     assert client.get("/v1/runs/run-1/summary", headers=auth).json()[
         "fitnessProgression"
@@ -828,6 +877,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     assert client.get("/v1/runs/run-1/summary", headers=auth).json() == {
         "artifactStatus": "succeeded",
         "completedGenerations": 1,
+        "currentGeneration": None,
         "completedScenarios": 1,
         "configuredGenerations": 2,
         "populationSize": 2,
@@ -840,6 +890,177 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         client.get("/v1/runs/run-1/scenarios?limit=501", headers=auth).status_code
         == 400
     )
+
+
+def test_failed_later_generation_preserves_only_completed_fitness(tmp_path: Path):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    auth = TOKEN_HEADERS
+
+    def scenario_doc(generation, scenario_id, total, *, finalized_query):
+        return yaml.safe_dump(
+            {
+                "generation_id": generation,
+                "scenario_id": scenario_id,
+                "scenario": {"name": "pod_scenarios", "parameters": []},
+                "returncode": 0 if generation == 0 else 1,
+                "duration_seconds": 1.0,
+                "fitness_result": {
+                    "fitness_score": total,
+                    "scores": [
+                        {
+                            "id": 1,
+                            "fitness_score": total / 2,
+                            "normalized_score": 0.5,
+                            "query": finalized_query,
+                            "query_type": "point",
+                        }
+                    ],
+                },
+            }
+        ).encode()
+
+    artifacts = {
+        "yaml/generation_0/scenario-7.yaml": scenario_doc(
+            0, 7, 80, finalized_query="up"
+        ),
+        "yaml/generation_0/scenario-8.yaml": scenario_doc(
+            0, 8, 10, finalized_query="up"
+        ),
+        "yaml/generation_1/scenario-9.yaml": scenario_doc(
+            1, 9, 999, finalized_query="later"
+        ),
+    }
+    files = {}
+    checksums = {}
+    for path, content in artifacts.items():
+        files[path] = content
+        generation = int(path.split("/")[1].removeprefix("generation_"))
+        scenario_id = path.rsplit("-", 1)[1].split(".", 1)[0]
+        checksums[f"{generation}:{scenario_id}"] = hashlib.sha256(content).hexdigest()
+    files["progress.json"] = json.dumps(
+        {
+            "completedGenerations": 1,
+            "currentGeneration": 1,
+            "completedScenarios": 3,
+            "configuredGenerations": 3,
+            "populationSize": 2,
+            "bestFitness": 999,
+            "averageFitness": 999,
+            "baselineFitness": 999,
+            "fitnessProgression": [
+                {"generation": 0, "best": 999, "average": 999},
+                {"generation": 1, "best": 1000, "average": 1000},
+            ],
+            "fitnessFinalByScenario": {
+                "0:7": True,
+                "0:8": True,
+                "1:9": False,
+            },
+            "resultChecksums": checksums,
+        }
+    ).encode()
+    files["results.json"] = json.dumps(
+        {
+            "config": {"generations": 3, "population_size": 2},
+            "summary": {
+                "generations_completed": 1,
+                "total_scenarios_executed": 3,
+                "best_fitness_score": 999,
+                "average_fitness_score": 999,
+            },
+            "baseline": {"fitness_score": 999},
+            "fitness_progression": [
+                {"generation": 0, "best": 999, "average": 999},
+                {"generation": 1, "best": 1000, "average": 1000},
+            ],
+        }
+    ).encode()
+
+    manifest_files = []
+    for path, content in files.items():
+        checksum = hashlib.sha256(content).hexdigest()
+        assert (
+            client.put(
+                f"/v1/runs/run-failed/files/{path}",
+                headers={**auth, "X-Checksum-Sha256": checksum},
+                content=content,
+            ).status_code
+            == 201
+        )
+        manifest_files.append({"path": path, "sha256": checksum, "size": len(content)})
+    assert (
+        client.post(
+            "/v1/runs/run-failed/commit",
+            headers=auth,
+            json={"status": "in_progress", "files": manifest_files},
+        ).status_code
+        == 200
+    )
+    in_progress = client.get("/v1/runs/run-failed/summary", headers=auth).json()
+    assert in_progress == {
+        "artifactStatus": "in_progress",
+        "completedGenerations": 1,
+        "currentGeneration": 1,
+        "completedScenarios": 3,
+        "configuredGenerations": 3,
+        "populationSize": 2,
+        "bestFitness": 80,
+        "averageFitness": 45,
+        "baselineFitness": None,
+        "fitnessProgression": [{"generation": 0, "best": 80, "average": 45}],
+    }
+    partial_rows = {
+        row["scenarioId"]: row
+        for row in client.get("/v1/runs/run-failed/scenarios", headers=auth).json()[
+            "scenarios"
+        ]
+    }
+    assert partial_rows["7"]["fitnessScore"] == 80
+    assert partial_rows["9"]["fitnessScore"] is None
+    assert partial_rows["9"]["fitnessState"] == "provisional"
+    assert (
+        client.post(
+            "/v1/runs/run-failed/commit",
+            headers=auth,
+            json={"status": "failed", "files": manifest_files},
+        ).status_code
+        == 200
+    )
+
+    summary = client.get("/v1/runs/run-failed/summary", headers=auth).json()
+    assert summary == {
+        "artifactStatus": "failed",
+        "completedGenerations": 1,
+        "currentGeneration": None,
+        "completedScenarios": 3,
+        "configuredGenerations": 3,
+        "populationSize": 2,
+        "bestFitness": 80,
+        "averageFitness": 45,
+        "baselineFitness": None,
+        "fitnessProgression": [{"generation": 0, "best": 80, "average": 45}],
+    }
+    rows = {
+        row["scenarioId"]: row
+        for row in client.get("/v1/runs/run-failed/scenarios", headers=auth).json()[
+            "scenarios"
+        ]
+    }
+    assert rows["7"]["fitnessScore"] == 80
+    assert rows["9"]["fitnessScore"] is None
+    assert rows["9"]["fitnessState"] == "unfinalized"
+    detail = client.get("/v1/runs/run-failed/scenarios/1/9", headers=auth).json()
+    assert detail["fitnessResult"]["fitnessScore"] is None
+    assert detail["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 499.5,
+            "normalizedScore": None,
+            "query": "later",
+            "queryType": "point",
+        }
+    ]
+    assert detail["fitnessState"] == "unfinalized"
 
 
 def test_corrupt_committed_yaml_is_reported_as_bad_gateway(tmp_path: Path):

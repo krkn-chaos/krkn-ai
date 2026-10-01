@@ -69,21 +69,21 @@ class JSONSummaryReporter:
         if self.start_time and self.end_time:
             duration_seconds = (self.end_time - self.start_time).total_seconds()
 
-        # Get all fitness scores for statistics
-        all_fitness_scores = [
-            result.fitness_result.fitness_score
+        completed_results = [
+            result
             for result in self.seen_population.values()
+            if result.generation_id < self.completed_generations
+        ]
+        all_fitness_scores = [
+            result.fitness_result.fitness_score for result in completed_results
         ]
 
-        # Calculate average fitness score
-        average_fitness_score = 0.0
-        if all_fitness_scores:
-            average_fitness_score = sum(all_fitness_scores) / len(all_fitness_scores)
-
-        # Get best fitness score
-        best_fitness_score = 0.0
-        if all_fitness_scores:
-            best_fitness_score = max(all_fitness_scores)
+        average_fitness_score = (
+            sum(all_fitness_scores) / len(all_fitness_scores)
+            if all_fitness_scores
+            else None
+        )
+        best_fitness_score = max(all_fitness_scores) if all_fitness_scores else None
 
         # Count unique scenarios by their string representation
         unique_scenarios = set()
@@ -117,15 +117,23 @@ class JSONSummaryReporter:
                 "total_scenarios_executed": len(self.seen_population),
                 "unique_scenarios": len(unique_scenarios),
                 "generations_completed": self.completed_generations,
-                "best_fitness_score": round(best_fitness_score, 4),
-                "average_fitness_score": round(average_fitness_score, 4),
+                "best_fitness_score": (
+                    round(best_fitness_score, 4)
+                    if best_fitness_score is not None
+                    else None
+                ),
+                "average_fitness_score": (
+                    round(average_fitness_score, 4)
+                    if average_fitness_score is not None
+                    else None
+                ),
             },
             "best_scenarios": best_scenarios,
             "fitness_progression": fitness_progression,
             "population_lineage": self._build_population_lineage(),
         }
 
-        if self.baseline_result is not None:
+        if self.baseline_result is not None and self.completed_generations > 0:
             results_summary["baseline"] = {
                 "fitness_score": self.baseline_result.fitness_result.fitness_score,
                 "duration_seconds": self.baseline_result.duration_seconds,
@@ -136,8 +144,10 @@ class JSONSummaryReporter:
     def _build_fitness_progression(self) -> List[Dict[str, Any]]:
         """Build fitness progression data from best_of_generation."""
         fitness_progression = []
-        for i, result in enumerate(self.best_of_generation):
-            # Calculate average fitness for this generation from seen_population
+        for i, result in enumerate(
+            self.best_of_generation[: self.completed_generations]
+        ):
+            # Calculate average fitness for this generation from completed scenarios.
             gen_fitness_scores = [
                 r.fitness_result.fitness_score
                 for r in self.seen_population.values()
@@ -158,8 +168,13 @@ class JSONSummaryReporter:
 
     def _build_best_scenarios(self) -> List[Dict[str, Any]]:
         """Build ranked list of best scenarios (top 10)."""
+        completed_results = [
+            result
+            for result in self.seen_population.values()
+            if result.generation_id < self.completed_generations
+        ]
         sorted_results = sorted(
-            self.seen_population.values(),
+            completed_results,
             key=lambda x: x.fitness_result.fitness_score,
             reverse=True,
         )

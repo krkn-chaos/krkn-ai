@@ -163,11 +163,100 @@ def scenario_type(scenario: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def fitness_state(artifacts: ParsedRunArtifacts, key: str, terminal: bool) -> str:
+def completed_generation_count(artifacts: ParsedRunArtifacts, terminal: bool) -> int:
+    count = None
+    if terminal and artifacts.final_results is not None:
+        summary = artifacts.final_results.get("summary") or {}
+        if not isinstance(summary, dict):
+            raise _bad_artifact()
+        count = summary.get("generations_completed")
+    if count is None:
+        count = (artifacts.progress or {}).get("completedGenerations")
+    if count is None:
+        return 0
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise _bad_artifact()
+    return count
+
+
+def _generation_is_final(artifacts: ParsedRunArtifacts, generation: int) -> bool:
+    rows = [
+        artifact
+        for artifact in artifacts.scenarios.values()
+        if artifact.value["generation_id"] == generation
+    ]
     finality = (artifacts.progress or {}).get("fitnessFinalByScenario", {})
-    if key in finality:
-        return "final" if finality[key] else "provisional"
-    return "final" if terminal else "provisional"
+    return bool(rows) and all(finality.get(row.key) is True for row in rows)
+
+
+def _fitness_is_final(artifacts: ParsedRunArtifacts, key: str, terminal: bool) -> bool:
+    scenario = artifacts.scenarios[key]
+    generation = scenario.value["generation_id"]
+    return generation < completed_generation_count(
+        artifacts, terminal
+    ) and _generation_is_final(artifacts, generation)
+
+
+def fitness_state(artifacts: ParsedRunArtifacts, key: str, terminal: bool) -> str:
+    if _fitness_is_final(artifacts, key, terminal):
+        return "final"
+    return "unfinalized" if terminal else "provisional"
+
+
+def _optional_number(value: Any) -> int | float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _bad_artifact()
+    return value
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _bad_artifact()
+    return value
+
+
+def _completed_fitness(artifacts: ParsedRunArtifacts, terminal: bool):
+    count = completed_generation_count(artifacts, terminal)
+    by_generation: dict[int, list[float]] = {}
+    incomplete_generations: set[int] = set()
+    baseline = None
+    for key, artifact in artifacts.scenarios.items():
+        if not _fitness_is_final(artifacts, key, terminal):
+            continue
+        generation = artifact.value["generation_id"]
+        fitness = _optional_number(
+            artifact.value["fitness_result"].get("fitness_score")
+        )
+        if artifact.value["scenario_id"] == "baseline":
+            if generation == 0:
+                baseline = fitness
+            continue
+        if fitness is None:
+            incomplete_generations.add(generation)
+        else:
+            by_generation.setdefault(generation, []).append(fitness)
+    for generation in incomplete_generations:
+        by_generation.pop(generation, None)
+    progression = [
+        {
+            "generation": generation,
+            "best": max(scores),
+            "average": sum(scores) / len(scores),
+        }
+        for generation, scores in sorted(by_generation.items())
+        if generation < count and scores
+    ]
+    all_scores = [score for values in by_generation.values() for score in values]
+    return {
+        "bestFitness": max(all_scores) if all_scores else None,
+        "averageFitness": sum(all_scores) / len(all_scores) if all_scores else None,
+        "baselineFitness": baseline if count > 0 else None,
+        "fitnessProgression": progression,
+    }
 
 
 def scenario_index_row(
@@ -182,13 +271,16 @@ def scenario_index_row(
     ):
         raise _bad_artifact()
     outcome = "succeeded" if value.get("returncode") in (0, 2) else "failed"
+    finalized = _fitness_is_final(artifacts, artifact.key, terminal)
     return {
         "generation": value["generation_id"],
         "scenarioId": str(value["scenario_id"]),
         "scenarioType": scenario_type(scenario),
         "outcome": outcome,
         "durationSeconds": duration,
-        "fitnessScore": fitness.get("fitness_score"),
+        "fitnessScore": (
+            _optional_number(fitness.get("fitness_score")) if finalized else None
+        ),
         "fitnessState": fitness_state(artifacts, artifact.key, terminal),
     }
 
@@ -288,13 +380,22 @@ def scenario_detail(
         "durationSeconds": value.get("duration_seconds"),
         "returnCode": value.get("returncode"),
         "fitnessResult": {
-            "fitnessScore": fitness.get("fitness_score"),
+            "fitnessScore": (
+                _optional_number(fitness.get("fitness_score"))
+                if _fitness_is_final(artifacts, artifact.key, terminal)
+                else None
+            ),
             "scores": [
                 {
                     "id": score.get("id"),
-                    "fitnessScore": score.get("fitness_score"),
-                    "weightedScore": score.get("weighted_score"),
-                    "normalizedScore": score.get("normalized_score"),
+                    "rawScore": _optional_number(score.get("fitness_score")),
+                    "normalizedScore": (
+                        _optional_number(score.get("normalized_score"))
+                        if _fitness_is_final(artifacts, artifact.key, terminal)
+                        else None
+                    ),
+                    "query": _optional_string(score.get("query")),
+                    "queryType": _optional_string(score.get("query_type")),
                 }
                 for score in scores
             ],

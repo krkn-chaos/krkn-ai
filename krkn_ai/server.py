@@ -26,7 +26,13 @@ from pydantic import BaseModel, Field, ValidationError
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
 from krkn_ai.models.config import ConfigFile
-from krkn_ai.run_results import parse_run_artifacts, scenario_detail, scenario_index_row
+from krkn_ai.run_results import (
+    completed_generation_count,
+    parse_run_artifacts,
+    scenario_detail,
+    scenario_index_row,
+    _completed_fitness,
+)
 
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
@@ -387,6 +393,7 @@ def create_app(
         return {
             "artifactStatus": "not_available",
             "completedGenerations": None,
+            "currentGeneration": None,
             "completedScenarios": None,
             "configuredGenerations": None,
             "populationSize": None,
@@ -406,33 +413,27 @@ def create_app(
             )
         terminal = run_status in {"succeeded", "failed"}
         final = artifacts.final_results if terminal else None
+        progress = artifacts.progress or {}
         if final is not None:
             summary = final.get("summary") or {}
             config = final.get("config") or {}
-            baseline = final.get("baseline") or {}
-            progression = final.get("fitness_progression", [])
-            values = {
-                "completedGenerations": summary.get("generations_completed"),
-                "completedScenarios": summary.get("total_scenarios_executed"),
-                "configuredGenerations": config.get("generations"),
-                "populationSize": config.get("population_size"),
-                "bestFitness": summary.get("best_fitness_score"),
-                "averageFitness": summary.get("average_fitness_score"),
-                "baselineFitness": baseline.get("fitness_score"),
-                "fitnessProgression": progression,
-            }
+            completed_scenarios = summary.get("total_scenarios_executed")
+            configured_generations = config.get("generations")
+            population_size = config.get("population_size")
         else:
-            progress = artifacts.progress or {}
-            values = {
-                "completedGenerations": progress.get("completedGenerations"),
-                "completedScenarios": progress.get("completedScenarios"),
-                "configuredGenerations": progress.get("configuredGenerations"),
-                "populationSize": progress.get("populationSize"),
-                "bestFitness": progress.get("bestFitness"),
-                "averageFitness": progress.get("averageFitness"),
-                "baselineFitness": progress.get("baselineFitness"),
-                "fitnessProgression": progress.get("fitnessProgression", []),
-            }
+            completed_scenarios = progress.get("completedScenarios")
+            configured_generations = progress.get("configuredGenerations")
+            population_size = progress.get("populationSize")
+        values = {
+            "completedGenerations": completed_generation_count(artifacts, terminal),
+            "currentGeneration": (
+                None if terminal else progress.get("currentGeneration")
+            ),
+            "completedScenarios": completed_scenarios,
+            "configuredGenerations": configured_generations,
+            "populationSize": population_size,
+            **_completed_fitness(artifacts, terminal),
+        }
         for field in (
             "completedGenerations",
             "completedScenarios",
@@ -446,6 +447,13 @@ def create_app(
                 raise HTTPException(
                     status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
                 )
+        current = values["currentGeneration"]
+        if current is not None and (
+            isinstance(current, bool) or not isinstance(current, int) or current < 0
+        ):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
+            )
         for field in ("bestFitness", "averageFitness", "baselineFitness"):
             value = values[field]
             if value is not None and (

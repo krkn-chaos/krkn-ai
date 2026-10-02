@@ -10,6 +10,7 @@ from krkn_ai.models.app import (
     CommandRunResult,
     FitnessResult,
     KrknRunnerType,
+    auto_id,
 )
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.scenario.base import (
@@ -27,6 +28,7 @@ from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
 from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
+from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
 
 logger = get_logger(__name__)
 
@@ -66,6 +68,14 @@ class KrknRunner:
         else:
             logger.debug("Using user provided runner type: %s", runner_type)
             self.runner_type = runner_type
+        self._operator_executor: Optional[OperatorExecutor] = None
+        if (
+            self.runner_type == KrknRunnerType.OPERATOR_RUNNER
+            and self.config.genetic.composition_rate > 0
+        ):
+            raise ValueError(
+                "operator runner does not support genetic.composition_rate > 0"
+            )
 
     def __check_runner_availability(self):
         krknctl_available = True
@@ -97,8 +107,15 @@ class KrknRunner:
     ) -> None:
         self._baseline_response_stats = stats
 
-    def run(self, scenario: BaseScenario, generation_id: int) -> CommandRunResult:
+    def run(
+        self,
+        scenario: BaseScenario,
+        generation_id: int,
+        scenario_id: int | str | None = None,
+    ) -> CommandRunResult:
         logger.info("Running scenario: %s", scenario)
+        if scenario_id is None:
+            scenario_id = next(auto_id)
 
         start_time = datetime.datetime.now()
         mono_start = time.monotonic()
@@ -115,36 +132,57 @@ class KrknRunner:
             log, returncode = "", 0
         else:
             assert self.runner_type is not None
-            if isinstance(scenario, CompositeScenario):
-                command = build_graph_command(
-                    scenario, self.config.kubeconfig_file_path, self.output_dir
-                )
-            elif isinstance(scenario, Scenario):
-                command = build_scenario_command(
-                    scenario, self.config, self.runner_type
-                )
-            else:
-                raise NotImplementedError("Scenario unable to run")
-
-            try:
-                health_check_watcher.run()
-
-                log, returncode = run_shell(
-                    inject_es_config(command, self.config, self.runner_type, True),
-                    do_not_log=not is_verbose(),
-                )
-
-                if isinstance(scenario, CompositeScenario):
-                    pass
-                else:
-                    telemetry = extract_telemetry_from_log(log, returncode)
-                    returncode = telemetry.exit_status
+            if self.runner_type == KrknRunnerType.OPERATOR_RUNNER:
+                command = f"operator:{getattr(scenario, 'krknhub_image', '')}"
+                if self._operator_executor is None:
+                    self._operator_executor = OperatorExecutor(self.config)
+                try:
+                    health_check_watcher.run()
+                    log, executor_returncode = self._operator_executor.execute(
+                        scenario, generation_id, scenario_id
+                    )
+                    telemetry = extract_telemetry_from_log(log, executor_returncode)
+                    returncode = (
+                        executor_returncode
+                        if executor_returncode != 0
+                        else telemetry.exit_status
+                    )
                     run_uuid = telemetry.run_uuid
                     resiliency_score = telemetry.resiliency_score
-                logger.info("Krkn scenario return code: %d", returncode)
+                    logger.info("Krkn scenario return code: %d", returncode)
+                finally:
+                    health_check_watcher.stop()
+            else:
+                if isinstance(scenario, CompositeScenario):
+                    command = build_graph_command(
+                        scenario, self.config.kubeconfig_file_path, self.output_dir
+                    )
+                elif isinstance(scenario, Scenario):
+                    command = build_scenario_command(
+                        scenario, self.config, self.runner_type
+                    )
+                else:
+                    raise NotImplementedError("Scenario unable to run")
 
-            finally:
-                health_check_watcher.stop()
+                try:
+                    health_check_watcher.run()
+
+                    log, returncode = run_shell(
+                        inject_es_config(command, self.config, self.runner_type, True),
+                        do_not_log=not is_verbose(),
+                    )
+
+                    if isinstance(scenario, CompositeScenario):
+                        pass
+                    else:
+                        telemetry = extract_telemetry_from_log(log, returncode)
+                        returncode = telemetry.exit_status
+                        run_uuid = telemetry.run_uuid
+                        resiliency_score = telemetry.resiliency_score
+                    logger.info("Krkn scenario return code: %d", returncode)
+
+                finally:
+                    health_check_watcher.stop()
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start
@@ -233,6 +271,7 @@ class KrknRunner:
 
         return CommandRunResult(
             generation_id=generation_id,
+            scenario_id=scenario_id,
             scenario=scenario,
             cmd=inject_es_config(command, self.config, self.runner_type, False)
             if self.runner_type is not None

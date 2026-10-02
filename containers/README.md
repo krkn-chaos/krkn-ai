@@ -23,6 +23,7 @@ podman build -t krkn-ai:latest -f containers/Containerfile .
 
 > **Note:** When using a locally built image, replace `quay.io/krkn-chaos/krkn-ai:latest` with `krkn-ai:latest` in the examples below.
 
+
 ## Running the Container
 
 The container supports two modes controlled by the `MODE` environment variable:
@@ -97,7 +98,9 @@ podman run --rm \
 
 ## Podman Considerations
 
-Container version only supports krknhub runner type at the moment due to limitations around mounting podman socket.
+The full `Containerfile` image is for the local `krknhub` runner and includes
+Podman. Use `Containerfile.operator` for Kubernetes API execution; it does
+not require a Podman socket or privileged mode.
 
 ### Run without `--privileged` flag
 

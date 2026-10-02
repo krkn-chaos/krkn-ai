@@ -82,8 +82,9 @@ class BaseEngine(ABC):
         baseline_scenario = ScenarioFactory.create_dummy_scenario()
         baseline_scenario.end.value = self.config.baseline.duration
 
-        self.baseline_result = self.krkn_client.run(baseline_scenario, 0)
-        self.baseline_result.scenario_id = "baseline"
+        self.baseline_result = self.krkn_client.run(
+            baseline_scenario, 0, scenario_id="baseline"
+        )
 
         if self.config.fitness_function.include_health_check_response_time:
             stats = compute_baseline_response_stats(

@@ -61,6 +61,37 @@ class TestKrknRunnerInitialization:
             with pytest.raises(Exception, match="krknctl and podman are not available"):
                 KrknRunner(config=minimal_config, output_dir=temp_output_dir)
 
+    def test_operator_runner_rejects_composite_generation(
+        self, minimal_config, temp_output_dir
+    ):
+        minimal_config.genetic.composition_rate = 0.5
+
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            with pytest.raises(ValueError, match="composition_rate"):
+                KrknRunner(
+                    config=minimal_config,
+                    output_dir=temp_output_dir,
+                    runner_type=KrknRunnerType.OPERATOR_RUNNER,
+                )
+
+    def test_mocked_operator_runner_does_not_initialize_executor(
+        self, minimal_config, temp_output_dir
+    ):
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled",
+                return_value=True,
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.OperatorExecutor") as executor,
+        ):
+            KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.OPERATOR_RUNNER,
+            )
+
+        executor.assert_not_called()
+
 
 class TestKrknRunnerRun:
     """Test KrknRunner.run method core behavior"""
@@ -121,6 +152,37 @@ class TestKrknRunnerRun:
                 assert result.returncode == 1
                 assert result.fitness_result.fitness_score == -1.0
                 assert result.fitness_result.krkn_failure_score == -1.0
+
+    def test_operator_terminal_failure_cannot_be_masked_by_telemetry(
+        self, minimal_config, temp_output_dir
+    ):
+        minimal_config.health_checks = HealthCheckConfig()
+
+        with (
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher"
+            ) as health_check_watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
+                return_value=TelemetryResult(exit_status=0),
+            ),
+        ):
+            health_check_watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.OPERATOR_RUNNER,
+            )
+            runner._operator_executor = Mock()
+            runner._operator_executor.execute.return_value = ("scenario log", 1)
+
+            result = runner.run(
+                DummyScenario(cluster_components=ClusterComponents()),
+                generation_id=0,
+            )
+
+        assert result.returncode == 1
 
     def test_run_raises_for_unsupported_scenario_type(
         self, minimal_config, temp_output_dir

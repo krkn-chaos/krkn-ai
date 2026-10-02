@@ -1,0 +1,61 @@
+# Build dependencies in a separate stage so the operator runtime contains no
+# Podman, krknctl, oc, git, compiler toolchain, or uv executable.
+FROM python:3.12-slim-bookworm AS builder
+
+WORKDIR /app
+
+# git is required for the krkn-lib VCS dependency. Build tools cover packages
+# that need a native extension while uv resolves the locked environment.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+COPY . .
+
+# Version for setuptools-scm when .git is excluded by .dockerignore.
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
+
+RUN uv sync --frozen --no-dev --no-editable
+
+FROM python:3.12-slim-bookworm AS runtime
+
+LABEL org.opencontainers.image.title="Krkn-AI Operator Runner" \
+      org.opencontainers.image.description="Krkn-AI Kubernetes operator runner" \
+      org.opencontainers.image.source="https://github.com/krkn-chaos/krkn-ai" \
+      org.opencontainers.image.vendor="krkn-chaos" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /input /output /tmp/.uv-cache \
+    && chmod 0777 /output /tmp/.uv-cache
+
+COPY --from=builder /app /app
+COPY containers/entrypoint.sh /entrypoint.sh
+RUN chmod 0755 /entrypoint.sh
+
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+ENV UV_CACHE_DIR=/tmp/.uv-cache
+
+# The operator controller supplies the Kubernetes credentials and config via
+# mounted volumes. RUNNER_TYPE selects OperatorExecutor, which uses the
+# in-cluster Kubernetes API client rather than a local container runtime.
+ENV MODE=run
+ENV KUBECONFIG=/input/kubeconfig
+ENV CONFIG_FILE=/input/krkn-ai.yaml
+ENV OUTPUT_DIR=/output
+ENV FORMAT=yaml
+ENV RUNNER_TYPE=operator
+ENV VERBOSE=0
+ENV EXTRA_PARAMS=""
+
+ENTRYPOINT ["/entrypoint.sh"]

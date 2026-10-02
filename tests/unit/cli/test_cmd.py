@@ -115,6 +115,81 @@ class TestRunCommand:
         finally:
             os.unlink(config_path)
 
+    def test_run_uses_supplied_run_uuid_for_engine_and_output(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        supplied_uuid = "12345678-1234-5678-1234-567812345678"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+                    result = runner.invoke(
+                        main,
+                        [
+                            "run",
+                            "--config",
+                            config_path,
+                            "--output",
+                            temp_output_dir,
+                            "--run-uuid",
+                            supplied_uuid,
+                        ],
+                    )
+
+                    assert result.exit_code == 0, result.exception
+                    assert mock_ga_class.call_args.kwargs["run_uuid"] == supplied_uuid
+                    assert mock_ga_class.call_args.kwargs["output_dir"] == os.path.join(
+                        temp_output_dir, supplied_uuid
+                    )
+        finally:
+            os.unlink(config_path)
+
+    def test_run_generates_uuid_when_run_uuid_is_omitted(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        generated_uuid = "87654321-4321-8765-4321-876543218765"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.uuid.uuid4", return_value=generated_uuid):
+                    with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                        mock_ga = Mock()
+                        mock_ga_class.return_value = mock_ga
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                                "--output",
+                                temp_output_dir,
+                            ],
+                        )
+
+                        assert result.exit_code == 0, result.exception
+                        assert (
+                            mock_ga_class.call_args.kwargs["run_uuid"] == generated_uuid
+                        )
+                        assert mock_ga_class.call_args.kwargs[
+                            "output_dir"
+                        ] == os.path.join(temp_output_dir, generated_uuid)
+        finally:
+            os.unlink(config_path)
+
     def test_run_fails_when_config_missing_or_invalid(self, temp_output_dir):
         """Test command fails when config file is missing or invalid"""
         runner = CliRunner()
@@ -478,6 +553,58 @@ class TestDiscoverCommand:
                 )
                 assert result.exit_code == 0
                 assert mock_rec.call_count == expect_recommend_calls
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_recommends_fitness_queries_when_merging(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        with open(output_file, "w") as output:
+            output.write("existing: true\n")
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as kubeconfig:
+            kubeconfig.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = kubeconfig.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch("krkn_ai.cli.cmd.save_discovery") as save_discovery,
+                patch("krkn_ai.cli.cmd.create_prometheus_client"),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_fitness_queries",
+                    return_value=[
+                        {
+                            "query": "up",
+                            "type": "point",
+                            "weight": 1,
+                            "enabled": True,
+                        }
+                    ],
+                ) as recommend_fitness,
+            ):
+                mock_manager_class.return_value.discover_components.return_value = (
+                    mock_cluster_components
+                )
+                result = runner.invoke(
+                    main,
+                    [
+                        "discover",
+                        "-k",
+                        kubeconfig_path,
+                        "-o",
+                        output_file,
+                        "--save-strategy",
+                        "merge",
+                    ],
+                )
+
+            assert result.exit_code == 0
+            recommend_fitness.assert_called_once()
+            assert save_discovery.call_args.kwargs["fitness_queries"] == [
+                {"query": "up", "type": "point", "weight": 1, "enabled": True}
+            ]
         finally:
             os.unlink(kubeconfig_path)
 

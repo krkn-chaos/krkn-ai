@@ -37,7 +37,7 @@ class FitnessResult(BaseModel):
 
 class CommandRunResult(BaseModel):
     generation_id: int  # Which generation was scenario referred
-    scenario_id: int = Field(default_factory=lambda: next(auto_id))  # Scenario ID
+    scenario_id: int | str = Field(default_factory=lambda: next(auto_id))  # Scenario ID
     scenario: BaseScenario  # scenario details
     cmd: str  # Krkn-Hub command
     log: str  # Log details or path to log file
@@ -56,3 +56,4 @@ class CommandRunResult(BaseModel):
 class KrknRunnerType(str, Enum):
     HUB_RUNNER = "HUB_RUNNER"
     CLI_RUNNER = "CLI_RUNNER"
+    OPERATOR_RUNNER = "OPERATOR_RUNNER"

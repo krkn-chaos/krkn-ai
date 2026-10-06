@@ -241,7 +241,9 @@ class GeneticAlgorithm(BaseEngine):
         items = self.config.fitness_function.items
         if not items:
             return
-        weights = learn_weights(self.seen_population.values(), items)
+            
+        prom_client = getattr(self.krkn_client, 'prom_client', None)
+        weights = learn_weights(self.seen_population.values(), items, prom_client=prom_client)
         if not weights:
             return
         path = os.path.join(self.output_dir, LEARNED_WEIGHTS_FILE)

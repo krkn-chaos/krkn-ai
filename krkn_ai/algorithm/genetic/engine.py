@@ -28,6 +28,7 @@ from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
 from krkn_ai.chaos_engines.fitness import normalize_generation_scores
 from krkn_ai.utils.console import print_generation_table, print_run_summary
+from krkn_ai.utils.atomic import atomic_write_text
 
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
@@ -76,8 +77,7 @@ class GeneticAlgorithm(BaseEngine):
                 with open(results_path, "r") as f:
                     data = json.load(f)
                 data["status"] = STATUS_IN_PROGRESS
-                with open(results_path, "w") as f:
-                    json.dump(data, f)
+                atomic_write_text(results_path, json.dumps(data))
         except Exception as e:
             logger.warning("Failed to update status to in progress: %s", e)
 
@@ -97,6 +97,7 @@ class GeneticAlgorithm(BaseEngine):
             # Check stopping criteria before evaluating next generation
             if self._check_and_stop(cur_generation, elapsed_time):
                 break
+            self.set_current_generation(cur_generation)
 
             if self.algo_config.duration is not None:
                 remaining_time = self.algo_config.duration - elapsed_time
@@ -131,6 +132,8 @@ class GeneticAlgorithm(BaseEngine):
                 )
                 self.health_check_reporter.update_normalized_scores(to_normalize)
                 self.update_scenario_results(to_normalize)
+            else:
+                self.update_scenario_results(fitness_scores)
 
             fitness_scores = sorted(
                 fitness_scores,
@@ -144,6 +147,7 @@ class GeneticAlgorithm(BaseEngine):
 
             self.stopping.update_saturation_tracking()
             self.stopping.update_exploration_tracking()
+            self.complete_generation(cur_generation, fitness_scores)
 
             cur_generation += 1
 

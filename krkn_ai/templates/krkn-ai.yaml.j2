@@ -25,10 +25,14 @@ algorithm: genetic
 
 # Genetic algorithm configuration
 genetic:
-  generations: 2
-  population_size: 2
-  composition_rate: 0
-  population_injection_rate: 0
+  generations: 20
+  population_size: 10
+  mutation_rate: 0.7
+  scenario_mutation_rate: 0.6
+  crossover_rate: 0.6
+  composition_rate: 0.0
+  population_injection_rate: 0.0
+  population_injection_size: 2
 
   # Uncomment this to enable overall run timeout
   # duration: 600

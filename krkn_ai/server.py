@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -21,6 +22,7 @@ from urllib.parse import quote
 import requests
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -37,6 +39,7 @@ from krkn_ai.run_results import (
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
 MANIFEST_NAME = "manifest.json"
+RESULT_VIEW_FORMAT_VERSION = 1
 COMPLETE_MARKER = ".krkn-ai-complete"
 DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 DEFAULT_MAX_RUN_BYTES = 1024 * 1024 * 1024
@@ -126,6 +129,21 @@ class ArtifactStore:
         self.max_artifact_bytes = max_artifact_bytes
         self.max_run_bytes = max_run_bytes
         self._commit_lock = threading.Lock()
+        self._projection_lock = threading.Lock()
+
+    def projection_path(self, uid: str) -> Path:
+        return self.root / ".result-views" / _safe_uid(uid) / "projection.json"
+
+    @staticmethod
+    def manifest_lookup(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        lookup: dict[str, dict[str, Any]] = {}
+        for entry in manifest["files"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+                )
+            lookup[entry["path"]] = entry
+        return lookup
 
     def run_dir(self, uid: str) -> Path:
         return self.root / "runs" / _safe_uid(uid)
@@ -288,10 +306,28 @@ class ArtifactStore:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
 
     def read_verified(
-        self, uid: str, path: str, manifest: dict[str, Any]
+        self,
+        uid: str,
+        path: str,
+        manifest: dict[str, Any],
+        lookup: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[bytes, str]:
         relative_path = _safe_path(path)
-        entry = self._manifest_entry(manifest, relative_path)
+        entry = (
+            lookup.get(str(relative_path))
+            if lookup is not None
+            else self._manifest_entry(manifest, relative_path)
+        )
+        if entry is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
+        if (
+            not isinstance(entry.get("sha256"), str)
+            or not isinstance(entry.get("size"), int)
+            or entry["size"] < 0
+        ):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
         candidate = self.run_dir(uid) / relative_path
         try:
             with candidate.open("rb") as source:
@@ -310,10 +346,28 @@ class ArtifactStore:
         return content, actual_checksum
 
     def open_verified(
-        self, uid: str, path: str, manifest: dict[str, Any]
+        self,
+        uid: str,
+        path: str,
+        manifest: dict[str, Any],
+        lookup: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[BinaryIO, int]:
         relative_path = _safe_path(path)
-        entry = self._manifest_entry(manifest, relative_path)
+        entry = (
+            lookup.get(str(relative_path))
+            if lookup is not None
+            else self._manifest_entry(manifest, relative_path)
+        )
+        if entry is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact not found")
+        if (
+            not isinstance(entry.get("sha256"), str)
+            or not isinstance(entry.get("size"), int)
+            or entry["size"] < 0
+        ):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
         candidate = self.run_dir(uid) / relative_path
         try:
             source = candidate.open("rb")
@@ -369,25 +423,296 @@ def create_app(
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid service token")
 
-    def typed_snapshot(uid: str):
+    def projection_revision(manifest: dict[str, Any], paths, lookup) -> str:
+        entries = [
+            {
+                "path": path,
+                "sha256": lookup[path]["sha256"],
+                "size": lookup[path]["size"],
+            }
+            for path in paths
+        ]
+        encoded = json.dumps(
+            [RESULT_VIEW_FORMAT_VERSION, manifest.get("status"), entries],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    def valid_projection_record(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        error = record.get("error")
+        if isinstance(error, dict):
+            return (
+                type(error.get("status_code")) is int
+                and "detail" in error
+                and len(record) == 1
+            )
+        return isinstance(record.get("value"), dict) and len(record) == 1
+
+    def valid_detail_reference(value: Any, key: str) -> bool:
+        expected_name = f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+        return (
+            isinstance(value, dict)
+            and set(value) == {"file", "sha256"}
+            and value["file"] == expected_name
+            and isinstance(value["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is not None
+        )
+
+    def read_projection(uid: str, revision: str):
+        try:
+            projection = json.loads(store.projection_path(uid).read_text())
+        except FileNotFoundError:
+            return None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        view_id = projection.get("viewId") if isinstance(projection, dict) else None
+        if (
+            not isinstance(projection, dict)
+            or projection.get("revision") != revision
+            or projection.get("formatVersion") != RESULT_VIEW_FORMAT_VERSION
+            or not isinstance(view_id, str)
+            or not view_id.startswith(".view-")
+            or Path(view_id).name != view_id
+        ):
+            return None
+        shared_error = projection.get("sharedError")
+        if shared_error is not None:
+            if (
+                not isinstance(shared_error, dict)
+                or type(shared_error.get("status_code")) is not int
+                or "detail" not in shared_error
+            ):
+                return None
+            return projection
+        if (
+            not valid_projection_record(projection.get("summary"))
+            or not valid_projection_record(projection.get("index"))
+            or not isinstance(projection.get("details"), dict)
+            or any(
+                not isinstance(key, str)
+                or not (
+                    (
+                        isinstance(record, dict)
+                        and "error" in record
+                        and valid_projection_record(record)
+                    )
+                    or valid_detail_reference(record, key)
+                )
+                for key, record in projection["details"].items()
+            )
+        ):
+            return None
+        return projection
+
+    def begin_projection_view(uid: str) -> Path:
+        views_path = store.projection_path(uid).parent / "views"
+        views_path.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=".view-", dir=views_path))
+
+    def write_detail_body(
+        view_path: Path, key: str, value: dict[str, Any]
+    ) -> dict[str, str]:
+        name = f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+        encoded = json.dumps(
+            jsonable_encoder({"value": value}), separators=(",", ":")
+        ).encode()
+        body_path = view_path / name
+        with body_path.open("wb") as body:
+            body.write(encoded)
+            body.flush()
+            os.fsync(body.fileno())
+        return {"file": name, "sha256": hashlib.sha256(encoded).hexdigest()}
+
+    def read_detail_record(
+        uid: str, projection: dict[str, Any], key: str
+    ) -> tuple[bool, dict[str, Any] | None]:
+        reference = projection["details"].get(key)
+        if reference is None:
+            return True, None
+        if isinstance(reference, dict) and "error" in reference:
+            return True, reference
+        view_path = store.projection_path(uid).parent / "views" / projection["viewId"]
+        try:
+            encoded = (view_path / reference["file"]).read_bytes()
+        except FileNotFoundError:
+            return False, None
+        if not hmac.compare_digest(
+            hashlib.sha256(encoded).hexdigest(), reference["sha256"]
+        ):
+            return False, None
+        try:
+            record = json.loads(encoded)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False, None
+        if not valid_projection_record(record) or "value" not in record:
+            return False, None
+        return True, record
+
+    def write_projection(uid: str, projection: dict[str, Any], view_path: Path) -> None:
+        path = store.projection_path(uid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        projection["viewId"] = view_path.name
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".projection-", dir=path.parent
+        )
+        try:
+            with os.fdopen(descriptor, "w") as temporary:
+                json.dump(
+                    jsonable_encoder(projection), temporary, separators=(",", ":")
+                )
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, path)
+        finally:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+
+    def cleanup_projection_views(uid: str, current_view: Path) -> None:
+        views_path = store.projection_path(uid).parent / "views"
+        for old_view in views_path.iterdir():
+            if old_view.name == current_view.name:
+                continue
+            if old_view.is_dir():
+                shutil.rmtree(old_view)
+            else:
+                old_view.unlink()
+
+    def projection_record(build):
+        try:
+            return {"value": build()}
+        except HTTPException as exc:
+            return {
+                "error": {
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                }
+            }
+
+    def projection_value(record: dict[str, Any]):
+        error = record.get("error")
+        if isinstance(error, dict):
+            raise HTTPException(error["status_code"], error["detail"])
+        return record["value"]
+
+    def verify_sources(uid: str, manifest: dict[str, Any], paths, lookup) -> None:
+        for path in paths:
+            source, _size = store.open_verified(uid, path, manifest, lookup)
+            source.close()
+
+    def cached_projection(
+        uid: str, manifest: dict[str, Any], revision: str, paths, lookup, detail_key
+    ):
+        projection = read_projection(uid, revision)
+        if projection is None:
+            return None, None
+        verify_sources(uid, manifest, paths, lookup)
+        if "sharedError" in projection:
+            projection_value({"error": projection["sharedError"]})
+        detail_record = None
+        if detail_key is not None:
+            cache_valid, detail_record = read_detail_record(uid, projection, detail_key)
+            if not cache_valid:
+                return None, None
+        return projection, detail_record
+
+    def typed_views(uid: str, detail_key: str | None = None):
         try:
             manifest = store.manifest(uid)
         except HTTPException as exc:
             if exc.status_code == status.HTTP_404_NOT_FOUND:
-                return None, None
+                return None, None, None
             raise
-        selected_files: dict[str, tuple[bytes, str]] = {}
-        for entry in manifest["files"]:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
-                raise HTTPException(
-                    status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
-                )
-            path = entry["path"]
-            if path in {"progress.json", "results.json"} or re.fullmatch(
+
+        lookup = store.manifest_lookup(manifest)
+        paths = [
+            path
+            for path in lookup
+            if path in {"progress.json", "results.json"}
+            or re.fullmatch(
                 r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)", path
-            ):
-                selected_files[path] = store.read_verified(uid, path, manifest)
-        return manifest, parse_run_artifacts(selected_files)
+            )
+        ]
+        revision = projection_revision(manifest, paths, lookup)
+        projection, detail_record = cached_projection(
+            uid, manifest, revision, paths, lookup, detail_key
+        )
+        if projection is not None:
+            return manifest, projection, detail_record
+
+        with store._projection_lock:
+            projection, detail_record = cached_projection(
+                uid, manifest, revision, paths, lookup, detail_key
+            )
+            if projection is not None:
+                return manifest, projection, detail_record
+            view_path = begin_projection_view(uid)
+            published = False
+            try:
+                selected_files = {
+                    path: store.read_verified(uid, path, manifest, lookup)
+                    for path in paths
+                }
+                try:
+                    artifacts = parse_run_artifacts(selected_files)
+                except HTTPException as exc:
+                    projection = {
+                        "revision": revision,
+                        "formatVersion": RESULT_VIEW_FORMAT_VERSION,
+                        "sharedError": {
+                            "status_code": exc.status_code,
+                            "detail": exc.detail,
+                        },
+                        "summary": {},
+                        "index": {},
+                        "details": {},
+                    }
+                    write_projection(uid, projection, view_path)
+                    published = True
+                    cleanup_projection_views(uid, view_path)
+                    raise
+
+                terminal = manifest.get("status") in {"succeeded", "failed"}
+                details = {}
+                detail_record = None
+                for key, artifact in artifacts.scenarios.items():
+                    record = projection_record(
+                        lambda value=artifact: scenario_detail(
+                            value, artifacts, terminal
+                        )
+                    )
+                    if key == detail_key:
+                        detail_record = record
+                    details[key] = (
+                        record
+                        if "error" in record
+                        else write_detail_body(view_path, key, record["value"])
+                    )
+                projection = {
+                    "revision": revision,
+                    "formatVersion": RESULT_VIEW_FORMAT_VERSION,
+                    "summary": projection_record(
+                        lambda: summary_payload(manifest, artifacts)
+                    ),
+                    "index": projection_record(
+                        lambda: {
+                            "scenarios": [
+                                scenario_index_row(value, artifacts, terminal)
+                                for value in artifacts.scenarios.values()
+                            ]
+                        }
+                    ),
+                    "details": details,
+                }
+                write_projection(uid, projection, view_path)
+                published = True
+                cleanup_projection_views(uid, view_path)
+                return manifest, projection, detail_record
+            finally:
+                if not published and view_path.exists():
+                    shutil.rmtree(view_path)
 
     def not_available_summary() -> dict[str, Any]:
         return {
@@ -526,111 +851,22 @@ def create_app(
         dependencies=[Depends(authenticate)],
     )
     def typed_summary(uid: str) -> dict[str, Any]:
-        manifest, artifacts = typed_snapshot(uid)
-        return summary_payload(manifest, artifacts)
+        manifest, projection, _detail = typed_views(uid)
+        if manifest is None:
+            return not_available_summary()
+        return projection_value(projection["summary"])
 
     @app.get(
         "/v1/runs/{uid}/scenarios",
         dependencies=[Depends(authenticate)],
     )
     def scenario_index(uid: str, request: Request) -> dict[str, Any]:
-        allowed = {
-            "page",
-            "limit",
-            "generation",
-            "scenarioType",
-            "search",
-            "sort",
-            "direction",
-        }
-        params = request.query_params
-        if set(params.keys()) - allowed:
+        if request.query_params:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query")
-        try:
-            page = int(params.get("page", "1"))
-            limit = int(params.get("limit", "100"))
-            generation_filter = (
-                int(params["generation"]) if "generation" in params else None
-            )
-        except ValueError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query") from exc
-        sort = params.get("sort", "generation")
-        direction = params.get("direction", "asc")
-        sort_fields = {
-            "generation",
-            "scenarioId",
-            "scenarioType",
-            "fitnessScore",
-            "outcome",
-            "durationSeconds",
-        }
-        if (
-            page < 1
-            or limit < 1
-            or limit > 500
-            or (generation_filter is not None and generation_filter < 0)
-            or sort not in sort_fields
-            or direction not in {"asc", "desc"}
-        ):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query")
-        manifest, artifacts = typed_snapshot(uid)
+        manifest, projection, _detail = typed_views(uid)
         if manifest is None:
-            rows = []
-            terminal = False
-        else:
-            terminal = manifest["status"] in {"succeeded", "failed"}
-            rows = [
-                scenario_index_row(value, artifacts, terminal)
-                for value in artifacts.scenarios.values()
-            ]
-        scenario_type_filter = params.get("scenarioType")
-        search = params.get("search", "").casefold()
-        rows = [
-            row
-            for row in rows
-            if (generation_filter is None or row["generation"] == generation_filter)
-            and (
-                scenario_type_filter is None
-                or (row["scenarioType"] or "").casefold()
-                == scenario_type_filter.casefold()
-            )
-            and (
-                not search
-                or search in row["scenarioId"].casefold()
-                or search in (row["scenarioType"] or "").casefold()
-            )
-        ]
-
-        def sort_value(row: dict[str, Any]):
-            value = row[sort]
-            if value is None:
-                return (1, 0, "")
-            if sort == "generation":
-                baseline_rank = 0 if row["scenarioId"] == "baseline" else 1
-                return (0, value, baseline_rank)
-            if sort == "scenarioId":
-                if row["scenarioId"] == "baseline":
-                    return (0, 0, 0.0)
-                try:
-                    return (0, 1, float(value))
-                except (TypeError, ValueError):
-                    return (0, 2, str(value).casefold())
-            if isinstance(value, str):
-                value = value.casefold()
-            return (0, 0, value)
-
-        rows.sort(key=sort_value, reverse=direction == "desc")
-        total = len(rows)
-        start = (page - 1) * limit
-        return {
-            "scenarios": rows[start : start + limit],
-            "pagination": {
-                "page": page,
-                "limit": limit,
-                "total": total,
-                "totalPages": (total + limit - 1) // limit,
-            },
-        }
+            return {"scenarios": []}
+        return projection_value(projection["index"])
 
     @app.get(
         "/v1/runs/{uid}/scenarios/{generation}/{scenario_id}",
@@ -647,18 +883,13 @@ def create_app(
             ) from exc
         if generation_id < 0:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid generation")
-        manifest, artifacts = typed_snapshot(uid)
+        key = f"{generation_id}:{scenario_id}"
+        manifest, _projection, record = typed_views(uid, key)
         if manifest is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "scenario not found")
-        key = f"{generation_id}:{scenario_id}"
-        artifact = artifacts.scenarios.get(key)
-        if artifact is None:
+        if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "scenario not found")
-        return scenario_detail(
-            artifact,
-            artifacts,
-            manifest["status"] in {"succeeded", "failed"},
-        )
+        return projection_value(record)
 
     @app.post("/v1/discoveries", dependencies=[Depends(authenticate)])
     def discover(request: DiscoveryRequest) -> dict[str, Any]:
@@ -703,7 +934,16 @@ def create_app(
 
     @app.post("/v1/runs/{uid}/commit", dependencies=[Depends(authenticate)])
     def commit(uid: str, request: CommitRequest) -> dict[str, Any]:
-        return store.commit(uid, request)
+        manifest = store.commit(uid, request)
+        try:
+            typed_views(uid)
+        except HTTPException as exc:
+            if exc.status_code not in {
+                status.HTTP_502_BAD_GATEWAY,
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            }:
+                raise
+        return manifest
 
     @app.get("/v1/runs/{uid}/results", dependencies=[Depends(authenticate)])
     def results(uid: str) -> dict[str, Any]:

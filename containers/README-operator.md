@@ -101,6 +101,8 @@ helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator
 
 The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 `RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
+Operator-created runs use `FORMAT=json` for machine-readable result artifacts;
+the input configuration remains YAML. Standalone CLI output format is unchanged.
 Use the `KrknAIRun` and target Secret procedure in
 [`../hack/README.md`](../hack/README.md) for a complete cluster test.
 
@@ -130,6 +132,23 @@ by a failed run. Typed reads verify result bytes against the copied manifest and
 return `503 artifact_updating` during an upload or normalization boundary.
 Retry the next poll rather than treating a transient mismatch as a missing
 result.
+
+`GET /v1/runs/{uid}/scenarios` returns the complete committed
+`{"scenarios":[...]}` collection and rejects query parameters. The operator
+combines that collection with live child-job metadata before filtering, sorting,
+and pagination; the artifact service does not own public table queries.
+
+The service materializes current-revision API views after commit, or on first
+access to an older stored run. Compact summary/index metadata and separate
+scenario bodies are stored under `.result-views/{uid}/`, outside the uploaded
+run inventory. Summary/index reads do not load health samples; a detail read
+loads only its selected body. Source checksums are still verified on every typed
+read, so cached views do not conceal upload mismatches. Only the current view is
+retained per run; these service-managed files consume additional PVC capacity
+but are not included in results downloads. Generic artifact commits remain
+supported, with typed-data errors reported by the corresponding typed reads.
+Log/report-only checkpoints reuse the current view; result-file checksums and
+manifest status determine when result projections must be rebuilt.
 
 Configure that PVC at the installation level:
 

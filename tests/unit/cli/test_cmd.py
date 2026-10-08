@@ -12,7 +12,10 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from krkn_ai.cli.cmd import main
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+    PrometheusConnectionError,
+)
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile
 
@@ -764,3 +767,343 @@ class TestDiscoverCommand:
             assert result.exit_code != 0
         finally:
             os.unlink(kubeconfig_path)
+
+
+class TestValidateCommand:
+    """Test behavior of the validate command"""
+
+    def _write_config(self, tmp_path, config_dict=None, text=None):
+        config_path = tmp_path / "krkn-ai.yaml"
+        if text is not None:
+            config_path.write_text(text)
+        else:
+            config_path.write_text(yaml.safe_dump(config_dict))
+        return str(config_path)
+
+    def _valid_config_dict(self):
+        return {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "scenario": {"pod_scenarios": {"enable": True}},
+            "health_checks": {
+                "applications": [{"name": "api", "url": "http://$HOST/health"}]
+            },
+        }
+
+    def test_valid_config_succeeds_offline(self, tmp_path):
+        """A valid config passes without contacting the cluster or Prometheus"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+        ):
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+            assert result.exit_code == 0, result.output
+            mock_cm.assert_not_called()
+            mock_prom.assert_not_called()
+
+    def test_valid_config_logs_enabled_scenarios(self, tmp_path):
+        """Enabled scenarios are reported so users can confirm their config"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["scenario"]["network_scenarios"] = {"enable": True}
+        config_path = self._write_config(tmp_path, config)
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+        assert result.exit_code == 0, result.output
+        logged = [str(call) for call in mock_logger.info.call_args_list]
+        assert any("pod_scenarios, network_scenarios" in entry for entry in logged), (
+            logged
+        )
+
+    def test_missing_config_path_fails(self):
+        """Empty or non-existent config paths fail before any parsing"""
+        runner = CliRunner()
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+
+            result = runner.invoke(main, ["validate", "-c", ""])
+            assert result.exit_code == 1
+            assert "Config file invalid" in str(mock_logger.error.call_args)
+
+            mock_logger.reset_mock()
+            result = runner.invoke(main, ["validate", "-c", "/nonexistent.yaml"])
+            assert result.exit_code == 1
+            assert "Config file not found" in str(mock_logger.error.call_args)
+
+    def test_malformed_yaml_fails_cleanly(self, tmp_path):
+        """A YAML syntax error produces an error log, not a traceback"""
+        runner = CliRunner()
+        config_path = self._write_config(
+            tmp_path, text="kubeconfig_file_path: [unclosed\n"
+        )
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+        assert result.exit_code == 1
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert "not valid YAML" in str(mock_logger.error.call_args)
+
+    def test_non_mapping_config_fails(self, tmp_path):
+        """A YAML list at the top level is rejected"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, text="- just\n- a list\n")
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+        assert result.exit_code == 1
+        assert "must be a mapping" in str(mock_logger.error.call_args)
+
+    def test_schema_error_reports_field_path(self, tmp_path):
+        """Schema errors name the failing field and the reason"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        del config["fitness_function"]
+        config["wait_duration"] = -5
+        config_path = self._write_config(tmp_path, config)
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+        assert result.exit_code == 1
+        mock_logger.error.assert_called_once()
+        template, count, details = mock_logger.error.call_args.args
+        assert count == 2
+        assert "fitness_function: Field required" in details
+        assert "wait_duration: Input should be greater than or equal to 0" in details
+
+    def test_no_enabled_scenarios_fails(self, tmp_path):
+        """A schema-valid config with every scenario disabled is rejected"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["scenario"] = {"pod_scenarios": {"enable": False}}
+        config_path = self._write_config(tmp_path, config)
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(main, ["validate", "-c", config_path])
+
+        assert result.exit_code == 1
+        assert "No scenarios are enabled" in str(mock_logger.error.call_args)
+
+    def test_params_are_applied(self, tmp_path):
+        """-p values are substituted exactly as the run command does"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with patch("krkn_ai.cli.cmd.read_config_from_file") as mock_read:
+            mock_read.return_value = ConfigFile.model_validate(
+                self._valid_config_dict()
+            )
+            result = runner.invoke(
+                main, ["validate", "-c", config_path, "-p", "HOST=example.com"]
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_read.assert_called_once_with(config_path, ("HOST=example.com",), None)
+
+    def test_bad_kubeconfig_override_is_rejected(self, tmp_path):
+        """A -k path that does not exist fails instead of being silently ignored"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["validate", "-c", config_path, "-k", "/nonexistent/kubeconfig"]
+            )
+
+        assert result.exit_code == 1
+        assert "Kubeconfig file not found" in str(mock_logger.error.call_args)
+
+    def test_malformed_health_checks_with_params_reports_field(self, tmp_path):
+        """A null health_checks section with -p is reported by pydantic, not a crash"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["health_checks"] = None
+        config_path = self._write_config(tmp_path, config)
+
+        with patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger:
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["validate", "-c", config_path, "-p", "HOST=example.com"]
+            )
+
+        assert result.exit_code == 1
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        _, _, details = mock_logger.error.call_args.args
+        assert details.startswith("  health_checks:")
+
+    def test_check_connectivity_missing_kubeconfig_still_checks_prometheus(
+        self, tmp_path
+    ):
+        """A missing kubeconfig fails the cluster check but Prometheus is still probed"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["kubeconfig_file_path"] = str(tmp_path / "missing-kubeconfig")
+        config_path = self._write_config(tmp_path, config)
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["validate", "-c", config_path, "--check-connectivity"]
+            )
+
+        assert result.exit_code == 1
+        assert "kubeconfig file not found" in str(mock_logger.error.call_args)
+        mock_cm.assert_not_called()
+        mock_prom.assert_called_once()
+
+    def test_check_connectivity_skips_prometheus_in_mock_mode(
+        self, tmp_path, monkeypatch
+    ):
+        """MOCK_FITNESS would make the Prometheus probe a no-op, so it is reported as skipped"""
+        runner = CliRunner()
+        monkeypatch.setenv("MOCK_FITNESS", "true")
+        kubeconfig_path = tmp_path / "kubeconfig"
+        kubeconfig_path.write_text("apiVersion: v1\n")
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager"),
+            patch("krkn_ai.cli.cmd.VersionApi"),
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main,
+                [
+                    "validate",
+                    "-c",
+                    config_path,
+                    "-k",
+                    str(kubeconfig_path),
+                    "--check-connectivity",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_prom.assert_not_called()
+        assert "Prometheus check skipped" in str(mock_logger.warning.call_args)
+
+    def test_check_connectivity_handles_library_exit(self, tmp_path):
+        """krkn-lib exits the process on client init failure; validate reports it instead"""
+        runner = CliRunner()
+        kubeconfig_path = tmp_path / "kubeconfig"
+        kubeconfig_path.write_text("apiVersion: v1\n")
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager"),
+            patch("krkn_ai.cli.cmd.VersionApi"),
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            mock_prom.side_effect = SystemExit(1)
+            result = runner.invoke(
+                main,
+                [
+                    "validate",
+                    "-c",
+                    config_path,
+                    "-k",
+                    str(kubeconfig_path),
+                    "--check-connectivity",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "client initialization failed" in str(mock_logger.error.call_args)
+
+    def test_check_connectivity_succeeds(self, tmp_path):
+        """--check-connectivity passes when cluster and Prometheus respond"""
+        runner = CliRunner()
+        kubeconfig_path = tmp_path / "kubeconfig"
+        kubeconfig_path.write_text("apiVersion: v1\n")
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+            patch("krkn_ai.cli.cmd.VersionApi") as mock_version_api,
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "validate",
+                    "-c",
+                    config_path,
+                    "-k",
+                    str(kubeconfig_path),
+                    "--check-connectivity",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_cm.assert_called_once_with(str(kubeconfig_path))
+        mock_version_api.assert_called_once_with(mock_cm.return_value.api_client)
+        mock_version_api.return_value.get_code.assert_called_once()
+        mock_prom.assert_called_once_with(str(kubeconfig_path))
+
+    def test_check_connectivity_reports_both_failures(self, tmp_path):
+        """Cluster and Prometheus are both checked even when the first fails"""
+        runner = CliRunner()
+        kubeconfig_path = tmp_path / "kubeconfig"
+        kubeconfig_path.write_text("apiVersion: v1\n")
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch("krkn_ai.cli.cmd.ClusterManager") as mock_cm,
+            patch("krkn_ai.cli.cmd.create_prometheus_client") as mock_prom,
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            mock_cm.side_effect = RuntimeError("connection refused")
+            mock_prom.side_effect = PrometheusConnectionError("no prometheus")
+            result = runner.invoke(
+                main,
+                [
+                    "validate",
+                    "-c",
+                    config_path,
+                    "-k",
+                    str(kubeconfig_path),
+                    "--check-connectivity",
+                ],
+            )
+
+        assert result.exit_code == 1
+        errors = " ".join(str(call) for call in mock_logger.error.call_args_list)
+        assert "Cluster is not reachable" in errors
+        assert "Prometheus is not reachable" in errors
+        mock_prom.assert_called_once()

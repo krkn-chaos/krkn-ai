@@ -157,3 +157,42 @@ def test_unmutated_generation_preserves_fitness_and_child_lineage(
         assert child["origin"] == ScenarioOrigin.CROSSOVER
         assert child["scenario_uuid"] not in [p.id for p in parents]
         assert set(child["parent_ids"]) == {p.id for p in parents}
+
+
+def test_dry_run_keeps_mock_fitness_off_the_console(genetic_algorithm, monkeypatch):
+    """In a dry run the generation and summary tables are replaced by log lines"""
+    engine = genetic_algorithm
+    engine.config.baseline.enable = False
+    engine.config.fitness_function.items = []
+    engine.algo_config.population_size = 2
+    engine.algo_config.generations = 1
+    engine.algo_config.population_injection_rate = 0.0
+    parents = [DummyScenario(cluster_components=ClusterComponents()) for _ in range(2)]
+    parents[0].end.value = 10
+    parents[1].end.value = 20
+    monkeypatch.setattr(engine, "create_population", lambda size: parents)
+
+    def evaluate(scenario, generation):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return CommandRunResult(
+            generation_id=generation,
+            scenario=scenario,
+            cmd="",
+            log="",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=float(scenario.end.value)),
+        )
+
+    engine.krkn_client.run.side_effect = evaluate
+    monkeypatch.setenv("KRKN_AI_DRY_RUN", "true")
+    with (
+        patch("krkn_ai.algorithm.genetic.engine.print_generation_table") as table,
+        patch("krkn_ai.algorithm.genetic.engine.print_run_summary") as summary,
+    ):
+        engine.simulate()
+
+    table.assert_not_called()
+    summary.assert_not_called()
+    assert engine.completed_generations == 1

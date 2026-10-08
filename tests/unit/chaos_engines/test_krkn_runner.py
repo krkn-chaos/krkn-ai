@@ -120,6 +120,31 @@ class TestKrknRunnerRun:
             assert isinstance(result.start_time, datetime.datetime)
             assert isinstance(result.end_time, datetime.datetime)
 
+    def test_dry_run_skips_the_mock_scenario_delay(
+        self, minimal_config, temp_output_dir
+    ):
+        """A dry run must not sleep per scenario, or a full mock run takes minutes"""
+        minimal_config.fitness_function = FitnessFunction(
+            query="test_query", type=FitnessFunctionType.point
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+
+        with (
+            patch.dict(os.environ, {"MOCK": "true", "KRKN_AI_DRY_RUN": "true"}),
+            patch("krkn_ai.chaos_engines.krkn_runner.time.sleep") as mock_sleep,
+        ):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            result = runner.run(
+                DummyScenario(cluster_components=ClusterComponents()), generation_id=0
+            )
+
+        assert result.returncode == 0
+        mock_sleep.assert_not_called()
+
     @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
     @patch("krkn_ai.chaos_engines.krkn_runner.run_shell")
     def test_run_handles_misconfiguration_failure(

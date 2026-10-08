@@ -24,6 +24,24 @@ def is_mock_enabled(mock_type: MockType) -> bool:
     return _env_is_truthy(_GLOBAL_VAR) or _env_is_truthy(mock_type.value)
 
 
+_DRY_RUN_VAR = "KRKN_AI_DRY_RUN"
+
+
+def enable_dry_run() -> None:
+    """Turn on every mock and flag the process as a dry run.
+
+    A dry run exercises the whole pipeline without a cluster, Prometheus or
+    chaos execution; callers use is_dry_run() to skip the mock delays and keep
+    the mock fitness values off the console.
+    """
+    os.environ[_GLOBAL_VAR] = "true"
+    os.environ[_DRY_RUN_VAR] = "true"
+
+
+def is_dry_run() -> bool:
+    return _env_is_truthy(_DRY_RUN_VAR)
+
+
 def generate_mock_health_check_results(
     health_check_config, sample_count: int = 5
 ) -> Dict[str, List]:

@@ -159,12 +159,18 @@ krkn_ai run \
   -p HOST=$HOST
 ```
 
+Add `--dry-run` to validate the config and simulate the whole run with the cluster, Prometheus and chaos execution mocked. It exits non-zero on an invalid config, executes no scenario and writes nothing to the output directory, so it can gate CI:
+
+```bash
+krkn_ai run --dry-run -c ./tmp/krkn-ai.yaml -p HOST=$HOST
+```
+
 ## 💻 CLI Reference
 
 | Command | Key Options |
 |---------|-------------|
 | `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
-| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
+| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port`, `--dry-run` |
 | `monitor` | `-o` results dir, `-p` port |
 
 Run any command with `--help` for full details.

@@ -1,5 +1,5 @@
 import math
-from typing import Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field, PrivateAttr
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
@@ -365,6 +365,20 @@ class PodNameParameter(BaseParameter):
                 self._namespace, self.value, self._owner_kind, self._owner_name
             )
         return self.value
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "value": self.value,
+            "namespace": self._namespace,
+            "owner_kind": self._owner_kind,
+            "owner_name": self._owner_name,
+        }
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        self.value = state["value"]
+        self._namespace = state.get("namespace", "")
+        self._owner_kind = state.get("owner_kind")
+        self._owner_name = state.get("owner_name")
 
 
 class IngressParameter(BaseParameter):

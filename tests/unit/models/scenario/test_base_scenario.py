@@ -159,3 +159,55 @@ class TestCompositeScenario:
 
         # Test string representation (used in logging)
         assert str(composite1) == "composite1"
+
+
+class TestParameterState:
+    """get_state/set_state carry everything the genetic operators must copy"""
+
+    def test_base_parameter_state_round_trip(self):
+        from krkn_ai.models.scenario.parameters import NamespaceParameter
+
+        source = NamespaceParameter(value="billing")
+        target = NamespaceParameter(value="shipping")
+
+        target.set_state(source.get_state())
+
+        assert target.value == "billing"
+
+    def test_pod_name_parameter_state_includes_owner_metadata(self):
+        from krkn_ai.models.cluster_components import OwnerReference, Pod
+        from krkn_ai.models.scenario.parameters import PodNameParameter
+
+        source = PodNameParameter()
+        source.set_pod(
+            "billing",
+            Pod(name="api-abc", owner=OwnerReference(kind="Deployment", name="api")),
+        )
+        target = PodNameParameter()
+        target.set_pod("shipping", Pod(name="worker-xyz"))
+
+        target.set_state(source.get_state())
+
+        assert target.value == "api-abc"
+        assert target._namespace == "billing"
+        assert target._owner_kind == "Deployment"
+        assert target._owner_name == "api"
+
+    def test_pod_name_parameter_state_clears_missing_owner(self):
+        from krkn_ai.models.cluster_components import OwnerReference, Pod
+        from krkn_ai.models.scenario.parameters import PodNameParameter
+
+        source = PodNameParameter()
+        source.set_pod("billing", Pod(name="standalone"))
+        target = PodNameParameter()
+        target.set_pod(
+            "shipping",
+            Pod(name="worker-xyz", owner=OwnerReference(kind="Deployment", name="w")),
+        )
+
+        target.set_state(source.get_state())
+
+        assert target.value == "standalone"
+        assert target._namespace == "billing"
+        assert target._owner_kind is None
+        assert target._owner_name is None

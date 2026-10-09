@@ -285,3 +285,69 @@ class TestJSONSummaryReporter:
         node = reporter.generate_summary()["population_lineage"][0]
         assert node["parent_ids"] == []
         assert node["origin"] == ScenarioOrigin.INITIAL
+
+
+class TestFitnessProgressionWithRepeatedScenarios:
+    """Per-generation averages must count cache hits in the generation they
+    reappear in, not only the generation they first ran in (#348)."""
+
+    def _result(self, gen_id, sid, score, scenario, now):
+        return CommandRunResult(
+            generation_id=gen_id,
+            scenario_id=sid,
+            scenario=scenario,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=score),
+        )
+
+    def test_engine_averages_override_cache_attribution(self, minimal_config):
+        now = datetime.datetime(2023, 1, 1, tzinfo=datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=minimal_config.cluster_components)
+
+        # seen_population keeps one entry per scenario, pinned to its first run.
+        # The repeated scenario (score 80) ran in gen 0 and again in gen 1;
+        # gen 1 also evaluated one new scenario (score 20).
+        repeated = self._result(0, 1, 80.0, scenario, now)
+        fresh_gen1 = self._result(1, 2, 20.0, scenario, now)
+        seen_population = {1: repeated, 2: fresh_gen1}
+        best = [repeated, self._result(1, 1, 80.0, scenario, now)]
+
+        reporter = JSONSummaryReporter(
+            run_uuid="r",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population=seen_population,
+            best_of_generation=best,
+            completed_generations=2,
+            generation_averages={0: 80.0, 1: 50.0},
+        )
+
+        progression = reporter.generate_summary()["fitness_progression"]
+
+        assert progression[0] == {"generation": 0, "best": 80.0, "average": 80.0}
+        assert progression[1] == {"generation": 1, "best": 80.0, "average": 50.0}
+
+    def test_without_engine_averages_falls_back_to_cache(self, minimal_config):
+        """Callers that do not pass engine averages keep the previous behaviour"""
+        now = datetime.datetime(2023, 1, 1, tzinfo=datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=minimal_config.cluster_components)
+        repeated = self._result(0, 1, 80.0, scenario, now)
+        fresh_gen1 = self._result(1, 2, 20.0, scenario, now)
+        best = [repeated, self._result(1, 1, 80.0, scenario, now)]
+
+        reporter = JSONSummaryReporter(
+            run_uuid="r",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={1: repeated, 2: fresh_gen1},
+            best_of_generation=best,
+            completed_generations=2,
+        )
+
+        progression = reporter.generate_summary()["fitness_progression"]
+
+        assert progression[1]["average"] == 20.0

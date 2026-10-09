@@ -179,6 +179,15 @@ class BaseEngine(ABC):
         self.current_generation = None
         self._write_progress()
 
+    @property
+    def generation_averages(self) -> dict[int, float]:
+        """Mean fitness of every scenario evaluated in each completed generation,
+        including cache hits, which seen_population cannot tell apart."""
+        return {
+            int(item["generation"]): float(item["average"])
+            for item in self._fitness_progression
+        }
+
     def update_scenario_results(self, results: list) -> None:
         """Publish updated result artifacts before finalizing their generation."""
         for result in results:

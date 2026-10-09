@@ -69,8 +69,15 @@ def read_config_from_file(
         raw = {k: v.value for k, v in params.items()}
 
         # Replace parameter in health check url string
-        for app in config.get("health_checks", {}).get("applications", []):
-            if "url" in app:
+        # Leave malformed sections untouched so pydantic reports them by field.
+        health_checks = config.get("health_checks")
+        applications = (
+            health_checks.get("applications")
+            if isinstance(health_checks, dict)
+            else None
+        )
+        for app in applications if isinstance(applications, list) else []:
+            if isinstance(app, dict) and "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 
         # Replace parameters in elastic configuration without forcing optional keys.

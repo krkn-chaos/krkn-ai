@@ -150,6 +150,16 @@ scenario:
 
 See the full config reference in the [docs](https://krkn-chaos.dev/docs/krkn_ai/config/).
 
+### Validate Configuration
+
+Check that a config parses and passes schema validation without touching the cluster. The command exits non-zero on an invalid config, so it can run in CI:
+
+```bash
+krkn_ai validate -c ./tmp/krkn-ai.yaml -p HOST=$HOST
+```
+
+Add `--check-connectivity` to also confirm the cluster and Prometheus are reachable.
+
 ### Run Experiments
 
 ```bash
@@ -164,6 +174,7 @@ krkn_ai run \
 | Command | Key Options |
 |---------|-------------|
 | `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
+| `validate` | `-k` kubeconfig, `-c` config, `-p` params, `--check-connectivity`, `-v` verbose |
 | `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
 | `monitor` | `-o` results dir, `-p` port |
 

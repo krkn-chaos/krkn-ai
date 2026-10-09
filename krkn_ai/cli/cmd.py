@@ -2,7 +2,9 @@ import os
 import sys
 import uuid
 import json
+import yaml
 from contextlib import nullcontext
+from kubernetes.client import VersionApi
 from kubernetes.client.rest import ApiException
 from urllib3.exceptions import MaxRetryError
 from krkn_ai.constants import STATUS_STARTED, STATUS_FAILED
@@ -23,6 +25,7 @@ from krkn_ai.models.custom_errors import (
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
+from krkn_ai.utils.mock import MockType, is_mock_enabled
 from krkn_ai.utils.catalog import recommend_fitness_queries
 from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.templates.generator import create_krkn_ai_template
@@ -443,3 +446,145 @@ def discover_config(
         health_checks=health_checks,
         fitness_queries=fitness_queries,
     )
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    """Render a pydantic ValidationError as one line per failing field."""
+    lines = []
+    for error_detail in error.errors():
+        field_path = (
+            ".".join(str(part) for part in error_detail.get("loc", ())) or "<root>"
+        )
+        lines.append(f"  {field_path}: {error_detail.get('msg')}")
+    return "\n".join(lines)
+
+
+@main.command(help="Validate a Krkn-AI config file without running any chaos")
+@click.option("--config", "-c", help="Path to krkn-ai config file.")
+@click.option(
+    "--kubeconfig",
+    "-k",
+    help="Path to cluster kubeconfig file. Setting this will override value in config file.",
+    envvar="KUBECONFIG",
+)
+@click.option(
+    "--param",
+    "-p",
+    multiple=True,
+    help="Additional parameters for config file in key=value format.",
+)
+@click.option(
+    "--check-connectivity",
+    is_flag=True,
+    help="Also verify that the cluster and Prometheus are reachable.",
+)
+@click.option("-v", "--verbose", count=True, help="Increase verbosity of output.")
+@click.pass_context
+def validate(
+    ctx,
+    config: str,
+    kubeconfig: str = None,
+    param: tuple[str, ...] = (),
+    check_connectivity: bool = False,
+    verbose: int = 0,
+):
+    init_logger(None, verbose >= 2)
+    logger = get_logger(__name__)
+
+    if config == "" or config is None:
+        logger.error("Config file invalid.")
+        sys.exit(1)
+    if not os.path.exists(config):
+        logger.error("Config file not found.")
+        sys.exit(1)
+    # read_config_from_file() silently keeps the config's own path when the
+    # override does not exist, so reject a bad -k here instead.
+    if kubeconfig and not os.path.exists(kubeconfig):
+        logger.error("Kubeconfig file not found: '%s'.", kubeconfig)
+        sys.exit(1)
+
+    # Offline checks: everything below runs without contacting a cluster.
+    try:
+        parsed_config = read_config_from_file(config, param, kubeconfig)
+    except yaml.YAMLError as err:
+        logger.error("Config file is not valid YAML: %s", err)
+        sys.exit(1)
+    except OSError as err:
+        logger.error("Unable to read config file: %s", err)
+        sys.exit(1)
+    except KeyError as err:
+        logger.error("Unable to parse config file due to missing key: %s", err)
+        sys.exit(1)
+    except ValidationError as err:
+        logger.error(
+            "Config file has %d validation error(s):\n%s",
+            err.error_count(),
+            _format_validation_error(err),
+        )
+        sys.exit(1)
+    except ValueError as err:
+        logger.error("Unable to parse config file: %s", err)
+        sys.exit(1)
+
+    enabled_scenarios = [
+        name for name, _ in ScenarioFactory.list_scenarios(parsed_config)
+    ]
+    if not enabled_scenarios:
+        logger.error(
+            "No scenarios are enabled in the config file. "
+            "Enable at least one scenario under 'scenario'."
+        )
+        sys.exit(1)
+
+    logger.info("Config file '%s' is valid.", config)
+    logger.info("Enabled scenarios: %s", ", ".join(enabled_scenarios))
+
+    if not check_connectivity:
+        return
+
+    reachable = _check_cluster_reachable(parsed_config.kubeconfig_file_path, logger)
+    reachable = (
+        _check_prometheus_reachable(parsed_config.kubeconfig_file_path, logger)
+        and reachable
+    )
+
+    if not reachable:
+        sys.exit(1)
+
+
+def _check_cluster_reachable(kubeconfig: str, logger) -> bool:
+    if not kubeconfig or not os.path.exists(kubeconfig):
+        logger.error(
+            "Cluster is not reachable: kubeconfig file not found at '%s'. "
+            "Set it with -k or via 'kubeconfig_file_path' in the config file.",
+            kubeconfig,
+        )
+        return False
+    try:
+        # /version needs no RBAC beyond authentication, unlike listing namespaces.
+        VersionApi(ClusterManager(kubeconfig).api_client).get_code()
+    except Exception as err:
+        logger.error("Cluster is not reachable: %s", err)
+        return False
+    logger.info("Cluster is reachable.")
+    return True
+
+
+def _check_prometheus_reachable(kubeconfig: str, logger) -> bool:
+    if is_mock_enabled(MockType.FITNESS):
+        logger.warning(
+            "Prometheus check skipped: MOCK or MOCK_FITNESS is set, so no query is sent."
+        )
+        return True
+    try:
+        create_prometheus_client(kubeconfig)
+    except PrometheusConnectionError as err:
+        logger.error("Prometheus is not reachable: %s", err)
+        return False
+    except SystemExit:
+        # krkn-lib's KrknPrometheus calls sys.exit(1) when the client cannot be
+        # initialized; report it as a check failure instead of dying mid-report.
+        logger.error("Prometheus is not reachable: client initialization failed.")
+        return False
+    logger.info("Prometheus is reachable.")
+    return True

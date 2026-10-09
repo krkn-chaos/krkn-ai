@@ -20,6 +20,10 @@ from krkn_ai.models.scenario.base import (
     ScenarioOrigin,
 )
 from krkn_ai.models.scenario.factory import ScenarioFactory
+from krkn_ai.models.scenario.parameters import (
+    NamespaceParameter,
+    PodNameParameter,
+)
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
@@ -403,8 +407,8 @@ class GeneticAlgorithm(BaseEngine):
             [type(x) for x in scenario.parameters]
         )
         for param_type in common_params:
-            param_value = self.__get_param_value(scenario, param_type)
-            self.__set_param_value(new_scenario, param_type, param_value)
+            param_state = self.__get_param_state(scenario, param_type)
+            self.__set_param_state(new_scenario, param_type, param_state)
 
         return True, new_scenario
 
@@ -493,15 +497,30 @@ class GeneticAlgorithm(BaseEngine):
         if len(common_params) == 0:
             return scenario_a, scenario_b
         else:
-            for param_type in common_params:
+            for unit in self.__crossover_units(common_params):
                 if rng.random() < self.algo_config.crossover_rate:
-                    a_value = self.__get_param_value(scenario_a, param_type)
-                    b_value = self.__get_param_value(scenario_b, param_type)
+                    for param_type in unit:
+                        a_state = self.__get_param_state(scenario_a, param_type)
+                        b_state = self.__get_param_state(scenario_b, param_type)
 
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
+                        self.__set_param_state(scenario_a, param_type, b_state)
+                        self.__set_param_state(scenario_b, param_type, a_state)
 
             return scenario_a, scenario_b
+
+    @staticmethod
+    def __crossover_units(common_params: set) -> List[List[type]]:
+        """Group parameters that only make sense together under one swap
+        decision. A pod target is addressed by namespace plus pod name, so
+        swapping one without the other points the command at a pod that does
+        not exist in that namespace."""
+        linked = {PodNameParameter, NamespaceParameter}
+        units: List[List[type]] = [[p] for p in common_params if p not in linked]
+        if linked <= common_params:
+            units.append([NamespaceParameter, PodNameParameter])
+        else:
+            units.extend([p] for p in common_params & linked)
+        return units
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         dependency = rng.choice(
@@ -519,16 +538,18 @@ class GeneticAlgorithm(BaseEngine):
         )
         return composite_scenario
 
-    def __get_param_value(self, scenario: Scenario, param_type):
+    def __get_param_state(self, scenario: Scenario, param_type):
+        # Carry the full parameter state, not just .value: PodNameParameter
+        # resolves its target lazily from private namespace/owner metadata.
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                return param.value
+                return param.get_state()
         raise ValueError(
             f"Parameter type {param_type} not found in scenario {scenario}"
         )
 
-    def __set_param_value(self, scenario: Scenario, param_type, value):
+    def __set_param_state(self, scenario: Scenario, param_type, state):
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                param.value = value
+                param.set_state(state)
                 return

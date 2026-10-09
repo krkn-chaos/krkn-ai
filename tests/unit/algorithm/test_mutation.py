@@ -10,8 +10,18 @@ from krkn_ai.models.scenario.base import (
     ScenarioOrigin,
 )
 from krkn_ai.models.scenario.parameters import DummyEndParameter
+from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
-from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Node
+from krkn_ai.models.scenario.scenario_storage_throttle import (
+    StorageThrottleScenario,
+)
+from krkn_ai.models.cluster_components import (
+    ClusterComponents,
+    Namespace,
+    Node,
+    OwnerReference,
+    Pod,
+)
 from krkn_ai.utils.rng import rng
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 
@@ -158,3 +168,47 @@ class TestMutation:
         ]
         assert [node.name for node in received_components.nodes] == ["active-node"]
         assert mutated._cluster_components == received_components
+
+
+class TestScenarioMutationParameterState:
+    """Scenario mutation must transfer full parameter state, not just .value"""
+
+    def test_scenario_mutation_carries_pod_name_metadata(self, genetic_algorithm):
+        billing = Namespace(
+            name="billing",
+            pods=[
+                Pod(
+                    name="api-abc",
+                    owner=OwnerReference(kind="ReplicaSet", name="api-rs"),
+                )
+            ],
+        )
+        shipping = Namespace(
+            name="shipping",
+            pods=[
+                Pod(
+                    name="worker-xyz",
+                    owner=OwnerReference(kind="StatefulSet", name="worker"),
+                )
+            ],
+        )
+        # The source targets billing; mutation builds the new scenario from a
+        # cluster that only has shipping, then copies the source's parameters.
+        source = DnsOutageScenario(
+            cluster_components=ClusterComponents(namespaces=[billing])
+        )
+        genetic_algorithm.config.cluster_components = ClusterComponents(
+            namespaces=[shipping]
+        )
+        genetic_algorithm.valid_scenarios = [
+            ("storage_throttle", StorageThrottleScenario)
+        ]
+
+        success, mutated = genetic_algorithm.scenario_mutation(source)
+
+        assert success
+        assert isinstance(mutated, StorageThrottleScenario)
+        assert mutated.pod_name.value == "api-abc"
+        assert mutated.pod_name._namespace == "billing"
+        assert mutated.pod_name._owner_kind == "ReplicaSet"
+        assert mutated.pod_name._owner_name == "api-rs"

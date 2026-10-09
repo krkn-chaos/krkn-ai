@@ -1,6 +1,6 @@
 import uuid
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -28,6 +28,15 @@ class BaseParameter(BaseModel):
 
     def get_value(self, return_krknhub_name: bool = False):
         return self.value
+
+    def get_state(self) -> Dict[str, Any]:
+        """Everything the genetic operators must carry when they copy or swap
+        this parameter between scenarios. Subclasses with private metadata
+        extend it."""
+        return {"value": self.value}
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        self.value = state["value"]
 
 
 class BaseScenario(BaseModel):

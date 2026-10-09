@@ -38,6 +38,7 @@ class JSONSummaryReporter:
         completed_generations: int = 0,
         seed: Optional[int] = None,
         scenario_mutation_rate: Optional[float] = None,
+        generation_averages: Optional[Dict[int, float]] = None,
     ):
         self.run_uuid = run_uuid
         self.config = config
@@ -49,6 +50,10 @@ class JSONSummaryReporter:
         self.end_time = end_time
         self.completed_generations = completed_generations
         self.seed = seed
+        # Per-generation mean fitness recorded by the engine as each generation
+        # completes. seen_population holds one result per unique scenario, keyed
+        # to the generation it first ran in, so it cannot recover this later.
+        self.generation_averages = generation_averages
         self.scenario_mutation_rate = (
             algo_config.scenario_mutation_rate
             if scenario_mutation_rate is None
@@ -147,15 +152,7 @@ class JSONSummaryReporter:
         for i, result in enumerate(
             self.best_of_generation[: self.completed_generations]
         ):
-            # Calculate average fitness for this generation from completed scenarios.
-            gen_fitness_scores = [
-                r.fitness_result.fitness_score
-                for r in self.seen_population.values()
-                if r.generation_id == i
-            ]
-            gen_average = 0.0
-            if gen_fitness_scores:
-                gen_average = sum(gen_fitness_scores) / len(gen_fitness_scores)
+            gen_average = self._generation_average(i)
 
             fitness_progression.append(
                 {
@@ -165,6 +162,20 @@ class JSONSummaryReporter:
                 }
             )
         return fitness_progression
+
+    def _generation_average(self, generation: int) -> float:
+        if self.generation_averages and generation in self.generation_averages:
+            return self.generation_averages[generation]
+        # Fallback for callers without engine bookkeeping. Scenarios that were
+        # cache hits in this generation are attributed to their first run here.
+        gen_fitness_scores = [
+            r.fitness_result.fitness_score
+            for r in self.seen_population.values()
+            if r.generation_id == generation
+        ]
+        if not gen_fitness_scores:
+            return 0.0
+        return sum(gen_fitness_scores) / len(gen_fitness_scores)
 
     def _build_best_scenarios(self) -> List[Dict[str, Any]]:
         """Build ranked list of best scenarios (top 10)."""

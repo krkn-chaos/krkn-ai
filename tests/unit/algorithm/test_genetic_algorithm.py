@@ -2,6 +2,7 @@
 GeneticAlgorithm core functionality tests
 """
 
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -12,7 +13,9 @@ import yaml
 from pydantic import ValidationError
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
-from krkn_ai.models.app import FitnessScoreResult
+from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
+from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.config import FitnessFunctionItem, GeneticAlgorithmConfig
 from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.run_results import parse_run_artifacts, scenario_detail
@@ -258,3 +261,61 @@ class TestGeneticAlgorithmCoreMethods:
         assert progress["bestFitness"] == 10.0
         assert progress["averageFitness"] == 10.0
         assert progress["fitnessFinalByScenario"] == {"0:1": True}
+
+
+class TestGenerationAverages:
+    """Engine bookkeeping that feeds results.json fitness_progression (#348)"""
+
+    def _result(self, gen_id, sid, score, scenario, now):
+        return CommandRunResult(
+            generation_id=gen_id,
+            scenario_id=sid,
+            scenario=scenario,
+            cmd="test",
+            log="test",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=score),
+        )
+
+    def test_cache_hit_counts_toward_its_generation(self, genetic_algorithm):
+        engine = genetic_algorithm
+        now = datetime.datetime.now(datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        other = DummyScenario(cluster_components=ClusterComponents())
+        other.end.value = 99  # distinct identity from `scenario`
+
+        first = self._result(0, 1, 80.0, scenario, now)
+        engine.seen_population[scenario] = first
+        engine.complete_generation(0, [first])
+
+        # Generation 1 re-evaluates the cached scenario and one new one.
+        cached = engine.calculate_fitness(scenario, generation_id=1)
+        fresh = self._result(1, 2, 20.0, other, now)
+        engine.seen_population[other] = fresh
+        engine.complete_generation(1, [cached, fresh])
+
+        assert cached.generation_id == 1
+        assert engine.seen_population[scenario].generation_id == 0
+        assert engine.generation_averages == {0: 80.0, 1: 50.0}
+
+    def test_save_passes_generation_averages_to_reporter(self, genetic_algorithm):
+        engine = genetic_algorithm
+        now = datetime.datetime.now(datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        first = self._result(0, 1, 80.0, scenario, now)
+        engine.seen_population[scenario] = first
+        engine.best_of_generation.append(first)
+        engine.complete_generation(0, [first])
+        cached = engine.calculate_fitness(scenario, generation_id=1)
+        engine.best_of_generation.append(cached)
+        engine.complete_generation(1, [cached])
+
+        with patch(
+            "krkn_ai.algorithm.genetic.engine.JSONSummaryReporter"
+        ) as mock_reporter:
+            engine.save()
+
+        kwargs = mock_reporter.call_args.kwargs
+        assert kwargs["generation_averages"] == {0: 80.0, 1: 80.0}

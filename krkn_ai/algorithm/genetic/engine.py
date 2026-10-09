@@ -230,6 +230,7 @@ class GeneticAlgorithm(BaseEngine):
             completed_generations=self.completed_generations,
             seed=self.seed,
             scenario_mutation_rate=self.current_scenario_mutation_rate,
+            generation_averages=self.generation_averages,
         )
         summary_reporter.save(self.output_dir)
 

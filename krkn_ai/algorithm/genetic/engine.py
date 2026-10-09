@@ -401,8 +401,8 @@ class GeneticAlgorithm(BaseEngine):
             [type(x) for x in scenario.parameters]
         )
         for param_type in common_params:
-            param_value = self.__get_param_value(scenario, param_type)
-            self.__set_param_value(new_scenario, param_type, param_value)
+            param_state = self.__get_param_state(scenario, param_type)
+            self.__set_param_state(new_scenario, param_type, param_state)
 
         return True, new_scenario
 
@@ -493,11 +493,11 @@ class GeneticAlgorithm(BaseEngine):
         else:
             for param_type in common_params:
                 if rng.random() < self.algo_config.crossover_rate:
-                    a_value = self.__get_param_value(scenario_a, param_type)
-                    b_value = self.__get_param_value(scenario_b, param_type)
+                    a_state = self.__get_param_state(scenario_a, param_type)
+                    b_state = self.__get_param_state(scenario_b, param_type)
 
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
+                    self.__set_param_state(scenario_a, param_type, b_state)
+                    self.__set_param_state(scenario_b, param_type, a_state)
 
             return scenario_a, scenario_b
 
@@ -517,16 +517,18 @@ class GeneticAlgorithm(BaseEngine):
         )
         return composite_scenario
 
-    def __get_param_value(self, scenario: Scenario, param_type):
+    def __get_param_state(self, scenario: Scenario, param_type):
+        # Carry the full parameter state, not just .value: PodNameParameter
+        # resolves its target lazily from private namespace/owner metadata.
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                return param.value
+                return param.get_state()
         raise ValueError(
             f"Parameter type {param_type} not found in scenario {scenario}"
         )
 
-    def __set_param_value(self, scenario: Scenario, param_type, value):
+    def __set_param_state(self, scenario: Scenario, param_type, state):
         for param in scenario.parameters:
             if isinstance(param, param_type):
-                param.value = value
+                param.set_state(state)
                 return

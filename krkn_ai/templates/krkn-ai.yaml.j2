@@ -28,13 +28,21 @@ genetic:
 {%- if genetic %}
   generations: {{ genetic.generations }}
   population_size: {{ genetic.population_size }}
+  mutation_rate: 0.7
+  scenario_mutation_rate: 0.6
+  crossover_rate: 0.6
   composition_rate: {{ genetic.composition_rate }}
   population_injection_rate: {{ genetic.population_injection_rate }}
+  population_injection_size: 2
 {%- else %}
   generations: 2
   population_size: 2
+  mutation_rate: 0.7
+  scenario_mutation_rate: 0.6
+  crossover_rate: 0.6
   composition_rate: 0
   population_injection_rate: 0
+  population_injection_size: 2
 {%- endif %}
 
   # Uncomment this to enable overall run timeout

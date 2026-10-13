@@ -8,26 +8,27 @@ from krkn_ai.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# The genetic algorithm is sized from how many distinct resources in the
-# cluster each scenario type could target. This is computed directly from
-# cluster_components -- the same candidate lists each scenario's own
-# mutate() builds before calling rng.choice()/rng.sample() -- rather than by
-# randomly sampling scenario instances. That makes sizing exact (no
-# fixed-sample-budget undercounting on large clusters) and fully
-# deterministic (no RNG involved, so no seed to manage or restore).
+# Genetic profiles use per-scenario target counts derived from discovered
+# components. Replicas sharing a serialized selector count once when the
+# scenario cannot identify individual pods. No sampling or RNG is needed.
 
 
-def _pods_with_labels(components: ClusterComponents) -> List[Tuple]:
-    return [(ns, p) for ns in components.namespaces for p in ns.pods if p.labels]
+def _pod_label_targets(
+    components: ClusterComponents, *, require_containers: bool = False
+) -> set[Tuple[str, str, str]]:
+    """Return distinct (namespace, label key, label value) pod selectors.
 
-
-def _pods_with_labels_and_containers(components: ClusterComponents) -> List[Tuple]:
-    return [
-        (ns, p)
-        for ns in components.namespaces
-        for p in ns.pods
-        if p.labels and p.containers
-    ]
+    These scenarios serialize selectors, not pod names, so replicas sharing a
+    selector contribute one target. Container scenarios only use pods that
+    have containers.
+    """
+    return {
+        (namespace.name, key, value)
+        for namespace in components.namespaces
+        for pod in namespace.pods
+        if pod.labels and (not require_containers or pod.containers)
+        for key, value in pod.labels.items()
+    }
 
 
 def _all_pods(components: ClusterComponents) -> List[Tuple]:
@@ -72,44 +73,29 @@ def _node_target_count(nodes: List[Node]) -> int:
 
 
 def _time_scenario_target_count(components: ClusterComponents) -> int:
-    """Mirrors scenario_time.py's mutate():
-    - pod branch: a namespace is chosen from namespaces with pods, then the
-      label is chosen from *that namespace's* pod labels only, so each
-      (namespace, label) pair is a distinct target -- not a cluster-wide
-      union of pod label values.
-    - node branch: namespace is always empty and the label is chosen from
-      all node labels cluster-wide, which is genuinely global.
-    """
-    pod_branch = 0
-    for namespace in components.namespaces:
-        if not namespace.pods:
-            continue
-        labels_in_namespace = set()
-        for pod in namespace.pods:
-            for key, value in pod.labels.items():
-                labels_in_namespace.add(f"{key}={value}")
-        pod_branch += len(labels_in_namespace)
-
+    """Count namespace-scoped pod selectors and cluster-wide node selectors."""
     node_branch = set()
     for node in components.nodes:
         for key, value in node.labels.items():
             node_branch.add(f"{key}={value}")
 
-    return pod_branch + len(node_branch)
+    return len(_pod_label_targets(components)) + len(node_branch)
 
 
 def _network_scenario_target_count(components: ClusterComponents) -> int:
     return len([node for node in components.nodes if node.interfaces])
 
 
-# scenario attr name (see scenario_specs) -> counts distinct addressable
-# resources for that scenario type from active cluster_components.
+# scenario attr name (see scenario_specs) -> target count from active
+# cluster_components, mirroring that scenario's target-selection semantics.
 # Every entry in scenario_specs must have a counter here: an unregistered
 # scenario type raises rather than silently sizing off an incomplete total.
 TARGET_SPACE_COUNTERS: Dict[str, Callable[[ClusterComponents], int]] = {
-    "pod_scenarios": lambda c: len(_pods_with_labels(c)),
-    "application_outages": lambda c: len(_pods_with_labels(c)),
-    "container_scenarios": lambda c: len(_pods_with_labels_and_containers(c)),
+    "pod_scenarios": lambda c: len(_pod_label_targets(c)),
+    "application_outages": lambda c: len(_pod_label_targets(c)),
+    "container_scenarios": lambda c: len(
+        _pod_label_targets(c, require_containers=True)
+    ),
     "node_cpu_hog": lambda c: _node_target_count(c.nodes),
     "node_memory_hog": lambda c: _node_target_count(c.nodes),
     "node_io_hog": lambda c: _node_target_count(c.nodes),
@@ -123,8 +109,8 @@ TARGET_SPACE_COUNTERS: Dict[str, Callable[[ClusterComponents], int]] = {
     "service_disruption": lambda c: len(_namespaces_with_services(c)),
 }
 
-# Starting points, measured against test clusters against the exact
-# (non-sampled) target count above.
+# Initial cutoffs for aggregate target counts. Recalibrate against
+# representative cluster profiles, not raw pod-replica totals.
 SMALL_MAX_TARGETS = 150
 MEDIUM_MAX_TARGETS = 500
 
@@ -154,12 +140,11 @@ def _probe_config(components: ClusterComponents, kubeconfig: str) -> ConfigFile:
 def count_target_space(
     components: ClusterComponents, kubeconfig: str
 ) -> Tuple[int, int]:
-    """Exact count of distinct addressable resources across every scenario
-    type the cluster supports.
+    """Sum target choices across every scenario type the cluster supports.
 
-    Unlike sampling, this never misses a target due to a fixed sample
-    budget, and it is fully deterministic (no RNG is touched), so results
-    do not depend on run order or seeding.
+    Counters mirror each scenario's target-selection semantics; pod replicas
+    sharing a serialized selector count as one target. The result is
+    deterministic and does not touch the RNG.
     """
     config = _probe_config(components, kubeconfig)
     # No scenario instantiation needed here (unlike ScenarioFactory.

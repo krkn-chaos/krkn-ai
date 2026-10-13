@@ -4,12 +4,13 @@ report_generator.py
 Generates a single self-contained HTML report of the full Krkn-AI dashboard
 suitable for CI/CD artifact capture.
 
-Covers all five tabs:
+Covers all six tabs:
   1. Dashboard        — summary, fitness evolution, baseline delta, improvement trend
-  2. Health Checks    — heatmap, success/failure bar, radar-style coverage
-  3. Detailed Scenarios — runtime RT chart, success timeline heatmap
-  4. Anomaly Detection  — bubble map, anomaly table
-  5. Failed Scenarios   — failed run table
+  2. Fitness          — per-query contributions, query stats, learned weights
+  3. Health Checks    — heatmap, success/failure bar, radar-style coverage
+  4. Detailed Scenarios — runtime RT chart, success timeline heatmap
+  5. Anomaly Detection  — bubble map, anomaly table
+  6. Failed Scenarios   — failed run table
 
 Public API
 ----------
@@ -50,6 +51,16 @@ from krkn_ai.dashboard.tabs.anomalies import (
     create_anomaly_type_distribution_plot,
     create_service_response_time_heatmap_plot,
 )
+from krkn_ai.dashboard.tabs.fitness import (
+    build_contribution_frame,
+    build_query_summary,
+    build_rejected_frame,
+    build_weights_frame,
+    create_contribution_plot,
+    create_weights_plot,
+    runtime_weights,
+)
+from krkn_ai.dashboard.data_loader import map_slo_columns
 
 
 # Utilities
@@ -145,9 +156,10 @@ def _dash_improvement_trend(df_all: pd.DataFrame) -> str:
     return _fig_html(fig, 330)
 
 
-def _dash_gen_details(df: pd.DataFrame) -> str:
+def _dash_gen_details(df: pd.DataFrame, fitness_items: Optional[List] = None) -> str:
     if df is None or df.empty:
         return _na()
+    slo_map = map_slo_columns(fitness_items or [], df.columns)
     cols = [
         c
         for c in [
@@ -160,12 +172,46 @@ def _dash_gen_details(df: pd.DataFrame) -> str:
             "health_check_response_time_score",
             "krkn_failure_score",
         ]
+        + list(slo_map)
         if c in df.columns
     ]
     tbl = df[cols].copy()
     if "generation_id" in tbl.columns:
         tbl["generation_id"] = tbl["generation_id"] + 1
+    tbl = tbl.rename(columns={col: item["name"] for col, item in slo_map.items()})
     return _df_table(tbl.sort_values("fitness_score", ascending=False))
+
+
+# Fitness
+def _fit_contribution(long_df: pd.DataFrame) -> str:
+    fig = create_contribution_plot(long_df)
+    if fig is None:
+        return _na("No per-query fitness scores recorded.")
+    return _fig_html(fig, 420)
+
+
+def _fit_query_table(long_df: pd.DataFrame) -> str:
+    summary = build_query_summary(long_df)
+    if summary is None or summary.empty:
+        return _na()
+    return _df_table(summary)
+
+
+def _fit_weights(weights_df: pd.DataFrame) -> str:
+    if weights_df is None or weights_df.empty:
+        return _na("No weighted fitness items in this run.")
+    fig = create_weights_plot(weights_df)
+    table = _df_table(weights_df)
+    if fig is None:
+        return _na("No learned weights found for this run.") + table
+    return _fig_html(fig, 380) + table
+
+
+def _fit_rejected(fitness_items: Optional[List]) -> str:
+    rejected = build_rejected_frame(fitness_items or [])
+    if rejected.empty:
+        return _na("No queries were rejected.")
+    return _df_table(rejected)
 
 
 # Health Checks
@@ -411,9 +457,11 @@ def generate_html_report(
     global_services: Optional[List[str]] = None,
     filtered_scenario_ids: Optional[List] = None,
     anomaly_mode: str = "z_score",
+    fitness_items: Optional[List] = None,
+    learned_weights: Optional[dict] = None,
 ) -> str:
     """
-    Generate a complete self-contained HTML report covering all five dashboard tabs.
+    Generate a complete self-contained HTML report covering all six dashboard tabs.
 
     Parameters
     ----------
@@ -425,6 +473,8 @@ def generate_html_report(
     global_services      : Active service filter list.
     filtered_scenario_ids: Active scenario IDs.
     anomaly_mode          : "z_score" or "pct_deviation" — determines which anomaly detectors fire.
+    fitness_items        : Per-query fitness metadata from the run config.
+    learned_weights      : Weights the engine learned from the run, keyed by query.
 
     Returns
     -------
@@ -483,6 +533,7 @@ def generate_html_report(
     # Nav tabs
     tab_defs = [
         ("Dashboard", "tab-dashboard"),
+        ("Fitness", "tab-fitness"),
         ("Health Checks", "tab-health"),
         ("Detailed Scenarios", "tab-detailed"),
         ("Anomaly Detection", "tab-anomalies"),
@@ -525,9 +576,43 @@ def generate_html_report(
                 "Fitness Improvement Trend vs Baseline", _dash_improvement_trend(src)
             )
             + "<hr class='d'/>"
-            + _subsec("Generation & Scenario Details", _dash_gen_details(df_results))
+            + _subsec(
+                "Generation & Scenario Details",
+                _dash_gen_details(df_results, fitness_items),
+            )
         ),
         "tab-dashboard",
+    )
+
+    # Fitness
+    long_df = build_contribution_frame(non_bl, fitness_items or [])
+    weights_df = build_weights_frame(fitness_items or [], learned_weights)
+    enabled_items = [item for item in (fitness_items or []) if item["enabled"]]
+    tab_fit = _sec(
+        "Fitness",
+        (
+            _cards(
+                [
+                    ("Queries In Use", len(enabled_items)),
+                    (
+                        "Queries Rejected",
+                        len(fitness_items or []) - len(enabled_items),
+                    ),
+                    (
+                        "Total Weight",
+                        f"{sum(runtime_weights(fitness_items or []).values()):.4f}",
+                    ),
+                ]
+            )
+            + _subsec("Fitness Contribution by Query", _fit_contribution(long_df))
+            + "<hr class='d'/>"
+            + _subsec("Query Statistics", _fit_query_table(long_df))
+            + "<hr class='d'/>"
+            + _subsec("Configured vs Learned Weights", _fit_weights(weights_df))
+            + "<hr class='d'/>"
+            + _subsec("Queries Discover Rejected", _fit_rejected(fitness_items))
+        ),
+        "tab-fitness",
     )
 
     # Health Checks
@@ -624,5 +709,5 @@ def generate_html_report(
         "tab-failed",
     )
 
-    body = "\n".join([header, tab1, tab2, tab3, tab4, tab5])
+    body = "\n".join([header, tab1, tab_fit, tab2, tab3, tab4, tab5])
     return _full_page(body, ts)

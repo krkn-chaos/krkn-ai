@@ -92,6 +92,34 @@ class TestCountTargetSpace:
 
         assert many_targets > few_targets
 
+    def test_replica_pods_collapse_to_distinct_label_targets(self):
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(
+                    name=f"ns-{namespace_index}",
+                    pods=[
+                        Pod(
+                            name=f"pod-{namespace_index}-{replica}",
+                            labels={"app": f"workload-{replica % 3}"},
+                            containers=[Container(name="main")],
+                        )
+                        for replica in range(20)
+                    ],
+                )
+                for namespace_index in range(5)
+            ]
+        )
+
+        for name in (
+            "pod_scenarios",
+            "application_outages",
+            "container_scenarios",
+        ):
+            assert ga_sizing.TARGET_SPACE_COUNTERS[name](cluster) == 15
+        assert ga_sizing._time_scenario_target_count(cluster) == 15
+        targets, _ = ga_sizing.count_target_space(cluster, "kubeconfig.yaml")
+        assert ga_sizing._tier(targets) == "medium"
+
     def test_deterministic_and_rng_free(self):
         """Counting is pure introspection over cluster_components: it must
         never consume entropy from the shared global RNG, and repeated

@@ -6,6 +6,7 @@ from krkn_ai.dashboard.tabs.dashboard import (
     create_scenario_fitness_variation_plot,
     create_baseline_delta_plot,
     create_improvement_trend_plot,
+    use_relative_baseline,
 )
 
 
@@ -84,3 +85,24 @@ def test_create_improvement_trend_plot_valid():
     )
     fig = create_improvement_trend_plot(df)
     assert fig is not None
+
+
+def test_use_relative_baseline():
+    scores = [2.0, 2.5, 1.0]
+    assert use_relative_baseline(1.0, scores) is True
+    assert use_relative_baseline(0.0, scores) is False
+    assert use_relative_baseline(0.0105, scores) is False
+
+
+def test_create_improvement_trend_plot_falls_back_to_absolute_delta():
+    """A baseline this small would otherwise plot as a 20,000% improvement."""
+    df = pd.DataFrame(
+        {
+            "scenario_id": ["baseline", "1"],
+            "generation_id": [0, 0],
+            "fitness_score": [0.0105, 2.5105],
+        }
+    )
+    fig = create_improvement_trend_plot(df)
+    assert "absolute" in fig.layout.yaxis.title.text.lower()
+    assert round(float(fig.data[0].y[0]), 4) == 2.5

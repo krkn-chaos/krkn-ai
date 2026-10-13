@@ -31,6 +31,9 @@ from krkn_ai.models.cluster_components import (
     PVC,
 )
 from krkn_ai.models.custom_errors import ScenarioParameterInitError
+from krkn_ai.chaos_engines.commands import build_scenario_command
+from krkn_ai.models.app import KrknRunnerType
+from krkn_ai.models.config import ConfigFile, FitnessFunction
 
 
 class TestDummyScenario:
@@ -657,3 +660,64 @@ class TestServiceDisruptionScenario:
             ScenarioParameterInitError, match="No namespaces with services"
         ):
             ServiceDisruptionScenario(cluster_components=cluster)
+
+
+class TestWorkloadImageSerialization:
+    @pytest.mark.parametrize(
+        ("scenario_type", "default_image"),
+        [
+            (
+                NodeCPUHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                NodeMemoryHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                NodeIOHogScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-hog",
+            ),
+            (
+                SynFloodScenario,
+                "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-syn-flood",
+            ),
+        ],
+    )
+    def test_cli_and_hub_serialize_default_and_custom_images(
+        self, scenario_type, default_image
+    ):
+        if scenario_type is SynFloodScenario:
+            service = Service(
+                name="test-service", ports=[ServicePort(port=80, target_port=8080)]
+            )
+            cluster = ClusterComponents(
+                namespaces=[Namespace(name="test-ns", services=[service])], nodes=[]
+            )
+        else:
+            cluster = ClusterComponents(
+                namespaces=[],
+                nodes=[Node(name="worker-0", free_cpu=4.0, free_mem=8.0)],
+            )
+
+        scenario = scenario_type(cluster_components=cluster)
+        image_parameter = next(
+            parameter
+            for parameter in scenario.parameters
+            if parameter.get_name(return_krknhub_name=True) == "IMAGE"
+        )
+        assert image_parameter.value == default_image
+        config = ConfigFile(
+            kubeconfig_file_path="/tmp/kubeconfig",
+            fitness_function=FitnessFunction(query="dummy"),
+            cluster_components=cluster,
+        )
+
+        for image in (default_image, "quay.io/custom/workload:test"):
+            image_parameter.value = image
+            for runner_type, argument in (
+                (KrknRunnerType.CLI_RUNNER, f'--image "{image}"'),
+                (KrknRunnerType.HUB_RUNNER, f'-e IMAGE="{image}"'),
+            ):
+                command = build_scenario_command(scenario, config, runner_type)
+                assert argument in command

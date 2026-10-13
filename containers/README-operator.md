@@ -1,0 +1,178 @@
+### Dedicated operator image
+
+The operator runner does not invoke a local container runtime. Build the
+dedicated image to avoid shipping Podman, `krknctl`, or `oc` in the
+orchestrator image:
+
+```bash
+podman build \
+  -f containers/Containerfile.operator \
+  -t quay.io/krkn-chaos/krkn-ai-operator:<tag> \
+  .
+podman push quay.io/krkn-chaos/krkn-ai-operator:<tag>
+```
+
+The GitHub Actions image workflow publishes the same tag as
+`quay.io/krkn-chaos/krkn-ai-operator:<tag>` and optionally also publishes
+`quay.io/krkn-chaos/krkn-ai-operator:latest`.
+
+When running the workflow manually, choose `krkn-ai`,
+`krkn-ai-operator`, or `both` in the **Image to build and push** input. The
+same `tag` input is used for the selected image.
+
+`Containerfile.operator` uses Python 3.12, the locked `uv` environment, and
+the existing `containers/entrypoint.sh`. It is intended for `MODE=run` with
+`RUNNER_TYPE=operator`; discovery mode and the local HUB/CLI runners belong
+to the full `Containerfile` image.
+
+### Manual operator execution
+
+Manual execution can run from the host or from any container that has access
+to the Kubernetes API. The target cluster must already have the
+`krkn-operator` `KrknScenarioRun` CRD and the caller must be allowed to
+create, read, and delete `KrknScenarioRun` objects.
+
+Set the operator-runner context:
+
+```bash
+export KUBECONFIG=/path/to/kubeconfig
+export KRKNAI_NAMESPACE=krkn-operator
+export KRKNAI_RUN_NAME=manual-run
+export KRKNAI_RUN_UID=$(uuidgen)
+export KRKNAI_TARGET_REQUEST_ID=self
+export KRKNAI_PROVIDER=krkn-operator
+export KRKNAI_CLUSTER=self
+```
+
+Run directly from a source checkout:
+
+```bash
+uv run krkn_ai run \
+  --config ./tmp/krkn-ai.yaml \
+  --kubeconfig "$KUBECONFIG" \
+  --output ./tmp/operator-results \
+  --runner-type operator
+```
+
+The executor first tries in-cluster authentication and falls back to the
+kubeconfig supplied to `--kubeconfig`, so the same command works inside or
+outside Kubernetes. Each generated child CR is labeled
+`krkn.dev/ai-run=manual-run` but has no owner reference, so delete child
+resources explicitly after the run. Set `KRKNAI_SCENARIO_TIMEOUT_SECONDS` to
+override the one-hour default terminal-status wait.
+
+### Run the dedicated image manually
+
+Mount the config and kubeconfig into the paths used by the image. This image
+does not require `--privileged`, a Podman socket, or nested containers:
+
+```bash
+mkdir -p ./tmp/operator-results
+podman run --rm \
+  -v ./tmp:/input:Z \
+  -v ./tmp/operator-results:/output:Z \
+  -e MODE=run \
+  -e CONFIG_FILE=/input/krkn-ai.yaml \
+  -e KUBECONFIG=/input/kubeconfig.yaml \
+  -e KRKNAI_NAMESPACE=krkn-operator \
+  -e KRKNAI_RUN_NAME=manual-run \
+  -e KRKNAI_RUN_UID="$(uuidgen)" \
+  -e KRKNAI_TARGET_REQUEST_ID=self \
+  -e KRKNAI_PROVIDER=krkn-operator \
+  -e KRKNAI_CLUSTER=self \
+  -e VERBOSE=2 \
+  quay.io/krkn-chaos/krkn-ai-operator:<tag>
+```
+
+The container reads the kubeconfig using the Kubernetes Python client and
+creates the scenario pods through `krkn-operator`; it does not run the
+scenario image itself.
+
+### Operator image in a `KrknAIRun`
+
+For the controller-managed workflow, set the operator chart's
+`images.aiOrchestrator.image` value to the dedicated image:
+
+```bash
+helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator \
+  -n krkn-operator --create-namespace \
+  --set images.aiOrchestrator.image=quay.io/krkn-chaos/krkn-ai-operator:<tag>
+```
+
+The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
+`RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
+Operator-created runs use `FORMAT=json` for machine-readable result artifacts;
+the input configuration remains YAML. Standalone CLI output format is unchanged.
+Use the `KrknAIRun` and target Secret procedure in
+[`../hack/README.md`](../hack/README.md) for a complete cluster test.
+
+Elasticsearch forwarding is not supported by the operator runner. It is
+deliberately disabled until the operator can inject credentials through a
+Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
+
+### Results storage for `KrknAIRun`
+
+`KrknAIRun` Pods use `EmptyDir` for transient output. The uploader sidecar
+checkpoints new or changed artifacts every 10 seconds for operator-managed
+runs; the standalone uploader retains its 150-second default. Each checkpoint
+exposes a manifest with `status: in_progress`. When the orchestrator writes its
+completion marker, the uploader immediately syncs once more and commits a final
+manifest with `status: succeeded` or `status: failed`. The standalone
+`quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores artifacts and manifests
+on its single PVC.
+
+The service-token-protected API validates configs at `POST /v1/configs/validate`
+and exposes committed run summaries, scenario indexes, and individual scenario
+details under `/v1/runs/{uid}/`. Scenario totals and per-item normalized scores
+remain null until a generation is complete and its artifacts are finalized;
+per-item raw scores remain available while a generation runs. Final per-item
+scores include their generation's `query` and `queryType`, but never weighting
+internals. Terminal incomplete scores are marked `unfinalized`, never promoted
+by a failed run. Typed reads verify result bytes against the copied manifest and
+return `503 artifact_updating` during an upload or normalization boundary.
+Retry the next poll rather than treating a transient mismatch as a missing
+result.
+
+`GET /v1/runs/{uid}/scenarios` returns the complete committed
+`{"scenarios":[...]}` collection and rejects query parameters. The operator
+combines that collection with live child-job metadata before filtering, sorting,
+and pagination; the artifact service does not own public table queries.
+
+The service materializes current-revision API views after commit, or on first
+access to an older stored run. Compact summary/index metadata and separate
+scenario bodies are stored under `.result-views/{uid}/`, outside the uploaded
+run inventory. Summary/index reads do not load health samples; a detail read
+loads only its selected body. Source checksums are still verified on every typed
+read, so cached views do not conceal upload mismatches. Only the current view is
+retained per run; these service-managed files consume additional PVC capacity
+but are not included in results downloads. Generic artifact commits remain
+supported, with typed-data errors reported by the corresponding typed reads.
+Log/report-only checkpoints reuse the current view; result-file checksums and
+manifest status determine when result projections must be rebuilt.
+
+Configure that PVC at the installation level:
+
+```yaml
+images:
+  aiService:
+    image: quay.io/krkn-chaos/krkn-ai-service:<tag>
+aiService:
+  storage:
+    existingClaim: ""       # optional pre-created claim
+    storageClassName: ""    # empty selects the cluster default
+    size: 5Gi
+```
+
+
+The artifact service limits each upload to 100 MiB and each run to 1 GiB by
+default. Set `KRKNAI_MAX_ARTIFACT_BYTES` and `KRKNAI_MAX_RUN_BYTES` on the
+artifact-service Pod to override those limits.
+
+Set `aiService.storage.existingClaim` to mount a PVC you created in the
+operator namespace. Otherwise, the chart creates its default PVC. The PVC is
+retained on Helm uninstall; delete it manually only after preserving the
+stored results.
+
+No `KrknAIRun.spec.storage` setting exists. Results are available after the
+first checkpoint; clients must inspect the manifest status before treating
+artifacts as final.

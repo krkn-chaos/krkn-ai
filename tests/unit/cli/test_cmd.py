@@ -115,6 +115,81 @@ class TestRunCommand:
         finally:
             os.unlink(config_path)
 
+    def test_run_uses_supplied_run_uuid_for_engine_and_output(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        supplied_uuid = "12345678-1234-5678-1234-567812345678"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                    mock_ga = Mock()
+                    mock_ga_class.return_value = mock_ga
+                    result = runner.invoke(
+                        main,
+                        [
+                            "run",
+                            "--config",
+                            config_path,
+                            "--output",
+                            temp_output_dir,
+                            "--run-uuid",
+                            supplied_uuid,
+                        ],
+                    )
+
+                    assert result.exit_code == 0, result.exception
+                    assert mock_ga_class.call_args.kwargs["run_uuid"] == supplied_uuid
+                    assert mock_ga_class.call_args.kwargs["output_dir"] == os.path.join(
+                        temp_output_dir, supplied_uuid
+                    )
+        finally:
+            os.unlink(config_path)
+
+    def test_run_generates_uuid_when_run_uuid_is_omitted(
+        self, minimal_config, temp_output_dir
+    ):
+        runner = CliRunner()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            config_path = f.name
+            f.write("algorithm: genetic\n")
+
+        generated_uuid = "87654321-4321-8765-4321-876543218765"
+        try:
+            with patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ):
+                with patch("krkn_ai.cli.cmd.uuid.uuid4", return_value=generated_uuid):
+                    with patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class:
+                        mock_ga = Mock()
+                        mock_ga_class.return_value = mock_ga
+                        result = runner.invoke(
+                            main,
+                            [
+                                "run",
+                                "--config",
+                                config_path,
+                                "--output",
+                                temp_output_dir,
+                            ],
+                        )
+
+                        assert result.exit_code == 0, result.exception
+                        assert (
+                            mock_ga_class.call_args.kwargs["run_uuid"] == generated_uuid
+                        )
+                        assert mock_ga_class.call_args.kwargs[
+                            "output_dir"
+                        ] == os.path.join(temp_output_dir, generated_uuid)
+        finally:
+            os.unlink(config_path)
+
     def test_run_fails_when_config_missing_or_invalid(self, temp_output_dir):
         """Test command fails when config file is missing or invalid"""
         runner = CliRunner()
@@ -481,6 +556,58 @@ class TestDiscoverCommand:
         finally:
             os.unlink(kubeconfig_path)
 
+    def test_discover_recommends_fitness_queries_when_merging(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        with open(output_file, "w") as output:
+            output.write("existing: true\n")
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as kubeconfig:
+            kubeconfig.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = kubeconfig.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as mock_manager_class,
+                patch("krkn_ai.cli.cmd.save_discovery") as save_discovery,
+                patch("krkn_ai.cli.cmd.create_prometheus_client"),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_fitness_queries",
+                    return_value=[
+                        {
+                            "query": "up",
+                            "type": "point",
+                            "weight": 1,
+                            "enabled": True,
+                        }
+                    ],
+                ) as recommend_fitness,
+            ):
+                mock_manager_class.return_value.discover_components.return_value = (
+                    mock_cluster_components
+                )
+                result = runner.invoke(
+                    main,
+                    [
+                        "discover",
+                        "-k",
+                        kubeconfig_path,
+                        "-o",
+                        output_file,
+                        "--save-strategy",
+                        "merge",
+                    ],
+                )
+
+            assert result.exit_code == 0
+            recommend_fitness.assert_called_once()
+            assert save_discovery.call_args.kwargs["fitness_queries"] == [
+                {"query": "up", "type": "point", "weight": 1, "enabled": True}
+            ]
+        finally:
+            os.unlink(kubeconfig_path)
+
     def test_discover_writes_recommended_scenarios_to_file(
         self, mock_cluster_components, temp_output_dir
     ):
@@ -515,6 +642,67 @@ class TestDiscoverCommand:
                 # recommended scenario enabled; an unrecommended one stays off
                 assert data["scenario"]["pvc-scenarios"]["enable"] is True
                 assert data["scenario"]["pod-scenarios"]["enable"] is False
+        finally:
+            os.unlink(kubeconfig_path)
+
+    def test_discover_writes_recommended_genetic_params_to_file(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        profile = {
+            "generations": 7,
+            "population_size": 12,
+            "tournament_size": 4,
+            "composition_rate": 0.3,
+            "population_injection_rate": 0.1,
+            "generation_saturation": 3,
+            "exploration_saturation": 4,
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as kubeconfig:
+            kubeconfig.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = kubeconfig.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as manager_class,
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={},
+                ),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_genetic_params",
+                    return_value=profile,
+                ),
+                patch("krkn_ai.cli.cmd.create_prometheus_client"),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_fitness_queries",
+                    return_value=[],
+                ),
+            ):
+                manager = manager_class.return_value
+                manager.discover_components.return_value = mock_cluster_components
+                manager.recommend_health_checks.return_value = []
+                result = runner.invoke(
+                    main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                )
+
+            assert result.exit_code == 0, result.output
+            with open(output_file, encoding="utf-8") as generated:
+                genetic = yaml.safe_load(generated)["genetic"]
+
+            assert genetic["generations"] == 7
+            assert genetic["population_size"] == 12
+            assert genetic["tournament_size"] == 4
+            assert genetic["composition_rate"] == 0.3
+            assert genetic["population_injection_rate"] == 0.1
+            assert genetic["stopping_criteria"]["generation_saturation"] == 3
+            assert genetic["stopping_criteria"]["exploration_saturation"] == 4
+            assert genetic["mutation_rate"] == 0.7
+            assert genetic["scenario_mutation_rate"] == 0.6
+            assert genetic["crossover_rate"] == 0.6
+            assert genetic["population_injection_size"] == 2
         finally:
             os.unlink(kubeconfig_path)
 

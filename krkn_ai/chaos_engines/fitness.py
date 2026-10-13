@@ -268,14 +268,14 @@ def normalize_generation_scores(
     """Apply log + per-generation min-max normalization to Prometheus scores.
 
     Mutates results in-place.  Skips misconfiguration results (fitness == -1).
+    A singleton cohort has no relative signal, like an equal-valued cohort:
+    its Prometheus items normalize to zero, but its total is still recomputed.
     """
     valid = [
         r
         for r in results
         if r.fitness_result.scores and r.fitness_result.fitness_score != -1.0
     ]
-    if len(valid) < 2:
-        return
 
     by_item: Dict[int, List[FitnessScoreResult]] = defaultdict(list)
     for r in valid:

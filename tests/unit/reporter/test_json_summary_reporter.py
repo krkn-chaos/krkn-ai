@@ -96,6 +96,7 @@ class TestJSONSummaryReporter:
             algo_config=minimal_config.genetic,
             seen_population=pop,
             best_of_generation=[],
+            completed_generations=1,
         )
 
         best = reporter.generate_summary()["best_scenarios"]
@@ -110,6 +111,31 @@ class TestJSONSummaryReporter:
             assert "generation" in item
             assert "scenario_type" in item
             assert "parameters" in item
+
+    def test_unfinished_generation_does_not_affect_fitness_summary(
+        self, minimal_config
+    ):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=minimal_config.cluster_components)
+        completed = self._create_results(0, 10, 2, scenario, now)
+        unfinished = self._create_results(1, 900, 1, scenario, now)
+        reporter = JSONSummaryReporter(
+            run_uuid="partial",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={**completed, **unfinished},
+            best_of_generation=[completed[1]],
+            completed_generations=1,
+        )
+
+        summary = reporter.generate_summary()
+
+        assert summary["summary"]["best_fitness_score"] == 20.0
+        assert summary["summary"]["average_fitness_score"] == 15.0
+        assert summary["fitness_progression"] == [
+            {"generation": 0, "best": 20.0, "average": 15.0}
+        ]
+        assert [item["generation"] for item in summary["best_scenarios"]] == [0, 0]
 
     def test_edge_cases(self, minimal_config):
         """Test single generation and zero fitness cases"""
@@ -149,8 +175,8 @@ class TestJSONSummaryReporter:
             best_of_generation=[],
         )
         summary = reporter.generate_summary()
-        assert summary["summary"]["best_fitness_score"] == 0.0
-        assert summary["summary"]["average_fitness_score"] == 0.0
+        assert summary["summary"]["best_fitness_score"] is None
+        assert summary["summary"]["average_fitness_score"] is None
 
     def test_empty_population(self, minimal_config):
         """Test summary behavior with no results"""
@@ -164,8 +190,8 @@ class TestJSONSummaryReporter:
         summary = reporter.generate_summary()
         assert summary["summary"]["total_scenarios_executed"] == 0
         assert summary["best_scenarios"] == []
-        assert summary["summary"]["best_fitness_score"] == 0.0
-        assert summary["summary"]["average_fitness_score"] == 0.0
+        assert summary["summary"]["best_fitness_score"] is None
+        assert summary["summary"]["average_fitness_score"] is None
 
     def test_save_json_consistency(self, minimal_config, temp_output_dir):
         """Test that save method output matches generated summary"""

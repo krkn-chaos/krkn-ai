@@ -51,15 +51,19 @@ def read_config_from_file(
     if kubeconfig is not None and kubeconfig != "" and os.path.exists(kubeconfig):
         config["kubeconfig_file_path"] = kubeconfig
 
-    # param refers to Key-value passed with -p flag during krkn-ai test run
-    if param:
+    # param refers to Key-value passed with -p flag during krkn-ai test run.
+    # Parameters from the config file apply even when no -p is passed.
+    existing = config.get("parameters")
+    if param or (isinstance(existing, dict) and existing):
         params = {}
-        existing = config.get("parameters")
         if isinstance(existing, dict):
             for k, v in existing.items():
-                params[str(k)] = ParameterValue.from_cli(str(k), str(v))
+                if isinstance(v, dict):
+                    params[str(k)] = ParameterValue.model_validate(v)
+                else:
+                    params[str(k)] = ParameterValue.from_cli(str(k), str(v))
 
-        for p in param:
+        for p in param or ():
             if "=" in p:
                 key, value = p.split("=", 1)
             else:
@@ -69,7 +73,7 @@ def read_config_from_file(
         raw = {k: v.value for k, v in params.items()}
 
         # Replace parameter in health check url string
-        for app in config.get("health_checks", {}).get("applications", []):
+        for app in (config.get("health_checks") or {}).get("applications", []):
             if "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 

@@ -229,6 +229,66 @@ class TestReadConfigFromFileHeaders:
         with pytest.raises(ValidationError):
             read_config_from_file(config_file, param=["ES_HOST=example.com"])
 
+    def _write_param_config(self, path, parameters, health_checks=None):
+        config = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "parameters": parameters,
+            "health_checks": health_checks
+            if health_checks is not None
+            else {"applications": [{"name": "app", "url": "http://$HOST/health"}]},
+        }
+        with open(path, "w") as f:
+            yaml.dump(config, f)
+
+    def test_config_file_parameters_apply_without_cli_params(self, tmp_path):
+        """Parameters defined in the config file work when no -p flag is passed."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(config_file, {"HOST": "example.com"})
+
+        result = read_config_from_file(config_file)
+
+        assert result.parameters["HOST"].value == "example.com"
+        assert str(result.health_checks.applications[0].url).startswith(
+            "http://example.com/health"
+        )
+
+    def test_structured_config_file_parameters_keep_value_with_cli_params(
+        self, tmp_path
+    ):
+        """A {value, is_private} parameter entry is not stringified when -p is used."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(
+            config_file, {"HOST": {"value": "example.com", "is_private": True}}
+        )
+
+        result = read_config_from_file(config_file, param=["OTHER=1"])
+
+        assert result.parameters["HOST"].value == "example.com"
+        assert result.parameters["HOST"].is_private is True
+        assert str(result.health_checks.applications[0].url).startswith(
+            "http://example.com/health"
+        )
+
+    def test_null_health_checks_with_file_parameters_is_a_validation_error(
+        self, tmp_path
+    ):
+        """health_checks: null still fails validation cleanly, not with AttributeError."""
+        config_file = str(tmp_path / "config.yaml")
+        config = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "parameters": {"HOST": "example.com"},
+            "health_checks": None,
+        }
+        with open(config_file, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            read_config_from_file(config_file)
+
 
 class TestReadConfigValidation:
     def test_read_config_empty_file(self, tmp_path):

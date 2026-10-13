@@ -645,6 +645,67 @@ class TestDiscoverCommand:
         finally:
             os.unlink(kubeconfig_path)
 
+    def test_discover_writes_recommended_genetic_params_to_file(
+        self, mock_cluster_components, temp_output_dir
+    ):
+        runner = CliRunner()
+        output_file = os.path.join(temp_output_dir, "output.yaml")
+        profile = {
+            "generations": 7,
+            "population_size": 12,
+            "tournament_size": 4,
+            "composition_rate": 0.3,
+            "population_injection_rate": 0.1,
+            "generation_saturation": 3,
+            "exploration_saturation": 4,
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as kubeconfig:
+            kubeconfig.write("apiVersion: v1\nkind: Config")
+            kubeconfig_path = kubeconfig.name
+
+        try:
+            with (
+                patch("krkn_ai.cli.cmd.ClusterManager") as manager_class,
+                patch(
+                    "krkn_ai.cli.cmd.ScenarioFactory.recommend_enabled_scenarios",
+                    return_value={},
+                ),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_genetic_params",
+                    return_value=profile,
+                ),
+                patch("krkn_ai.cli.cmd.create_prometheus_client"),
+                patch(
+                    "krkn_ai.cli.cmd.recommend_fitness_queries",
+                    return_value=[],
+                ),
+            ):
+                manager = manager_class.return_value
+                manager.discover_components.return_value = mock_cluster_components
+                manager.recommend_health_checks.return_value = []
+                result = runner.invoke(
+                    main, ["discover", "-k", kubeconfig_path, "-o", output_file]
+                )
+
+            assert result.exit_code == 0, result.output
+            with open(output_file, encoding="utf-8") as generated:
+                genetic = yaml.safe_load(generated)["genetic"]
+
+            assert genetic["generations"] == 7
+            assert genetic["population_size"] == 12
+            assert genetic["tournament_size"] == 4
+            assert genetic["composition_rate"] == 0.3
+            assert genetic["population_injection_rate"] == 0.1
+            assert genetic["stopping_criteria"]["generation_saturation"] == 3
+            assert genetic["stopping_criteria"]["exploration_saturation"] == 4
+            assert genetic["mutation_rate"] == 0.7
+            assert genetic["scenario_mutation_rate"] == 0.6
+            assert genetic["crossover_rate"] == 0.6
+            assert genetic["population_injection_size"] == 2
+        finally:
+            os.unlink(kubeconfig_path)
+
     @pytest.mark.parametrize(
         "strategy, file_exists, expect_recommend_calls",
         [

@@ -183,14 +183,14 @@ class TestHealthCheckRendering:
 
 
 class TestGeneticDefaults:
-    def test_template_defaults_match_config_model(self):
+    def test_template_uses_sizing_fallback_and_keeps_model_defaults(self):
         defaults = GeneticAlgorithmConfig()
         generated = yaml.safe_load(create_krkn_ai_template(KUBECONFIG, DATA))
         genetic = generated["genetic"]
 
         assert generated["algorithm"] == "genetic"
-        assert genetic["generations"] == defaults.generations
-        assert genetic["population_size"] == defaults.population_size
+        assert genetic["generations"] == 2
+        assert genetic["population_size"] == 2
         assert genetic["mutation_rate"] == defaults.mutation_rate
         assert genetic["scenario_mutation_rate"] == defaults.scenario_mutation_rate
         assert genetic["crossover_rate"] == defaults.crossover_rate

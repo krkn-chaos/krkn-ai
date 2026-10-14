@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from krkn_ai.utils.weight_learning import (
     learn_weights,
     load_learned_weights,
@@ -70,6 +72,21 @@ class TestLearnWeights:
 
 
 class TestSaveLoad:
+    @pytest.mark.parametrize(
+        "content", ['["up"]', '"up"', "1", "0.5", "true", "null", "[]", "false", "0"]
+    )
+    def test_non_object_json_returns_empty(self, tmp_path, content):
+        path = tmp_path / "learned_weights.json"
+        path.write_text(content, encoding="utf-8")
+
+        assert load_learned_weights(str(path)) == {}
+
+    def test_malformed_json_returns_empty(self, tmp_path):
+        path = tmp_path / "learned_weights.json"
+        path.write_text('{"up":', encoding="utf-8")
+
+        assert load_learned_weights(str(path)) == {}
+
     def test_roundtrip(self, tmp_path):
         path = str(tmp_path / "learned_weights.json")
         save_learned_weights({"q1": 0.7, "q2": 0.3}, path)

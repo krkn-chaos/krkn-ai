@@ -49,12 +49,16 @@ def save_learned_weights(weights: Dict[str, float], path: str) -> None:
 
 
 def load_learned_weights(path: Optional[str]) -> Dict[str, float]:
-    """Load learned weights written by a previous run; {} if the file is missing."""
+    """Load learned weights; {} if the file is missing or not a JSON object."""
     if not path or not os.path.exists(path):
         return {}
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f) or {}
+            weights = json.load(f)
+        if not isinstance(weights, dict):
+            logger.warning("Learned weights %s must contain a JSON object", path)
+            return {}
+        return weights
     except (OSError, ValueError) as error:
         logger.warning("Could not read learned weights %s: %s", path, error)
         return {}

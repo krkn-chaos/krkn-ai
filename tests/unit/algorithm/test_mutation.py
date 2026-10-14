@@ -4,10 +4,16 @@ Mutation operation tests
 
 from typing import ClassVar, List
 
-from krkn_ai.models.scenario.base import CompositeScenario, CompositeDependency
+from krkn_ai.models.scenario.base import (
+    CompositeScenario,
+    CompositeDependency,
+    ScenarioOrigin,
+)
 from krkn_ai.models.scenario.parameters import DummyEndParameter
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Node
+from krkn_ai.utils.rng import rng
+from krkn_ai.algorithm.genetic import GeneticAlgorithm
 
 
 class SourceScenario(DummyScenario):
@@ -28,6 +34,17 @@ class RecordingScenario(DummyScenario):
         self.received_components.append(self._cluster_components)
 
 
+class RerandomizingScenario(DummyScenario):
+    """DummyScenario whose mutate() re-draws values, like real scenarios."""
+
+    name: str = "rerandomizing-scenario"
+    krknctl_name: str = "rerandomizing-scenario"
+    krknhub_image: str = "rerandomizing-scenario"
+
+    def mutate(self):
+        self.end.value = rng.randint(0, 100)
+
+
 class TestMutation:
     """Test mutation functionality"""
 
@@ -35,17 +52,17 @@ class TestMutation:
         """Test mutation of a simple scenario"""
         scenario = DummyScenario(cluster_components=ClusterComponents())
 
-        # Set mutation rate to 0 to test parameter mutation path
+        # Avoid type mutation (requires valid scenarios); force parameter mutation
         genetic_algorithm.current_scenario_mutation_rate = 0.0
+        genetic_algorithm.algo_config.mutation_rate = 1.0
 
         mutated = genetic_algorithm.mutate(scenario)
 
         # Should return the same scenario (DummyScenario.mutate() does nothing)
-        # The mutate method is called internally, but since it's empty, the scenario remains unchanged
+        # Parameter mutation runs, tagging the scenario as PARAMETER_MUTATION
         assert mutated is scenario
         assert isinstance(mutated, DummyScenario)
-        # Verify the scenario has mutate method (which will be called)
-        assert hasattr(mutated, "mutate")
+        assert mutated.origin is ScenarioOrigin.PARAMETER_MUTATION
 
     def test_mutate_composite_scenario(self, genetic_algorithm):
         """Test mutation of a composite scenario recursively mutates sub-scenarios"""
@@ -59,8 +76,9 @@ class TestMutation:
             dependency=CompositeDependency.NONE,
         )
 
-        # Set mutation rates to 0 to avoid scenario_mutation which requires valid scenarios
+        # Avoid type mutation (requires valid scenarios); force parameter mutation
         genetic_algorithm.current_scenario_mutation_rate = 0.0
+        genetic_algorithm.algo_config.mutation_rate = 1.0
 
         mutated = genetic_algorithm.mutate(composite)
 
@@ -68,11 +86,45 @@ class TestMutation:
         assert isinstance(mutated, CompositeScenario)
         assert mutated is composite
         # Sub-scenarios should be mutated recursively (though DummyScenario.mutate() does nothing)
-        # Verify both sub-scenarios exist and have mutate methods
+        # Verify both sub-scenarios exist and were parameter-mutated
         assert mutated.scenario_a is not None
         assert mutated.scenario_b is not None
-        assert hasattr(mutated.scenario_a, "mutate")
-        assert hasattr(mutated.scenario_b, "mutate")
+        assert mutated.scenario_a.origin is ScenarioOrigin.PARAMETER_MUTATION
+        assert mutated.scenario_b.origin is ScenarioOrigin.PARAMETER_MUTATION
+
+    def test_mutate_skipped_keeps_crossover_origin(self, genetic_algorithm):
+        """A child that skips parameter mutation keeps its crossover origin and values.
+
+        Regression test for #482: before the fix, scenario.mutate() ran
+        unconditionally, so a crossover child was re-randomized and re-tagged
+        PARAMETER_MUTATION even when both mutation rates were 0.
+        """
+        scenario = RerandomizingScenario(cluster_components=ClusterComponents())
+        scenario.end.value = 42
+        GeneticAlgorithm._tag_lineage(scenario, ["parent-1"], ScenarioOrigin.CROSSOVER)
+
+        genetic_algorithm.current_scenario_mutation_rate = 0.0
+        genetic_algorithm.algo_config.mutation_rate = 0.0
+
+        mutated = genetic_algorithm.mutate(scenario)
+
+        assert mutated is scenario
+        assert mutated.end.value == 42
+        assert mutated.origin is ScenarioOrigin.CROSSOVER
+
+    def test_mutate_applied_retags_as_parameter_mutation(self, genetic_algorithm):
+        """When parameter mutation is applied, the child is re-tagged."""
+        scenario = RerandomizingScenario(cluster_components=ClusterComponents())
+        scenario.end.value = 42
+        GeneticAlgorithm._tag_lineage(scenario, ["parent-1"], ScenarioOrigin.CROSSOVER)
+
+        genetic_algorithm.current_scenario_mutation_rate = 0.0
+        genetic_algorithm.algo_config.mutation_rate = 1.0
+
+        mutated = genetic_algorithm.mutate(scenario)
+
+        assert mutated is scenario
+        assert mutated.origin is ScenarioOrigin.PARAMETER_MUTATION
 
     def test_scenario_mutation_uses_active_cluster_components(self, genetic_algorithm):
         """Disabled components should stay out of scenario mutation."""

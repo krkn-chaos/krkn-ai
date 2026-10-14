@@ -371,11 +371,13 @@ class GeneticAlgorithm(BaseEngine):
                 new_scenario.origin = ScenarioOrigin.TYPE_MUTATION
                 return new_scenario
 
-        if hasattr(scenario, "mutate"):
+        if not hasattr(scenario, "mutate"):
+            logger.warning("Scenario %s does not have mutate method", scenario)
+            return scenario
+
+        if rng.random() < self.algo_config.mutation_rate:
             scenario.mutate()
             scenario.origin = ScenarioOrigin.PARAMETER_MUTATION
-        else:
-            logger.warning("Scenario %s does not have mutate method", scenario)
         return scenario
 
     def scenario_mutation(self, scenario: BaseScenario):

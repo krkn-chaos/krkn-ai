@@ -742,7 +742,9 @@ def create_app(
         if final is not None:
             summary = final.get("summary") or {}
             config = final.get("config") or {}
-            completed_scenarios = summary.get("total_scenarios_executed")
+            completed_scenarios = progress.get(
+                "completedScenarios", summary.get("total_scenarios_executed")
+            )
             configured_generations = config.get("generations")
             population_size = config.get("population_size")
         else:

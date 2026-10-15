@@ -1,4 +1,5 @@
 import base64
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -12,6 +13,9 @@ from fastapi.testclient import TestClient
 from requests import ConnectionError, HTTPError, Response
 
 import krkn_ai.server as server_module
+from krkn_ai.models.app import CommandRunResult, FitnessResult
+from krkn_ai.models.scenario.base import ScenarioOrigin
+from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.run_results import parse_run_artifacts
 from krkn_ai.server import (
     _request_with_retry,
@@ -1230,3 +1234,110 @@ def test_corrupt_committed_yaml_is_reported_as_bad_gateway(tmp_path: Path):
     response = client.get("/v1/runs/run-1/summary", headers=TOKEN_HEADERS)
     assert response.status_code == 502
     assert response.json()["detail"] == "invalid committed artifact"
+
+
+def test_cached_offspring_keep_distinct_artifacts_and_consistent_api_counts(
+    genetic_algorithm, tmp_path, monkeypatch
+):
+    engine = genetic_algorithm
+    engine.config.baseline.enable = False
+    engine.config.fitness_function.items = []
+    engine.algo_config.population_size = 4
+    engine.algo_config.generations = 2
+    engine.algo_config.crossover_rate = 0.0
+    engine.algo_config.mutation_rate = 0.0
+    engine.algo_config.composition_rate = 0.0
+    engine.algo_config.population_injection_rate = 0.0
+    engine.current_scenario_mutation_rate = 0.0
+    parents = [
+        DummyScenario(
+            cluster_components=engine.config.cluster_components,
+            origin=ScenarioOrigin.INITIAL,
+        )
+        for _ in range(4)
+    ]
+    for parent, score in zip(parents, [10, 30, 50, 90]):
+        parent.end.value = score
+    pairs = iter([(parents[0], parents[1]), (parents[0], parents[3])])
+    monkeypatch.setattr(engine, "create_population", lambda size: parents)
+    monkeypatch.setattr(engine, "select_parents", lambda results: next(pairs))
+
+    def evaluate(scenario, generation):
+        now = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        return CommandRunResult(
+            generation_id=generation,
+            scenario=scenario,
+            cmd="",
+            log="original measurement",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=float(scenario.end.value)),
+        )
+
+    engine.krkn_client.run.side_effect = evaluate
+    engine.simulate()
+    client = TestClient(create_app(tmp_path, "service-token"))
+    output = Path(engine.output_dir)
+
+    def publish(run_status):
+        entries = []
+        for path in sorted(output.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(output).as_posix()
+            if relative not in {
+                "progress.json",
+                "results.json",
+            } and not relative.startswith("yaml/"):
+                continue
+            content = path.read_bytes()
+            checksum = hashlib.sha256(content).hexdigest()
+            response = client.put(
+                f"/v1/runs/cached/files/{relative}",
+                headers={**TOKEN_HEADERS, "X-Checksum-Sha256": checksum},
+                content=content,
+            )
+            assert response.status_code == 201
+            entries.append({"path": relative, "sha256": checksum, "size": len(content)})
+        response = client.post(
+            "/v1/runs/cached/commit",
+            headers=TOKEN_HEADERS,
+            json={"files": entries, "status": run_status},
+        )
+        assert response.status_code == 200
+
+    publish("in_progress")
+    live = client.get("/v1/runs/cached/summary", headers=TOKEN_HEADERS).json()
+    engine.save()
+    publish("succeeded")
+    final = client.get("/v1/runs/cached/summary", headers=TOKEN_HEADERS).json()
+    response = client.get("/v1/runs/cached/scenarios", headers=TOKEN_HEADERS)
+    assert response.status_code == 200
+    rows = response.json()["scenarios"]
+    children = [row for row in rows if row["generation"] == 1]
+
+    assert engine.krkn_client.run.call_count == 4
+    assert live["completedScenarios"] == final["completedScenarios"] == 8
+    assert len(rows) == 8
+    assert len({row["scenarioId"] for row in rows}) == 8
+    assert sorted(row["fitnessScore"] for row in children) == [10, 10, 30, 90]
+    assert (
+        final["fitnessProgression"]
+        == live["fitnessProgression"]
+        == [
+            {"generation": 0, "best": 90, "average": 45},
+            {"generation": 1, "best": 90, "average": 35},
+        ]
+    )
+    raw = json.loads((output / "results.json").read_text())
+    assert raw["summary"]["total_scenarios_executed"] == 4
+    assert final["fitnessProgression"] == raw["fitness_progression"]
+    for row in children:
+        response = client.get(
+            f"/v1/runs/cached/scenarios/1/{row['scenarioId']}",
+            headers=TOKEN_HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["origin"] == "crossover"
+        assert response.json()["fitnessState"] == "final"

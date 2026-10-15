@@ -9,7 +9,7 @@ from typing import List, Optional
 from krkn_ai.algorithm.base import BaseEngine
 from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.constants import STATUS_IN_PROGRESS
-from krkn_ai.models.app import CommandRunResult, KrknRunnerType
+from krkn_ai.models.app import CommandRunResult, KrknRunnerType, auto_id
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
 from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
@@ -355,6 +355,7 @@ class GeneticAlgorithm(BaseEngine):
             )
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
+            result.scenario_id = next(auto_id)
             result.generation_id = generation_id
             result.scenario = scenario
             return result

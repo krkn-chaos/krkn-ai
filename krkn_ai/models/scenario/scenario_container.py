@@ -77,14 +77,9 @@ class ContainerScenario(Scenario):
         # pod_label is a string of the form "key=value"
         self.label_selector.value = "{}={}".format(label, labels[label])
 
-        # CONTAINER_NAME selects which container(s) to kill inside each disrupted
-        # pod: either one specific container, or ".*" to target every container.
-        # It is chosen before the disruption count because it constrains which
-        # pods can actually be targeted. (#277)
-        if rng.random() < 0.5:
-            self.container_name.value = rng.choice([x.name for x in pod.containers])
-        else:
-            self.container_name.value = ".*"
+        # Krkn matches container names literally; krkn-hub defaults an empty
+        # name to "etcd", so always provide an explicit discovered name.
+        self.container_name.value = rng.choice([x.name for x in pod.containers])
 
         target_container = self.container_name.value
 
@@ -92,8 +87,6 @@ class ContainerScenario(Scenario):
             """Whether the label selector and container name both apply to a pod."""
             if candidate.labels.get(label) != labels[label]:
                 return False
-            if target_container == ".*":
-                return len(candidate.containers) > 0
             return any(c.name == target_container for c in candidate.containers)
 
         # DISRUPTION_COUNT is the number of *pods* to disrupt, not the container

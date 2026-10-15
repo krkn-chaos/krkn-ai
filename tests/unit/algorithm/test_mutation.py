@@ -194,7 +194,7 @@ class TestMutation:
             assert child.pod_selector.value == "{app: test}"
         else:
             assert child.label_selector.value == "app=test"
-            assert child.container_name.value in ("test-container", ".*")
+            assert child.container_name.value == "test-container"
 
     def test_type_mutation_inherits_compatible_group_without_aliasing(
         self, genetic_algorithm

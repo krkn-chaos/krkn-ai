@@ -16,6 +16,7 @@ from krkn_ai.models.cluster_components import (
     Namespace,
     OwnerReference,
     Pod,
+    Service,
 )
 from krkn_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
 from krkn_ai.models.scenario.scenario_pod import PodScenario
@@ -26,6 +27,9 @@ from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
 from krkn_ai.models.scenario.scenario_network import NetworkScenario
 from krkn_ai.models.scenario.scenario_pvc import PVCScenario
 from krkn_ai.models.scenario.scenario_storage_throttle import StorageThrottleScenario
+from krkn_ai.models.scenario.scenario_service_disruption import (
+    ServiceDisruptionScenario,
+)
 from krkn_ai.models.scenario.parameters import (
     DummyEndParameter,
     DummyExitStatusParameter,
@@ -161,6 +165,51 @@ class TestCrossover:
         child, _ = genetic_algorithm.crossover(pod, cpu)
 
         assert (child.namespace.value, child.pod_label.value) == original_target
+
+    @pytest.mark.parametrize(
+        "hog_type", [NodeCPUHogScenario, NodeMemoryHogScenario, NodeIOHogScenario]
+    )
+    @pytest.mark.parametrize("service_first", [True, False])
+    def test_service_disruption_does_not_inherit_hog_namespace(
+        self, genetic_algorithm, mock_cluster_components, hog_type, service_first
+    ):
+        cluster = mock_cluster_components.model_copy(deep=True)
+        cluster.namespaces[0].services = [Service(name="application-service")]
+        service = ServiceDisruptionScenario(cluster_components=cluster)
+        hog = hog_type(cluster_components=cluster)
+        genetic_algorithm.algo_config.crossover_rate = 1.0
+
+        parents = (service, hog) if service_first else (hog, service)
+        genetic_algorithm.crossover(*parents)
+
+        assert service.namespace.value == cluster.namespaces[0].name
+        assert hog.namespace.value == "default"
+
+    def test_service_disruption_target_crosses_between_compatible_parents(
+        self, genetic_algorithm, mock_cluster_components
+    ):
+        cluster = mock_cluster_components.model_copy(deep=True)
+        cluster.namespaces[0].services = [Service(name="application-service")]
+        cluster.namespaces.append(
+            Namespace(
+                name="other-application", services=[Service(name="other-service")]
+            )
+        )
+        first, second = [
+            ServiceDisruptionScenario(cluster_components=cluster) for _ in range(2)
+        ]
+        first.namespace.value = cluster.namespaces[0].name
+        second.namespace.value = cluster.namespaces[1].name
+        first.runs.value, second.runs.value = 1, 3
+        genetic_algorithm.algo_config.crossover_rate = 1.0
+
+        genetic_algorithm.crossover(first, second)
+
+        assert (first.namespace.value, second.namespace.value) == (
+            cluster.namespaces[1].name,
+            cluster.namespaces[0].name,
+        )
+        assert (first.runs.value, second.runs.value) == (3, 1)
 
     @pytest.mark.parametrize("group_roll", [0.1, 0.9])
     def test_declared_group_has_one_crossover_decision(

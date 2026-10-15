@@ -69,13 +69,10 @@ class JSONSummaryReporter:
         if self.start_time and self.end_time:
             duration_seconds = (self.end_time - self.start_time).total_seconds()
 
-        completed_results = [
-            result
-            for result in self.seen_population.values()
-            if result.generation_id < self.completed_generations
-        ]
         all_fitness_scores = [
-            result.fitness_result.fitness_score for result in completed_results
+            result.fitness_result.fitness_score
+            for generation in self.generation_results[: self.completed_generations]
+            for result in generation
         ]
 
         average_fitness_score = (

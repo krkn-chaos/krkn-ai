@@ -1332,6 +1332,12 @@ def test_cached_offspring_keep_distinct_artifacts_and_consistent_api_counts(
     )
     raw = json.loads((output / "results.json").read_text())
     assert raw["summary"]["total_scenarios_executed"] == 4
+    assert (
+        raw["summary"]["average_fitness_score"]
+        == live["averageFitness"]
+        == final["averageFitness"]
+        == 40.0
+    )
     assert final["fitnessProgression"] == raw["fitness_progression"]
     for row in children:
         response = client.get(

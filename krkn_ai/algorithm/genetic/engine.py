@@ -13,7 +13,6 @@ from krkn_ai.models.app import CommandRunResult, KrknRunnerType, auto_id
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig, SelectionStrategy
 from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
-    Scenario,
     BaseScenario,
     BaseParameter,
     CompositeDependency,
@@ -405,12 +404,14 @@ class GeneticAlgorithm(BaseEngine):
 
         new_scenario = rng.choice(common_scenarios)
 
-        common_params = set([type(x) for x in new_scenario.parameters]) & set(
-            [type(x) for x in scenario.parameters]
+        fields_source, fields_target, groups = self._shared_parameter_groups(
+            scenario, new_scenario
         )
-        for param_type in common_params:
-            param_value = self.__get_param_value(scenario, param_type)
-            self.__set_param_value(new_scenario, param_type, param_value)
+        for group in groups:
+            for param_type in group:
+                _, parameter = fields_source[param_type]
+                name, _ = fields_target[param_type]
+                setattr(new_scenario, name, copy.deepcopy(parameter))
 
         return True, new_scenario
 
@@ -492,39 +493,11 @@ class GeneticAlgorithm(BaseEngine):
             )
             return scenario_a, scenario_b
 
-        common_params = set([type(x) for x in scenario_a.parameters]) & set(
-            [type(x) for x in scenario_b.parameters]
+        fields_a, fields_b, groups = self._shared_parameter_groups(
+            scenario_a, scenario_b
         )
-        parameter_fields = []
-        for scenario in (scenario_a, scenario_b):
-            fields = {}
-            for name in type(scenario).model_fields:
-                parameter = getattr(scenario, name)
-                if isinstance(parameter, BaseParameter):
-                    fields[type(parameter)] = (name, parameter)
-            parameter_fields.append(fields)
-        fields_a, fields_b = parameter_fields
-        parameter_groups: List[set[type]] = []
-        for declared_group in (
-            scenario_a.crossover_parameter_groups
-            + scenario_b.crossover_parameter_groups
-        ):
-            group = set(declared_group)
-            for i in range(len(parameter_groups) - 1, -1, -1):
-                if group & parameter_groups[i]:
-                    group.update(parameter_groups.pop(i))
-            parameter_groups.append(group)
-
-        grouped_params = set().union(*parameter_groups)
-        parameter_groups.extend(
-            {param_type} for param_type in common_params - grouped_params
-        )
-        for group in parameter_groups:
-            if (
-                group <= fields_a.keys()
-                and group <= fields_b.keys()
-                and rng.random() < self.algo_config.crossover_rate
-            ):
+        for group in groups:
+            if rng.random() < self.algo_config.crossover_rate:
                 for param_type in group:
                     name_a, parameter_a = fields_a[param_type]
                     name_b, parameter_b = fields_b[param_type]
@@ -549,16 +522,38 @@ class GeneticAlgorithm(BaseEngine):
         )
         return composite_scenario
 
-    def __get_param_value(self, scenario: Scenario, param_type):
-        for param in scenario.parameters:
-            if isinstance(param, param_type):
-                return param.value
-        raise ValueError(
-            f"Parameter type {param_type} not found in scenario {scenario}"
+    @staticmethod
+    def _shared_parameter_groups(scenario_a: BaseScenario, scenario_b: BaseScenario):
+        common_params = {type(x) for x in scenario_a.parameters} & {
+            type(x) for x in scenario_b.parameters
+        }
+        parameter_fields = []
+        for scenario in (scenario_a, scenario_b):
+            fields = {}
+            for name in type(scenario).model_fields:
+                parameter = getattr(scenario, name)
+                if isinstance(parameter, BaseParameter):
+                    fields[type(parameter)] = (name, parameter)
+            parameter_fields.append(fields)
+        fields_a, fields_b = parameter_fields
+        groups: List[set[type]] = []
+        for declared_group in (
+            scenario_a.crossover_parameter_groups
+            + scenario_b.crossover_parameter_groups
+        ):
+            group = set(declared_group)
+            for i in range(len(groups) - 1, -1, -1):
+                if group & groups[i]:
+                    group.update(groups.pop(i))
+            groups.append(group)
+        grouped_params = set().union(*groups)
+        groups.extend({param_type} for param_type in common_params - grouped_params)
+        return (
+            fields_a,
+            fields_b,
+            [
+                group
+                for group in groups
+                if group <= fields_a.keys() and group <= fields_b.keys()
+            ],
         )
-
-    def __set_param_value(self, scenario: Scenario, param_type, value):
-        for param in scenario.parameters:
-            if isinstance(param, param_type):
-                param.value = value
-                return

@@ -17,6 +17,7 @@ class PodScenario(Scenario):
     name: str = "pod-scenarios"
     krknctl_name: str = "pod-scenarios"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:pod-scenarios"
+    crossover_parameter_groups = ((NamespaceParameter, PodLabelParameter),)
 
     namespace: NamespaceParameter = NamespaceParameter()
     pod_label: PodLabelParameter = PodLabelParameter()

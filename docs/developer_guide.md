@@ -174,6 +174,14 @@ uv run krkn_ai run -vv \
 
 Results will be saved to the `./results` directory, including logs and generation reports.
 
+## Scenario Parameter Dependencies
+
+Declare coupled parameter types on a scenario class using `crossover_parameter_groups`, for example `((NamespaceParameter, PodLabelParameter),)`. Each group receives one crossover decision; ungrouped parameters remain independent.
+
+Groups from both parents are combined, merging overlapping groups. A group is exchanged only when both parents have every parameter in it; otherwise none of its parameters cross over. New dependencies require only scenario declarations, not engine changes.
+
+Grouped parameters are read from model fields, including inactive PVC/pod targets and network-mode fields omitted from runner arguments. Crossover snapshots these fields before exchanging complete parameter objects, preserving private pod-owner metadata and mutually exclusive targeting state. Ungrouped parameters cross over only when emitted by both parents.
+
 ## Troubleshooting
 
 | Issue | Solution |

@@ -19,6 +19,14 @@ class ContainerScenario(Scenario):
     krknhub_image: str = (
         "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:container-scenarios"
     )
+    crossover_parameter_groups = (
+        (
+            NamespaceParameter,
+            LabelSelectorParameter,
+            ContainerNameParameter,
+            DisruptionCountParameter,
+        ),
+    )
 
     namespace: NamespaceParameter = NamespaceParameter()
     label_selector: LabelSelectorParameter = LabelSelectorParameter()

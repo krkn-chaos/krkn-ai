@@ -19,6 +19,14 @@ class NodeIOHogScenario(Scenario):
     name: str = "node-io-hog"
     krknctl_name: str = "node-io-hog"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:node-io-hog"
+    crossover_parameter_groups = (
+        (
+            NodeSelectorParameter,
+            NumberOfNodesParameter,
+            TaintParameter,
+            NodeMountPathParameter,
+        ),
+    )
 
     chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
     io_block_size: IOBlockSizeParameter = IOBlockSizeParameter()

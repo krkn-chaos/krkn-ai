@@ -15,6 +15,7 @@ from krkn_ai.models.custom_errors import UniqueScenariosError
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
+    BaseParameter,
     CompositeDependency,
     CompositeScenario,
     ScenarioOrigin,
@@ -56,6 +57,7 @@ class GeneticAlgorithm(BaseEngine):
         self.algo_config: GeneticAlgorithmConfig = config.genetic
         self.population: List[BaseScenario] = []
         self.best_of_generation: List[CommandRunResult] = []
+        self.generation_results: List[List[CommandRunResult]] = []
         self.completed_generations: int = 0
         self.stagnant_generations = 0
         self.current_scenario_mutation_rate: float = (
@@ -148,6 +150,7 @@ class GeneticAlgorithm(BaseEngine):
             self.stopping.update_saturation_tracking()
             self.stopping.update_exploration_tracking()
             self.complete_generation(cur_generation, fitness_scores)
+            self.generation_results.append(fitness_scores)
 
             cur_generation += 1
 
@@ -179,6 +182,7 @@ class GeneticAlgorithm(BaseEngine):
                     child1, child2 = self.crossover(
                         copy.deepcopy(parent1), copy.deepcopy(parent2)
                     )
+                    child1.origin = child2.origin = None
                     child1 = self.mutate(child1)
                     child2 = self.mutate(child2)
                     self._tag_lineage(child1, parent_ids, ScenarioOrigin.CROSSOVER)
@@ -223,7 +227,7 @@ class GeneticAlgorithm(BaseEngine):
             config=self.config,
             algo_config=self.algo_config,
             seen_population=self.seen_population,
-            best_of_generation=self.best_of_generation,
+            generation_results=self.generation_results,
             baseline_result=self.baseline_result,
             start_time=self.start_time,
             end_time=self.end_time,
@@ -352,6 +356,7 @@ class GeneticAlgorithm(BaseEngine):
             result = self.seen_population[scenario]
             result = copy.deepcopy(result)
             result.generation_id = generation_id
+            result.scenario = scenario
             return result
 
         self.stopping.record_new_scenario()
@@ -489,19 +494,43 @@ class GeneticAlgorithm(BaseEngine):
         common_params = set([type(x) for x in scenario_a.parameters]) & set(
             [type(x) for x in scenario_b.parameters]
         )
+        parameter_fields = []
+        for scenario in (scenario_a, scenario_b):
+            fields = {}
+            for name in type(scenario).model_fields:
+                parameter = getattr(scenario, name)
+                if isinstance(parameter, BaseParameter):
+                    fields[type(parameter)] = (name, parameter)
+            parameter_fields.append(fields)
+        fields_a, fields_b = parameter_fields
+        parameter_groups: List[set[type]] = []
+        for declared_group in (
+            scenario_a.crossover_parameter_groups
+            + scenario_b.crossover_parameter_groups
+        ):
+            group = set(declared_group)
+            for i in range(len(parameter_groups) - 1, -1, -1):
+                if group & parameter_groups[i]:
+                    group.update(parameter_groups.pop(i))
+            parameter_groups.append(group)
 
-        if len(common_params) == 0:
-            return scenario_a, scenario_b
-        else:
-            for param_type in common_params:
-                if rng.random() < self.algo_config.crossover_rate:
-                    a_value = self.__get_param_value(scenario_a, param_type)
-                    b_value = self.__get_param_value(scenario_b, param_type)
+        grouped_params = set().union(*parameter_groups)
+        parameter_groups.extend(
+            {param_type} for param_type in common_params - grouped_params
+        )
+        for group in parameter_groups:
+            if (
+                group <= fields_a.keys()
+                and group <= fields_b.keys()
+                and rng.random() < self.algo_config.crossover_rate
+            ):
+                for param_type in group:
+                    name_a, parameter_a = fields_a[param_type]
+                    name_b, parameter_b = fields_b[param_type]
+                    setattr(scenario_a, name_a, parameter_b)
+                    setattr(scenario_b, name_b, parameter_a)
 
-                    self.__set_param_value(scenario_a, param_type, b_value)
-                    self.__set_param_value(scenario_b, param_type, a_value)
-
-            return scenario_a, scenario_b
+        return scenario_a, scenario_b
 
     def composition(self, scenario_a: BaseScenario, scenario_b: BaseScenario):
         dependency = rng.choice(

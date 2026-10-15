@@ -15,6 +15,7 @@ class KubevirtDisruptionScenario(Scenario):
     name: str = "kubevirt-outage"
     krknctl_name: str = "kubevirt-outage"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:kubevirt-outage"
+    crossover_parameter_groups = ((NamespaceParameter, VMNameParameter),)
 
     timeout: VMTimeoutParameter = VMTimeoutParameter()
     vm_name: VMNameParameter = VMNameParameter()

@@ -27,6 +27,9 @@ class StorageThrottleScenario(Scenario):
     krknhub_image: str = (
         "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:storage-throttle"
     )
+    crossover_parameter_groups = (
+        (NamespaceParameter, PVCNameParameter, PodNameParameter, MountPathParameter),
+    )
 
     namespace: NamespaceParameter = NamespaceParameter()
     pvc_name: PVCNameParameter = PVCNameParameter()

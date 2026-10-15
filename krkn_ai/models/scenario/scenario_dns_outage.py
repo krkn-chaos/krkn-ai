@@ -16,6 +16,7 @@ class DnsOutageScenario(Scenario):
     name: str = "dns-outage"
     krknctl_name: str = "pod-network-filter"
     krknhub_image: str = "quay.io/krkn-chaos/krkn-hub:pod-network-filter"
+    crossover_parameter_groups = ((NamespaceParameter, PodNameParameter),)
 
     duration: DNSOutageDurationParameter = DNSOutageDurationParameter()
     namespace: NamespaceParameter = NamespaceParameter()

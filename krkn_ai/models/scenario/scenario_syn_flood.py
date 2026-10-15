@@ -19,6 +19,13 @@ class SynFloodScenario(Scenario):
     name: str = "syn-flood"
     krknctl_name: str = "syn-flood"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:syn-flood"
+    crossover_parameter_groups = (
+        (
+            NamespaceParameter,
+            SynFloodTargetServiceParameter,
+            SynFloodTargetPortParameter,
+        ),
+    )
 
     packet_size: SynFloodPacketSizeParameter = SynFloodPacketSizeParameter()
     window_size: SynFloodWindowSizeParameter = SynFloodWindowSizeParameter()

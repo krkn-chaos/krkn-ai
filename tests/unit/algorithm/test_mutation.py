@@ -4,6 +4,8 @@ Mutation operation tests
 
 from typing import ClassVar, List
 
+import pytest
+
 from krkn_ai.models.scenario.base import (
     CompositeScenario,
     CompositeDependency,
@@ -11,6 +13,13 @@ from krkn_ai.models.scenario.base import (
 )
 from krkn_ai.models.scenario.parameters import DummyEndParameter
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
+from krkn_ai.models.scenario.scenario_app_outage import AppOutageScenario
+from krkn_ai.models.scenario.scenario_container import ContainerScenario
+from krkn_ai.models.scenario.scenario_cpu_hog import NodeCPUHogScenario
+from krkn_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
+from krkn_ai.models.scenario.scenario_pod import PodScenario
+from krkn_ai.models.scenario.scenario_pvc import PVCScenario
+from krkn_ai.models.scenario.scenario_time import TimeScenario
 from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Node
 from krkn_ai.utils.rng import rng
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
@@ -158,3 +167,51 @@ class TestMutation:
         ]
         assert [node.name for node in received_components.nodes] == ["active-node"]
         assert mutated._cluster_components == received_components
+
+    @pytest.mark.parametrize(
+        "target_cls", [PodScenario, PVCScenario, AppOutageScenario, ContainerScenario]
+    )
+    def test_type_mutation_keeps_valid_target_from_incompatible_source(
+        self, genetic_algorithm, target_cls
+    ):
+        source = TimeScenario.model_construct()
+        source.object_type.value = "node"
+        source.namespace.value = ""
+        source.label_selector.value = "kubernetes.io/hostname=test-node"
+        genetic_algorithm.valid_scenarios = [("target", target_cls)]
+
+        success, child = genetic_algorithm.scenario_mutation(source)
+
+        assert success
+        assert child.namespace.value == "test-namespace"
+        assert source.namespace.value == ""
+        if isinstance(child, PodScenario):
+            assert child.pod_label.value == "app=test"
+        elif isinstance(child, PVCScenario):
+            assert child.pod_name.value == "test-pod"
+            assert child.pod_name._namespace == "test-namespace"
+        elif isinstance(child, AppOutageScenario):
+            assert child.pod_selector.value == "{app: test}"
+        else:
+            assert child.label_selector.value == "app=test"
+            assert child.container_name.value == "test-container"
+
+    def test_type_mutation_inherits_compatible_group_without_aliasing(
+        self, genetic_algorithm
+    ):
+        source = NodeCPUHogScenario.model_construct()
+        source.node_selector.value = "kubernetes.io/hostname=test-node"
+        source.number_of_nodes.value = 1
+        source.taint.value = '["source-taint"]'
+        source.chaos_duration.value = 75
+        genetic_algorithm.valid_scenarios = [("memory", NodeMemoryHogScenario)]
+
+        success, child = genetic_algorithm.scenario_mutation(source)
+
+        assert success
+        assert child.node_selector.value == source.node_selector.value
+        assert child.number_of_nodes.value == 1
+        assert child.taint.value == '["source-taint"]'
+        assert child.chaos_duration.value == 75
+        child.number_of_nodes.value = 2
+        assert source.number_of_nodes.value == 1

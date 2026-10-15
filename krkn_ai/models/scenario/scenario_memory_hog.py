@@ -17,6 +17,9 @@ class NodeMemoryHogScenario(Scenario):
     name: str = "node-memory-hog"
     krknctl_name: str = "node-memory-hog"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:node-memory-hog"
+    crossover_parameter_groups = (
+        (NodeSelectorParameter, NumberOfNodesParameter, TaintParameter),
+    )
 
     chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
     node_memory_percentage: NodeMemoryPercentageParameter = (

@@ -646,4 +646,4 @@ class MountPathParameter(BaseParameter):
 class StorageThrottleImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
-    value: str = "quay.io/krkn-chaos/krkn:tools"
+    value: str = "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-tools"

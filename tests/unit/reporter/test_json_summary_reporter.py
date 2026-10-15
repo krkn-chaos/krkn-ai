@@ -44,14 +44,13 @@ class TestJSONSummaryReporter:
         gen1 = self._create_results(1, 40, 3, scenario, now)
 
         pop = {**gen0, **gen1}
-        best = [gen0[2], gen1[102]]
 
         reporter = JSONSummaryReporter(
             run_uuid="test-run",
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population=pop,
-            best_of_generation=best,
+            generation_results=[list(gen0.values()), list(gen1.values())],
             start_time=now,
             end_time=now + datetime.timedelta(seconds=100),
             completed_generations=2,
@@ -95,7 +94,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population=pop,
-            best_of_generation=[],
+            generation_results=[],
             completed_generations=1,
         )
 
@@ -112,6 +111,38 @@ class TestJSONSummaryReporter:
             assert "scenario_type" in item
             assert "parameters" in item
 
+    def test_average_includes_cached_members_with_population_weighting(
+        self, minimal_config
+    ):
+        now = datetime.datetime(2023, 1, 1, tzinfo=datetime.timezone.utc)
+        scenario = DummyScenario(cluster_components=minimal_config.cluster_components)
+        completed = self._create_results(0, 10, 2, scenario, now)
+        cached = completed[0].model_copy(
+            update={"generation_id": 1, "scenario_id": 100}, deep=True
+        )
+        unfinished = self._create_results(2, 900, 1, scenario, now)
+        reporter = JSONSummaryReporter(
+            run_uuid="cached",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={**completed, **unfinished},
+            generation_results=[
+                list(completed.values()),
+                [cached],
+                list(unfinished.values()),
+            ],
+            completed_generations=2,
+        )
+
+        summary = reporter.generate_summary()
+
+        assert summary["summary"]["average_fitness_score"] == 13.3333
+        assert summary["summary"]["best_fitness_score"] == 20.0
+        assert summary["fitness_progression"] == [
+            {"generation": 0, "best": 20.0, "average": 15.0},
+            {"generation": 1, "best": 10.0, "average": 10.0},
+        ]
+
     def test_unfinished_generation_does_not_affect_fitness_summary(
         self, minimal_config
     ):
@@ -124,7 +155,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population={**completed, **unfinished},
-            best_of_generation=[completed[1]],
+            generation_results=[list(completed.values()), list(unfinished.values())],
             completed_generations=1,
         )
 
@@ -149,7 +180,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population=gen0,
-            best_of_generation=[gen0[1]],
+            generation_results=[list(gen0.values())],
             completed_generations=1,
         )
         summary = reporter.generate_summary()
@@ -172,7 +203,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population={999: res_zero},
-            best_of_generation=[],
+            generation_results=[],
         )
         summary = reporter.generate_summary()
         assert summary["summary"]["best_fitness_score"] is None
@@ -185,7 +216,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population={},
-            best_of_generation=[],
+            generation_results=[],
         )
         summary = reporter.generate_summary()
         assert summary["summary"]["total_scenarios_executed"] == 0
@@ -205,7 +236,7 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population=pop,
-            best_of_generation=[],
+            generation_results=[],
         )
 
         expected_summary = reporter.generate_summary()
@@ -242,12 +273,16 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population={42: res},
-            best_of_generation=[],
+            generation_results=[
+                [res.model_copy(update={"generation_id": 0})],
+                [res],
+            ],
+            completed_generations=2,
         )
 
         lineage = reporter.generate_summary()["population_lineage"]
-        assert len(lineage) == 1
-        node = lineage[0]
+        assert len(lineage) == 2
+        node = lineage[1]
         assert node["scenario_id"] == 42
         assert node["scenario_uuid"] == scenario.id
         assert node["generation"] == 1
@@ -279,7 +314,8 @@ class TestJSONSummaryReporter:
             config=minimal_config,
             algo_config=minimal_config.genetic,
             seen_population={1: res},
-            best_of_generation=[],
+            generation_results=[[res]],
+            completed_generations=1,
         )
 
         node = reporter.generate_summary()["population_lineage"][0]

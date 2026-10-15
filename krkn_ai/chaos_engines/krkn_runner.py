@@ -122,6 +122,7 @@ class KrknRunner:
 
         log, returncode, run_uuid, resiliency_score = None, None, None, None
         command = ""
+        recovery_failed = False
 
         health_check_watcher = HealthCheckWatcher(
             self.config.health_checks, self.config.parameters
@@ -147,6 +148,7 @@ class KrknRunner:
                         if executor_returncode != 0
                         else telemetry.exit_status
                     )
+                    recovery_failed = telemetry.recovery_failed and returncode in (1, 2)
                     run_uuid = telemetry.run_uuid
                     resiliency_score = telemetry.resiliency_score
                     logger.info("Krkn scenario return code: %d", returncode)
@@ -177,6 +179,10 @@ class KrknRunner:
                     else:
                         telemetry = extract_telemetry_from_log(log, returncode)
                         returncode = telemetry.exit_status
+                        recovery_failed = telemetry.recovery_failed and returncode in (
+                            1,
+                            2,
+                        )
                         run_uuid = telemetry.run_uuid
                         resiliency_score = telemetry.resiliency_score
                     logger.info("Krkn scenario return code: %d", returncode)
@@ -196,7 +202,7 @@ class KrknRunner:
         else:
             health_check_results = health_check_watcher.get_results()
 
-        if returncode != 0 and returncode != 2:
+        if returncode not in (0, 2) and not recovery_failed:
             logger.warning(
                 "Krkn scenario failed with return code %d (misconfiguration). "
                 "Skipping fitness calculation to avoid data pollution.",
@@ -207,6 +213,10 @@ class KrknRunner:
             fitness_result.fitness_score = -1.0
             logger.info("Fitness score set to -1 due to misconfiguration failure")
         else:
+            if recovery_failed:
+                logger.warning(
+                    "Krkn reported unrecovered targets; scoring recovery failure"
+                )
             if self.config.fitness_function.query is not None:
                 fitness_value = self.fitness_calculator.calculate_fitness_value(
                     start=start_time,
@@ -223,12 +233,12 @@ class KrknRunner:
                 )
 
             if self.config.fitness_function.include_krkn_failure:
-                if resiliency_score is not None:
+                if recovery_failed or returncode == 2:
+                    fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
+                elif resiliency_score is not None:
                     fitness_result.krkn_failure_score = (
                         100.0 - resiliency_score
                     ) / 100.0
-                elif returncode == 2:
-                    fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
 
             if self.config.fitness_function.include_health_check_failure:
                 fitness_result.health_check_failure_score = (

@@ -20,6 +20,14 @@ class PVCScenario(Scenario):
     name: str = "pvc-scenarios"
     krknctl_name: str = "pvc-scenarios"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:pvc-scenarios"
+    crossover_parameter_groups = (
+        (
+            NamespaceParameter,
+            PVCNameParameter,
+            PodNameParameter,
+            FillPercentageParameter,
+        ),
+    )
 
     namespace: NamespaceParameter = NamespaceParameter()
     pvc_name: PVCNameParameter = PVCNameParameter()

@@ -34,6 +34,7 @@ from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.chaos_engines.commands import build_scenario_command
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile, FitnessFunction
+from krkn_ai.utils.rng import RNG
 
 
 class TestDummyScenario:
@@ -145,14 +146,11 @@ class TestContainerScenario:
             scenario = ContainerScenario(cluster_components=cluster)
             assert scenario.disruption_count.value == 1
 
-    def test_container_scenario_count_excludes_pods_without_target_container(self):
-        """A specific container name limits the count to pods that have it (#277).
-
-        Pods can share a generic label (env=prod) while being different
-        workloads. If nginx is the targeted container, the redis pods must not
-        be counted, otherwise krkn would pick a pod with no nginx container and
-        fail the lookup. When the wildcard is chosen every labelled pod counts.
-        """
+    @pytest.mark.parametrize("pod_index, expected_count", [(0, 1), (1, 2)])
+    def test_container_scenario_count_excludes_pods_without_target_container(
+        self, pod_index, expected_count
+    ):
+        """Only label-matching pods with the exact container name count."""
         pods = [
             Pod(
                 name="nginx-0",
@@ -173,43 +171,39 @@ class TestContainerScenario:
         namespace = Namespace(name="test-ns", pods=pods)
         cluster = ClusterComponents(namespaces=[namespace], nodes=[])
 
-        for _ in range(200):
+        selected_pod = pods[pod_index]
+        target = selected_pod.containers[0].name
+        with (
+            patch(
+                "krkn_ai.models.scenario.scenario_container.rng.choice",
+                side_effect=[(namespace, selected_pod), "env", target, "9"],
+            ),
+            patch(
+                "krkn_ai.models.scenario.scenario_container.rng.randint",
+                side_effect=lambda low, high: high,
+            ),
+        ):
             scenario = ContainerScenario(cluster_components=cluster)
-            target = scenario.container_name.value
-            count = scenario.disruption_count.value
-            if target == ".*":
-                # Wildcard applies to every labelled pod with containers.
-                assert 1 <= count <= 3
-            else:
-                # Only the pods actually running that container may be counted.
-                eligible = sum(
-                    1 for p in pods if any(c.name == target for c in p.containers)
-                )
-                assert 1 <= count <= eligible
 
-    def test_container_scenario_container_name_is_specific_or_wildcard(self):
-        """container_name is a real container or '.*', decoupled from count (#277).
+        assert scenario.container_name.value == target
+        assert scenario.disruption_count.value == expected_count
 
-        Even though only one pod matches (so disruption_count is always 1), the
-        container scope must still vary between a specific container and ".*"
-        rather than being forced to ".*" whenever the count is 1 (the old bug).
-        """
+    def test_container_targets_remain_real_names_after_mutation(self, monkeypatch):
+        monkeypatch.setattr(
+            "krkn_ai.models.scenario.scenario_container.rng", RNG(seed=0)
+        )
         pod = Pod(
             name="web",
             labels={"app": "web"},
-            containers=[Container(name="c1"), Container(name="c2")],
+            containers=[Container(name="web"), Container(name="sidecar")],
         )
-        namespace = Namespace(name="test-ns", pods=[pod])
-        cluster = ClusterComponents(namespaces=[namespace], nodes=[])
+        cluster = ClusterComponents(namespaces=[Namespace(name="app", pods=[pod])])
 
-        valid = {"c1", "c2", ".*"}
-        seen = set()
-        for _ in range(100):
-            scenario = ContainerScenario(cluster_components=cluster)
-            assert scenario.container_name.value in valid
-            seen.add(scenario.container_name.value)
-        assert ".*" in seen  # wildcard still reachable
-        assert seen & {"c1", "c2"}  # specific-container choice reachable too
+        scenario = ContainerScenario(cluster_components=cluster)
+        assert scenario.container_name.value in {"web", "sidecar"}
+        for _ in range(10):
+            scenario.mutate()
+            assert scenario.container_name.value in {"web", "sidecar"}
 
     def test_container_scenario_raises_error_when_no_pods_with_labels(self):
         """Test that ContainerScenario raises error when no pods have labels"""

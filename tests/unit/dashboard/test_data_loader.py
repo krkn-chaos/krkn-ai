@@ -192,6 +192,32 @@ container-scenarios ran for 3m12s
         assert len(log["timeline"]) == 1
 
 
+@pytest.mark.parametrize(
+    ("raw_duration", "expected"),
+    [
+        ("1h2m3.701171021s", "1h 2m 3s"),
+        ("1h0m0s", "1h 0m 0s"),
+        ("2h30m0s", "2h 30m 0s"),
+        ("3m12.701171021s", "3m 12s"),
+        ("12.7s", "12s"),
+        ("0s", "0s"),
+    ],
+)
+def test_load_logs_formats_duration(tmp_path, raw_duration, expected):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "scenario_1.log").write_text(
+        f"container-scenarios ran for {raw_duration}\n", encoding="utf-8"
+    )
+
+    logs = load_logs(str(tmp_path))
+
+    assert len(logs) == 1
+    assert logs[0]["scenario_id"] == 1
+    assert logs[0]["scenario_type"] == "container-scenarios"
+    assert logs[0]["duration"] == expected
+
+
 def test_load_logs_exception():
     with (
         patch("os.path.isdir", return_value=True),

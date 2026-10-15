@@ -559,12 +559,17 @@ def load_logs(output_dir: str):
             if dm:
                 scenario_type_from_log = dm.group(1).strip()
                 raw_dur = dm.group(2)
-                # Convert e.g. "3m12.701171021s" -> "3m 12s"
-                dur_m = re.match(r"(?:(\d+)m)?(?:(\d+)(?:\.\d+)?s)?", raw_dur)
+                # Convert e.g. "1h3m12.701171021s" -> "1h 3m 12s"
+                dur_m = re.match(
+                    r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)(?:\.\d+)?s)?", raw_dur
+                )
                 if dur_m:
-                    mins = int(dur_m.group(1) or 0)
-                    secs = int(dur_m.group(2) or 0)
+                    hours = int(dur_m.group(1) or 0)
+                    mins = int(dur_m.group(2) or 0)
+                    secs = int(dur_m.group(3) or 0)
                     duration = f"{mins}m {secs}s" if mins else f"{secs}s"
+                    if hours:
+                        duration = f"{hours}h {mins}m {secs}s"
                 break
 
         # Assemble

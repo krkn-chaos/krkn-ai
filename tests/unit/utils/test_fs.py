@@ -543,3 +543,26 @@ class TestSaveDiscovery:
         data = yaml.safe_load(open(path))
         names = [n["name"] for n in data["cluster_components"]["namespaces"]]
         assert "shop" in names
+
+
+class TestMalformedHealthChecksWithParams:
+    """Parameter substitution must not crash on malformed health_checks"""
+
+    @pytest.mark.parametrize("health_checks", [None, ["not", "a", "mapping"]])
+    def test_malformed_section_is_left_for_schema_validation(
+        self, tmp_path, health_checks
+    ):
+        config_file = str(tmp_path / "config.yaml")
+        with open(config_file, "w") as f:
+            yaml.dump(
+                {
+                    "kubeconfig_file_path": "/tmp/kubeconfig",
+                    "fitness_function": {"query": "up"},
+                    "cluster_components": {"namespaces": [], "nodes": []},
+                    "health_checks": health_checks,
+                },
+                f,
+            )
+        with pytest.raises(ValidationError) as excinfo:
+            read_config_from_file(config_file, param=["HOST=example.com"])
+        assert excinfo.value.errors()[0]["loc"][0] == "health_checks"

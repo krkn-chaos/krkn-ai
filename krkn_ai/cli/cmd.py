@@ -24,6 +24,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.catalog import recommend_fitness_queries
+from krkn_ai.utils.ga_sizing import recommend_genetic_params
 from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.cluster import ClusterManager
@@ -313,6 +314,7 @@ def discover(
             scenario_enables,
             fitness_queries,
             health_checks,
+            genetic,
         ) = _discover_data(
             kubeconfig,
             namespace,
@@ -335,6 +337,7 @@ def discover(
         scenario_enables=scenario_enables,
         fitness_queries=fitness_queries,
         health_checks=health_checks,
+        genetic=genetic,
     )
 
 
@@ -383,6 +386,11 @@ def _discover_data(
         if fresh_write
         else None
     )
+    genetic = (
+        recommend_genetic_params(cluster_components, kubeconfig)
+        if fresh_write
+        else None
+    )
     fitness_queries = None
     if recommend_fitness:
         try:
@@ -403,7 +411,13 @@ def _discover_data(
             get_logger(__name__).warning(
                 "Fitness query recommendation failed: %s", error
             )
-    return cluster_components, scenario_enables, fitness_queries, health_checks
+    return (
+        cluster_components,
+        scenario_enables,
+        fitness_queries,
+        health_checks,
+        genetic,
+    )
 
 
 def discover_config(
@@ -422,6 +436,7 @@ def discover_config(
         scenario_enables,
         fitness_queries,
         health_checks,
+        genetic,
     ) = _discover_data(
         kubeconfig,
         namespace,
@@ -442,4 +457,5 @@ def discover_config(
         scenario_enables,
         health_checks=health_checks,
         fitness_queries=fitness_queries,
+        genetic=genetic,
     )

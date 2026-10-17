@@ -124,13 +124,20 @@ class NodeCPUPercentageParameter(BaseParameter):
     value: int = 50
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+        # Absolute steps in percentage points (not proportional to value,
+        # which pinned the walk at the floor). Upward bias keeps the GA
+        # exploring high-load break points. Inward-only at the bounds so
+        # mutation is never a no-op.
+        if self.value <= 20:
+            self.value += rng.randint(10, 35)
+        elif self.value >= 100:
+            self.value -= rng.randint(5, 20)
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+            self.value += (
+                rng.randint(10, 35) if rng.random() < 0.5 else -rng.randint(5, 20)
+            )
+        self.value = max(int(self.value), 20)
+        self.value = min(int(self.value), 100)
 
 
 class NodeMemoryPercentageParameter(BaseParameter):
@@ -146,13 +153,20 @@ class NodeMemoryPercentageParameter(BaseParameter):
         return f"{self.value}%"
 
     def mutate(self):
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+        # Absolute steps in percentage points (not proportional to value,
+        # which pinned the walk at the floor). Upward bias keeps the GA
+        # exploring high-load break points. Inward-only at the bounds so
+        # mutation is never a no-op.
+        if self.value <= 20:
+            self.value += rng.randint(10, 35)
+        elif self.value >= 100:
+            self.value -= rng.randint(5, 20)
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 20)
-        self.value = min(self.value, 100)
+            self.value += (
+                rng.randint(10, 35) if rng.random() < 0.5 else -rng.randint(5, 20)
+            )
+        self.value = max(int(self.value), 20)
+        self.value = min(int(self.value), 100)
 
 
 class NumberOfWorkersParameter(BaseParameter):
@@ -228,7 +242,7 @@ class NetworkScenarioTypeParameter(BaseParameter):
 class NetworkScenarioImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
-    value: str = "quay.io/krkn-chaos/krkn:tools"
+    value: str = "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-tools"
 
 
 class StandardDurationParameter(BaseParameter):
@@ -514,14 +528,22 @@ class IOWriteBytesParameter(BaseParameter):
     def mutate(self):
         """
         Mutate the percentage value between 1 and 100.
+
+        Absolute steps in percentage points (not proportional to value,
+        which pinned the walk at the floor). Upward bias keeps the GA
+        exploring high-load break points. Inward-only at the bounds so
+        mutation is never a no-op.
         """
-        if rng.random() < 0.5:
-            self.value += rng.randint(1, 35) * self.value / 100
+        if self.value <= 1:
+            self.value += rng.randint(10, 35)
+        elif self.value >= 100:
+            self.value -= rng.randint(5, 20)
         else:
-            self.value -= rng.randint(1, 25) * self.value / 100
-        self.value = int(self.value)
-        self.value = max(self.value, 1)
-        self.value = min(self.value, 100)
+            self.value += (
+                rng.randint(10, 35) if rng.random() < 0.5 else -rng.randint(5, 20)
+            )
+        self.value = max(int(self.value), 1)
+        self.value = min(int(self.value), 100)
 
 
 class NodeMountPathParameter(BaseParameter):
@@ -624,4 +646,4 @@ class MountPathParameter(BaseParameter):
 class StorageThrottleImageParameter(BaseParameter):
     krknhub_name: str = "IMAGE"
     krknctl_name: str = "image"
-    value: str = "quay.io/krkn-chaos/krkn:tools"
+    value: str = "quay.io/krkn-chaos/krkn-hub-multiarch:workload-krkn-tools"

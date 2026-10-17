@@ -101,6 +101,8 @@ helm upgrade --install krkn-operator /path/to/krkn-operator/charts/krkn-operator
 
 The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 `RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
+Operator-created runs use `FORMAT=json` for machine-readable result artifacts;
+the input configuration remains YAML. Standalone CLI output format is unchanged.
 Use the `KrknAIRun` and target Secret procedure in
 [`../hack/README.md`](../hack/README.md) for a complete cluster test.
 
@@ -111,13 +113,42 @@ Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
 ### Results storage for `KrknAIRun`
 
 `KrknAIRun` Pods use `EmptyDir` for transient output. The uploader sidecar
-checkpoints new or changed artifacts to the service every 150 seconds while the
-run is active. Each checkpoint exposes a manifest with `status: in_progress`.
-When the orchestrator writes its completion marker, the uploader immediately
-syncs once more and commits a final manifest with `status: succeeded` or
-`status: failed`. The standalone
+checkpoints new or changed artifacts every 10 seconds for operator-managed
+runs; the standalone uploader retains its 150-second default. Each checkpoint
+exposes a manifest with `status: in_progress`. When the orchestrator writes its
+completion marker, the uploader immediately syncs once more and commits a final
+manifest with `status: succeeded` or `status: failed`. The standalone
 `quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores artifacts and manifests
 on its single PVC.
+
+The service-token-protected API validates configs at `POST /v1/configs/validate`
+and exposes committed run summaries, scenario indexes, and individual scenario
+details under `/v1/runs/{uid}/`. Scenario totals and per-item normalized scores
+remain null until a generation is complete and its artifacts are finalized;
+per-item raw scores remain available while a generation runs. Final per-item
+scores include their generation's `query` and `queryType`, but never weighting
+internals. Terminal incomplete scores are marked `unfinalized`, never promoted
+by a failed run. Typed reads verify result bytes against the copied manifest and
+return `503 artifact_updating` during an upload or normalization boundary.
+Retry the next poll rather than treating a transient mismatch as a missing
+result.
+
+`GET /v1/runs/{uid}/scenarios` returns the complete committed
+`{"scenarios":[...]}` collection and rejects query parameters. The operator
+combines that collection with live child-job metadata before filtering, sorting,
+and pagination; the artifact service does not own public table queries.
+
+The service materializes current-revision API views after commit, or on first
+access to an older stored run. Compact summary/index metadata and separate
+scenario bodies are stored under `.result-views/{uid}/`, outside the uploaded
+run inventory. Summary/index reads do not load health samples; a detail read
+loads only its selected body. Source checksums are still verified on every typed
+read, so cached views do not conceal upload mismatches. Only the current view is
+retained per run; these service-managed files consume additional PVC capacity
+but are not included in results downloads. Generic artifact commits remain
+supported, with typed-data errors reported by the corresponding typed reads.
+Log/report-only checkpoints reuse the current view; result-file checksums and
+manifest status determine when result projections must be rebuilt.
 
 Configure that PVC at the installation level:
 

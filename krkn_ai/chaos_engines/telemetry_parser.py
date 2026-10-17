@@ -33,6 +33,7 @@ class TelemetryResult:
     exit_status: int
     run_uuid: Optional[str] = None
     resiliency_score: Optional[float] = None
+    recovery_failed: bool = False
 
 
 def strip_ansi(text: str) -> str:
@@ -128,9 +129,33 @@ def _try_json_extraction(
             exit_status=exit_status,
             run_uuid=run_uuid,
             resiliency_score=resiliency_score,
+            recovery_failed=_has_recovery_failure(first, telemetry),
         )
 
     return None
+
+
+def _has_recovery_failure(scenario: dict, telemetry: dict) -> bool:
+    if scenario.get("exit_status") not in (1, 2):
+        return False
+    errors = telemetry.get("error_logs", [])
+    if not isinstance(errors, list) or errors:
+        return False
+    recovery_failed = False
+    for key in ("affected_pods", "affected_vmis"):
+        snapshot = scenario.get(key)
+        if not isinstance(snapshot, dict):
+            continue
+        if snapshot.get("error") is not None:
+            return False
+        unrecovered = snapshot.get("unrecovered")
+        if (
+            isinstance(unrecovered, list)
+            and unrecovered
+            and all(isinstance(target, dict) and target for target in unrecovered)
+        ):
+            recovery_failed = True
+    return recovery_failed
 
 
 def _try_regex_extraction(text: str) -> Optional[TelemetryResult]:

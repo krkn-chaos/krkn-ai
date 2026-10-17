@@ -17,6 +17,7 @@ class AppOutageScenario(Scenario):
     krknhub_image: str = (
         "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:application-outages"
     )
+    crossover_parameter_groups = ((NamespaceParameter, PodSelectorParameter),)
 
     namespace: NamespaceParameter = NamespaceParameter()
     duration: DurationParameter = DurationParameter()

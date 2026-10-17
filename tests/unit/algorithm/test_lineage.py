@@ -2,9 +2,15 @@
 Evolutionary lineage tracking tests
 """
 
+import datetime
+import json
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from krkn_ai.algorithm.genetic.engine import GeneticAlgorithm
+from krkn_ai.models.app import CommandRunResult, FitnessResult
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
@@ -88,3 +94,66 @@ class TestInitialPopulationLineage:
 
         for scenario in population:
             assert scenario.parent_ids == []
+
+
+@pytest.mark.parametrize(
+    "parent_origin",
+    [
+        ScenarioOrigin.INITIAL,
+        ScenarioOrigin.PARAMETER_MUTATION,
+        ScenarioOrigin.TYPE_MUTATION,
+    ],
+)
+def test_unmutated_generation_preserves_fitness_and_child_lineage(
+    genetic_algorithm, monkeypatch, parent_origin
+):
+    engine = genetic_algorithm
+    engine.config.baseline.enable = False
+    engine.config.fitness_function.items = []
+    engine.algo_config.population_size = 2
+    engine.algo_config.generations = 2
+    engine.algo_config.crossover_rate = 0.0
+    engine.algo_config.mutation_rate = 0.0
+    engine.algo_config.composition_rate = 0.0
+    engine.algo_config.population_injection_rate = 0.0
+    engine.current_scenario_mutation_rate = 0.0
+    parents = [
+        DummyScenario(cluster_components=ClusterComponents(), origin=parent_origin)
+        for _ in range(2)
+    ]
+    parents[0].end.value = 10
+    parents[1].end.value = 20
+    monkeypatch.setattr(engine, "create_population", lambda size: parents)
+    monkeypatch.setattr(
+        engine, "select_parents", lambda results: tuple(r.scenario for r in results)
+    )
+
+    def evaluate(scenario, generation):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return CommandRunResult(
+            generation_id=generation,
+            scenario=scenario,
+            cmd="",
+            log="",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=float(scenario.end.value)),
+        )
+
+    engine.krkn_client.run.side_effect = evaluate
+    engine.simulate()
+    engine.save()
+    summary = json.loads((Path(engine.output_dir) / "results.json").read_text())
+
+    assert engine.krkn_client.run.call_count == 2
+    assert summary["fitness_progression"] == [
+        {"generation": 0, "best": 20.0, "average": 15.0},
+        {"generation": 1, "best": 20.0, "average": 15.0},
+    ]
+    children = [row for row in summary["population_lineage"] if row["generation"] == 1]
+    assert len(children) == 2
+    for child in children:
+        assert child["origin"] == ScenarioOrigin.CROSSOVER
+        assert child["scenario_uuid"] not in [p.id for p in parents]
+        assert set(child["parent_ids"]) == {p.id for p in parents}

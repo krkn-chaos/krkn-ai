@@ -241,6 +241,14 @@ results/
 
 `learned_weights.json` scores each fitness query by how much its value varied across scenarios. Pass it to the next `discover` with `--learned-weights` to prioritize the queries that actually distinguish scenarios. It is written only when the config uses `fitness_function.items` and at least one query varied across the run.
 
+Prometheus fitness items use signed-log, per-generation min-max normalization.
+Equal-valued items, including a generation with only one valid result, have no
+relative signal and normalize to zero. Totals are still recomputed on the 0–100
+scale using the enabled components; raw item measurements remain unchanged.
+Failed misconfiguration results (`fitness_score: -1`) are excluded from this
+normalization. Scores become final only when their whole generation completes.
+Existing downloaded artifacts are historical and are not rewritten by this fix.
+
 > You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).
 
 ## 🤝 Contributing

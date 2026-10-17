@@ -24,6 +24,17 @@ class NetworkScenario(Scenario):
     name: str = "network-chaos"
     krknctl_name: str = "network-chaos"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:network-chaos"
+    crossover_parameter_groups = (
+        (
+            NetworkScenarioTypeParameter,
+            NetworkScenarioLabelSelectorParameter,
+            NetworkScenarioNodeNameParameter,
+            NetworkScenarioInterfacesParameter,
+            NetworkScenarioTargetNodeInterfaceParameter,
+            NetworkScenarioNetworkParamsParameter,
+            NetworkScenarioEgressParamsParameter,
+        ),
+    )
 
     traffic_type: NetworkScenarioTypeParameter = NetworkScenarioTypeParameter()
     image: NetworkScenarioImageParameter = NetworkScenarioImageParameter()

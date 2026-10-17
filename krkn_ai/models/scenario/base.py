@@ -1,6 +1,6 @@
 import uuid
 from enum import Enum
-from typing import Any, List, Optional
+from typing import Any, ClassVar, List, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr
 
@@ -31,6 +31,9 @@ class BaseParameter(BaseModel):
 
 
 class BaseScenario(BaseModel):
+    crossover_parameter_groups: ClassVar[
+        tuple[tuple[type[BaseParameter], ...], ...]
+    ] = ()
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     krknctl_name: str  # Name of the scenario in krknctl

@@ -14,6 +14,14 @@ class TimeScenario(Scenario):
     name: str = "time-scenarios"
     krknctl_name: str = "time-scenarios"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:time-scenarios"
+    crossover_parameter_groups = (
+        (
+            ObjectTypeParameter,
+            NamespaceParameter,
+            LabelSelectorParameter,
+            ContainerNameParameter,
+        ),
+    )
 
     object_type: ObjectTypeParameter = ObjectTypeParameter()
     label_selector: LabelSelectorParameter = LabelSelectorParameter()

@@ -1,5 +1,9 @@
 """Tests for krkn_ai.chaos_engines.telemetry_parser"""
 
+import json
+
+import pytest
+
 from krkn_ai.chaos_engines.telemetry_parser import (
     extract_telemetry_from_log,
     strip_ansi,
@@ -266,3 +270,63 @@ Chaos data:
 """
         result = extract_telemetry_from_log(log, -1)
         assert result.resiliency_score == 72.5
+
+
+@pytest.mark.parametrize(
+    "snapshot, errors, expected",
+    [
+        ({"unrecovered": [{"pod_name": "shipping"}], "error": None}, [], True),
+        ({"unrecovered": [], "error": None}, [], False),
+        (
+            {"unrecovered": [{"pod_name": "shipping"}], "error": "injection failed"},
+            [],
+            False,
+        ),
+        (
+            {"unrecovered": [{"pod_name": "shipping"}], "error": None},
+            [{"message": "setup failed"}],
+            False,
+        ),
+        ({"unrecovered": ["invalid"], "error": None}, [], False),
+    ],
+)
+def test_recovery_failure_requires_structured_evidence(snapshot, errors, expected):
+    log = "Chaos data:" + json.dumps(
+        {
+            "telemetry": {
+                "scenarios": [{"exit_status": 1, "affected_pods": snapshot}],
+                "error_logs": errors,
+                "overall_resiliency_report": {"resiliency_score": 100},
+            }
+        }
+    )
+
+    result = extract_telemetry_from_log(log, 1)
+
+    assert result.exit_status == 1
+    assert result.recovery_failed is expected
+
+
+def test_regex_fallback_does_not_infer_recovery_failure():
+    result = extract_telemetry_from_log(
+        'Chaos data: "exit_status": 1, "unrecovered": [{"pod_name": "shipping"}]',
+        1,
+    )
+    assert result.recovery_failed is False
+
+
+def test_error_in_another_snapshot_prevents_recovery_classification():
+    log = "Chaos data:" + json.dumps(
+        {
+            "telemetry": {
+                "scenarios": [
+                    {
+                        "exit_status": 1,
+                        "affected_pods": {"unrecovered": [{"pod_name": "shipping"}]},
+                        "affected_vmis": {"error": "target lookup failed"},
+                    }
+                ]
+            }
+        }
+    )
+    assert extract_telemetry_from_log(log, 1).recovery_failed is False

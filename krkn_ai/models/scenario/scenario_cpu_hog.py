@@ -16,6 +16,9 @@ class NodeCPUHogScenario(Scenario):
     name: str = "node-cpu-hog"
     krknctl_name: str = "node-cpu-hog"
     krknhub_image: str = "containers.krkn-chaos.dev/krkn-chaos/krkn-hub:node-cpu-hog"
+    crossover_parameter_groups = (
+        (NodeSelectorParameter, NumberOfNodesParameter, TaintParameter),
+    )
 
     chaos_duration: TotalChaosDurationParameter = TotalChaosDurationParameter()
     # node_cpu_core: NodeCPUCoreParameter = NodeCPUCoreParameter()

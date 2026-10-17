@@ -12,6 +12,8 @@ from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.constants import STATUS_COMPLETED
 
+from krkn_ai.utils.atomic import atomic_write_text
+
 logger = get_logger(__name__)
 
 
@@ -29,7 +31,7 @@ class JSONSummaryReporter:
         config: ConfigFile,
         algo_config: GeneticAlgorithmConfig,
         seen_population: Dict[Any, CommandRunResult],
-        best_of_generation: List[CommandRunResult],
+        generation_results: List[List[CommandRunResult]],
         baseline_result: Optional[CommandRunResult] = None,
         start_time: Optional[datetime.datetime] = None,
         end_time: Optional[datetime.datetime] = None,
@@ -41,7 +43,7 @@ class JSONSummaryReporter:
         self.config = config
         self.algo_config = algo_config
         self.seen_population = seen_population
-        self.best_of_generation = best_of_generation
+        self.generation_results = generation_results
         self.baseline_result = baseline_result
         self.start_time = start_time
         self.end_time = end_time
@@ -67,28 +69,24 @@ class JSONSummaryReporter:
         if self.start_time and self.end_time:
             duration_seconds = (self.end_time - self.start_time).total_seconds()
 
-        # Get all fitness scores for statistics
         all_fitness_scores = [
             result.fitness_result.fitness_score
-            for result in self.seen_population.values()
+            for generation in self.generation_results[: self.completed_generations]
+            for result in generation
         ]
 
-        # Calculate average fitness score
-        average_fitness_score = 0.0
-        if all_fitness_scores:
-            average_fitness_score = sum(all_fitness_scores) / len(all_fitness_scores)
-
-        # Get best fitness score
-        best_fitness_score = 0.0
-        if all_fitness_scores:
-            best_fitness_score = max(all_fitness_scores)
+        average_fitness_score = (
+            sum(all_fitness_scores) / len(all_fitness_scores)
+            if all_fitness_scores
+            else None
+        )
+        best_fitness_score = max(all_fitness_scores) if all_fitness_scores else None
 
         # Count unique scenarios by their string representation
         unique_scenarios = set()
         for result in self.seen_population.values():
             unique_scenarios.add(str(result.scenario))
 
-        # Generate fitness progression from best_of_generation
         fitness_progression = self._build_fitness_progression()
 
         # Generate best scenarios list (sorted by fitness score, top 10)
@@ -115,15 +113,23 @@ class JSONSummaryReporter:
                 "total_scenarios_executed": len(self.seen_population),
                 "unique_scenarios": len(unique_scenarios),
                 "generations_completed": self.completed_generations,
-                "best_fitness_score": round(best_fitness_score, 4),
-                "average_fitness_score": round(average_fitness_score, 4),
+                "best_fitness_score": (
+                    round(best_fitness_score, 4)
+                    if best_fitness_score is not None
+                    else None
+                ),
+                "average_fitness_score": (
+                    round(average_fitness_score, 4)
+                    if average_fitness_score is not None
+                    else None
+                ),
             },
             "best_scenarios": best_scenarios,
             "fitness_progression": fitness_progression,
             "population_lineage": self._build_population_lineage(),
         }
 
-        if self.baseline_result is not None:
+        if self.baseline_result is not None and self.completed_generations > 0:
             results_summary["baseline"] = {
                 "fitness_score": self.baseline_result.fitness_result.fitness_score,
                 "duration_seconds": self.baseline_result.duration_seconds,
@@ -132,32 +138,29 @@ class JSONSummaryReporter:
         return results_summary
 
     def _build_fitness_progression(self) -> List[Dict[str, Any]]:
-        """Build fitness progression data from best_of_generation."""
         fitness_progression = []
-        for i, result in enumerate(self.best_of_generation):
-            # Calculate average fitness for this generation from seen_population
-            gen_fitness_scores = [
-                r.fitness_result.fitness_score
-                for r in self.seen_population.values()
-                if r.generation_id == i
-            ]
-            gen_average = 0.0
-            if gen_fitness_scores:
-                gen_average = sum(gen_fitness_scores) / len(gen_fitness_scores)
-
+        for i, results in enumerate(
+            self.generation_results[: self.completed_generations]
+        ):
+            scores = [r.fitness_result.fitness_score for r in results]
             fitness_progression.append(
                 {
                     "generation": i,
-                    "best": result.fitness_result.fitness_score,
-                    "average": round(gen_average, 4),
+                    "best": max(scores),
+                    "average": round(sum(scores) / len(scores), 4),
                 }
             )
         return fitness_progression
 
     def _build_best_scenarios(self) -> List[Dict[str, Any]]:
         """Build ranked list of best scenarios (top 10)."""
+        completed_results = [
+            result
+            for result in self.seen_population.values()
+            if result.generation_id < self.completed_generations
+        ]
         sorted_results = sorted(
-            self.seen_population.values(),
+            completed_results,
             key=lambda x: x.fitness_result.fitness_score,
             reverse=True,
         )
@@ -183,9 +186,13 @@ class JSONSummaryReporter:
         return best_scenarios
 
     def _build_population_lineage(self) -> List[Dict[str, Any]]:
-        """Build evolutionary lineage from scenario provenance in seen_population."""
+        """Build evolutionary lineage from completed population members."""
         lineage = []
-        for result in self.seen_population.values():
+        for result in (
+            result
+            for generation in self.generation_results[: self.completed_generations]
+            for result in generation
+        ):
             scenario = result.scenario
             lineage.append(
                 {
@@ -208,6 +215,5 @@ class JSONSummaryReporter:
         """
         summary = self.generate_summary()
         output_path = os.path.join(output_dir, "results.json")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2)
+        atomic_write_text(output_path, json.dumps(summary, indent=2))
         logger.info("Results summary saved to %s", output_path)

@@ -4,10 +4,11 @@ KrknRunner core functionality tests
 
 import os
 import datetime
+import json
 import pytest
 from unittest.mock import Mock, patch
 
-from krkn_ai.chaos_engines.krkn_runner import KrknRunner
+from krkn_ai.chaos_engines.krkn_runner import KrknRunner, KRKN_HUB_FAILURE_SCORE
 from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (
@@ -183,6 +184,72 @@ class TestKrknRunnerRun:
             )
 
         assert result.returncode == 1
+
+    @pytest.mark.parametrize("resiliency_score", [100, 20])
+    @pytest.mark.parametrize("exit_status", [1, 2])
+    @pytest.mark.parametrize(
+        "runner_type", [KrknRunnerType.CLI_RUNNER, KrknRunnerType.OPERATOR_RUNNER]
+    )
+    def test_recovery_failure_scores_even_when_slos_pass(
+        self,
+        minimal_config,
+        temp_output_dir,
+        runner_type,
+        resiliency_score,
+        exit_status,
+    ):
+        minimal_config.fitness_function = FitnessFunction(
+            query="up",
+            include_krkn_failure=True,
+            include_health_check_failure=False,
+            include_health_check_response_time=False,
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+        log = "Chaos data:" + json.dumps(
+            {
+                "telemetry": {
+                    "scenarios": [
+                        {
+                            "exit_status": exit_status,
+                            "affected_pods": {
+                                "unrecovered": (
+                                    [{"pod_name": "shipping"}]
+                                    if exit_status == 1
+                                    else []
+                                ),
+                                "error": None,
+                            },
+                        }
+                    ],
+                    "error_logs": [],
+                    "overall_resiliency_report": {"resiliency_score": resiliency_score},
+                }
+            }
+        )
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.run_shell",
+                return_value=(log, exit_status),
+            ),
+        ):
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(minimal_config, temp_output_dir, runner_type)
+            runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
+            runner._operator_executor = Mock()
+            runner._operator_executor.execute.return_value = (log, exit_status)
+            result = runner.run(
+                DummyScenario(cluster_components=ClusterComponents()), 0
+            )
+
+        assert result.returncode == exit_status
+        assert result.resiliency_score == resiliency_score
+        assert result.fitness_result.krkn_failure_score == KRKN_HUB_FAILURE_SCORE
+        assert result.fitness_result.fitness_score == KRKN_HUB_FAILURE_SCORE / 2 * 100
 
     def test_run_raises_for_unsupported_scenario_type(
         self, minimal_config, temp_output_dir

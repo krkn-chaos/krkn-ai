@@ -199,6 +199,7 @@ def _write_fresh(
     scenario_enables: dict = None,
     fitness_queries: list = None,
     health_checks: list = None,
+    genetic: dict = None,
 ):
     """Write fresh config from discovered components."""
     data = components.model_dump(mode="json", warnings="none", exclude_defaults=True)
@@ -208,6 +209,7 @@ def _write_fresh(
         scenario_enables,
         health_checks=health_checks,
         fitness_queries=fitness_queries,
+        genetic=genetic,
     )
     with open(output, "w", encoding="utf-8") as f:
         f.write(template)
@@ -222,6 +224,7 @@ def save_discovery(
     scenario_enables: dict = None,
     fitness_queries: list = None,
     health_checks: list = None,
+    genetic: dict = None,
 ):
     """Save discovered components per strategy: skip (do nothing), overwrite (replace), or merge (add new)."""
     strategy = strategy.lower()
@@ -254,4 +257,5 @@ def save_discovery(
         scenario_enables,
         fitness_queries,
         health_checks,
+        genetic,
     )

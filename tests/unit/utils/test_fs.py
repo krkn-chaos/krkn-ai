@@ -289,6 +289,71 @@ class TestReadConfigFromFileHeaders:
         with pytest.raises(ValidationError):
             read_config_from_file(config_file)
 
+    def test_structured_config_file_parameter_without_cli_params(self, tmp_path):
+        """A {value, is_private: false} entry resolves in the URL and stays public."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(
+            config_file, {"HOST": {"value": "example.com", "is_private": False}}
+        )
+
+        result = read_config_from_file(config_file)
+
+        assert result.parameters["HOST"].is_private is False
+        assert str(result.health_checks.applications[0].url).startswith(
+            "http://example.com/health"
+        )
+
+    @pytest.mark.parametrize(
+        "token", ["s3cr3t", {"value": "s3cr3t"}], ids=["plain", "structured"]
+    )
+    @pytest.mark.parametrize("cli", [None, ["OTHER=1"]], ids=["no_cli", "cli"])
+    def test_double_underscore_file_parameter_stays_private(
+        self, tmp_path, token, cli
+    ):
+        """A __ key from the config file is private in both forms, with or without -p."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(
+            config_file, {"HOST": "example.com", "__TOKEN": token}
+        )
+
+        result = read_config_from_file(config_file, param=cli)
+
+        assert result.parameters["__TOKEN"].is_private is True
+        assert result.model_dump(mode="json")["parameters"]["__TOKEN"] == "***"
+
+    def test_config_file_parameter_without_value_is_rejected(self, tmp_path):
+        """A parameter left blank in the config file fails with its name, not as 'None'."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(config_file, {"HOST": None})
+
+        with pytest.raises(ValueError, match="HOST"):
+            read_config_from_file(config_file)
+
+    def test_invalid_elastic_verify_certs_with_file_parameters(self, tmp_path):
+        """An unrecognised verify_certs value is rejected, not turned into False."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(config_file, {"HOST": "example.com"})
+        with open(config_file) as f:
+            config = yaml.safe_load(f)
+        config["elastic"] = {"server": "https://$HOST", "verify_certs": "garbage"}
+        with open(config_file, "w") as f:
+            yaml.dump(config, f)
+
+        with pytest.raises(ValidationError):
+            read_config_from_file(config_file)
+
+    def test_null_applications_with_file_parameters_is_a_validation_error(
+        self, tmp_path
+    ):
+        """health_checks.applications: null fails validation, not with TypeError."""
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(
+            config_file, {"HOST": "example.com"}, health_checks={"applications": None}
+        )
+
+        with pytest.raises(ValidationError):
+            read_config_from_file(config_file)
+
 
 class TestReadConfigValidation:
     def test_read_config_empty_file(self, tmp_path):

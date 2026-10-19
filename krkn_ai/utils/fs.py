@@ -58,8 +58,13 @@ def read_config_from_file(
         params = {}
         if isinstance(existing, dict):
             for k, v in existing.items():
+                if v is None:
+                    raise ValueError(f"Parameter '{k}' in the config file has no value")
                 if isinstance(v, dict):
-                    params[str(k)] = ParameterValue.model_validate(v)
+                    pv = ParameterValue.model_validate(v)
+                    # __ keys are private, as they are for -p
+                    pv.is_private = pv.is_private or str(k).startswith("__")
+                    params[str(k)] = pv
                 else:
                     params[str(k)] = ParameterValue.from_cli(str(k), str(v))
 
@@ -73,21 +78,23 @@ def read_config_from_file(
         raw = {k: v.value for k, v in params.items()}
 
         # Replace parameter in health check url string
-        for app in (config.get("health_checks") or {}).get("applications", []):
-            if "url" in app:
+        # Leave malformed sections untouched so pydantic reports them by field.
+        health_checks = config.get("health_checks")
+        applications = (
+            health_checks.get("applications")
+            if isinstance(health_checks, dict)
+            else None
+        )
+        for app in applications if isinstance(applications, list) else []:
+            if isinstance(app, dict) and "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 
         # Replace parameters in elastic configuration without forcing optional keys.
+        # Boolean fields are left to pydantic, so an invalid value fails validation.
         if isinstance(config.get("elastic"), dict):
-            bool_fields = {"enable", "verify_certs"}
             for key, value in config["elastic"].items():
                 if isinstance(value, str):
-                    value = preprocess_param_string(value, raw)
-                config["elastic"][key] = (
-                    is_truthy(value)
-                    if key in bool_fields and value is not None
-                    else value
-                )
+                    config["elastic"][key] = preprocess_param_string(value, raw)
 
         config["parameters"] = params
 

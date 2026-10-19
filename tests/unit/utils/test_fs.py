@@ -307,14 +307,10 @@ class TestReadConfigFromFileHeaders:
         "token", ["s3cr3t", {"value": "s3cr3t"}], ids=["plain", "structured"]
     )
     @pytest.mark.parametrize("cli", [None, ["OTHER=1"]], ids=["no_cli", "cli"])
-    def test_double_underscore_file_parameter_stays_private(
-        self, tmp_path, token, cli
-    ):
+    def test_double_underscore_file_parameter_stays_private(self, tmp_path, token, cli):
         """A __ key from the config file is private in both forms, with or without -p."""
         config_file = str(tmp_path / "config.yaml")
-        self._write_param_config(
-            config_file, {"HOST": "example.com", "__TOKEN": token}
-        )
+        self._write_param_config(config_file, {"HOST": "example.com", "__TOKEN": token})
 
         result = read_config_from_file(config_file, param=cli)
 

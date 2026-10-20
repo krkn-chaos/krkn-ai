@@ -148,14 +148,21 @@ class TestClusterManager:
 
     def test_parse_memory_handles_binary_and_si_units_correctly(self):
         """Test parse_memory handles binary (Ki/Mi/Gi) and SI (K/M/G) units"""
-        # Test binary units
+        # Test binary units (both uppercase and lowercase)
         assert ClusterManager.parse_memory("1024Ki") == 1024 * 1024
+        assert ClusterManager.parse_memory("1024ki") == 1024 * 1024
         assert ClusterManager.parse_memory("1Mi") == 1024**2
         assert ClusterManager.parse_memory("1Gi") == 1024**3
 
-        # Test SI units
+        # Test SI units (both uppercase and lowercase)
         assert ClusterManager.parse_memory("1000K") == 1000 * 1000
+        assert ClusterManager.parse_memory("1000k") == 1000 * 1000
         assert ClusterManager.parse_memory("1M") == 1000**2
+        assert ClusterManager.parse_memory("1G") == 1000**3
+
+        # Test fractional / milli units (case-sensitive)
+        assert ClusterManager.parse_memory("1000m") == 1
+        assert ClusterManager.parse_memory("500m") == 0
 
         # Test lowercase SI units (case-insensitive fallback)
         assert ClusterManager.parse_memory("1000k") == 1000 * 1000
@@ -175,6 +182,9 @@ class TestClusterManager:
 
         with pytest.raises(ValueError, match="Unknown memory unit"):
             ClusterManager.parse_memory("100X")
+
+        with pytest.raises(ValueError, match="Unknown memory unit"):
+            ClusterManager.parse_memory("1g")
 
     def test_list_namespaces_filters_by_pattern_when_provided(
         self, cluster_manager, mock_krkn_k8s

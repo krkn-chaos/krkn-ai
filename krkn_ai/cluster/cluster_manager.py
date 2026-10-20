@@ -1,6 +1,7 @@
 import re
 import ipaddress
 import concurrent.futures
+from collections import Counter
 from typing import Dict, List, Optional, Union
 
 import requests
@@ -294,11 +295,19 @@ class ClusterManager:
                     recommendations.append(
                         {
                             "name": svc.metadata.name,
+                            "namespace": namespace.name,
                             "url": url,
                             "probe": probe is not None,
                             "active": self._check_reachable(url),
                         }
                     )
+            # Same-named services in different namespaces would share a name;
+            # qualify only those so single-namespace names stay unchanged.
+            name_counts = Counter(rec["name"] for rec in recommendations)
+            for rec in recommendations:
+                namespace_name = rec.pop("namespace")
+                if name_counts[rec["name"]] > 1:
+                    rec["name"] = f"{namespace_name}/{rec['name']}"
             return recommendations
         except Exception as error:
             # Never let this break discovery.

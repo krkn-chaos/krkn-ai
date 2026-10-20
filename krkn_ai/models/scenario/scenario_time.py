@@ -78,8 +78,8 @@ class TimeScenario(Scenario):
 
         # Select a random label from the available labels
         if self.object_type.value == "pod":
-            self.label_selector.value = rng.choice(list(all_pod_labels))
+            self.label_selector.value = rng.choice(sorted(all_pod_labels))
             self.namespace.value = namespace.name
         else:
-            self.label_selector.value = rng.choice(list(all_node_labels))
+            self.label_selector.value = rng.choice(sorted(all_node_labels))
             self.namespace.value = ""

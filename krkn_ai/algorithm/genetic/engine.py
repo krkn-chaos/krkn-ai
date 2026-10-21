@@ -4,7 +4,7 @@ import json
 import os
 import time
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from krkn_ai.algorithm.base import BaseEngine
 from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
@@ -26,7 +26,11 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
-from krkn_ai.chaos_engines.fitness import normalize_generation_scores
+from krkn_ai.chaos_engines.fitness import (
+    cross_generation_fitness,
+    normalize_generation_scores,
+    update_item_bounds,
+)
 from krkn_ai.utils.console import print_generation_table, print_run_summary
 from krkn_ai.utils.atomic import atomic_write_text
 
@@ -64,8 +68,21 @@ class GeneticAlgorithm(BaseEngine):
         )
 
         self.generations_reporter = GenerationsReporter(self.output_dir, self.format)
+        self._item_bounds: Dict[int, Tuple[float, float]] = {}
         self.stopping = StoppingCriteriaEvaluator(
-            self.algo_config, self.best_of_generation
+            self.algo_config, self.best_of_generation, self.comparable_fitness
+        )
+
+    def comparable_fitness(self, result: CommandRunResult) -> float:
+        """Fitness on one scale for all generations (see cross_generation_fitness)."""
+        items = self.config.fitness_function.items
+        if not items:
+            return result.fitness_result.fitness_score
+        return cross_generation_fitness(
+            result,
+            self._item_bounds,
+            items,
+            self.config.fitness_function.num_components,
         )
 
     def optimize(self):
@@ -131,6 +148,7 @@ class GeneticAlgorithm(BaseEngine):
                     self.config.fitness_function.items,
                     self.config.fitness_function.num_components,
                 )
+                update_item_bounds(self._item_bounds, to_normalize)
                 self.health_check_reporter.update_normalized_scores(to_normalize)
                 self.update_scenario_results(to_normalize)
             else:
@@ -264,8 +282,8 @@ class GeneticAlgorithm(BaseEngine):
         if len(self.best_of_generation) < 2:
             return
 
-        prev = self.best_of_generation[-2].fitness_result.fitness_score
-        curr = self.best_of_generation[-1].fitness_result.fitness_score
+        prev = self.comparable_fitness(self.best_of_generation[-2])
+        curr = self.comparable_fitness(self.best_of_generation[-1])
 
         improvement = curr - prev
 

@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import GeneticAlgorithmConfig
@@ -9,10 +9,16 @@ logger = get_logger(__name__)
 
 class StoppingCriteriaEvaluator:
     def __init__(
-        self, config: GeneticAlgorithmConfig, best_of_generation: List[CommandRunResult]
+        self,
+        config: GeneticAlgorithmConfig,
+        best_of_generation: List[CommandRunResult],
+        score_fn: Optional[Callable[[CommandRunResult], float]] = None,
     ):
         self.config = config
         self.best_of_generation = best_of_generation
+        # Generations are only comparable on a shared scale, see
+        # cross_generation_fitness.
+        self.score_fn = score_fn or (lambda r: r.fitness_result.fitness_score)
         self.saturation_stagnant_generations = 0
         self.exploration_stagnant_generations = 0
         self.new_scenarios_in_generation = 0
@@ -57,7 +63,7 @@ class StoppingCriteriaEvaluator:
         if threshold is None or not self.best_of_generation:
             return False, ""
 
-        best_fitness = self.best_of_generation[-1].fitness_result.fitness_score
+        best_fitness = self.score_fn(self.best_of_generation[-1])
 
         if best_fitness >= threshold:
             return (
@@ -102,8 +108,8 @@ class StoppingCriteriaEvaluator:
         if len(self.best_of_generation) < 2:
             return
 
-        prev_best = self.best_of_generation[-2].fitness_result.fitness_score
-        curr_best = self.best_of_generation[-1].fitness_result.fitness_score
+        prev_best = self.score_fn(self.best_of_generation[-2])
+        curr_best = self.score_fn(self.best_of_generation[-1])
 
         improvement = curr_best - prev_best
         threshold = self.config.stopping_criteria.saturation_threshold

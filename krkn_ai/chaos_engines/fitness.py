@@ -2,7 +2,7 @@ import math
 import datetime
 import time
 from collections import defaultdict
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
 from krkn_ai.models.config import FitnessFunctionItem, FitnessFunctionType
@@ -302,14 +302,70 @@ def normalize_generation_scores(
             s.weighted_score = item_weight.get(s.id, 0.0) * ns
 
         prometheus_score = sum(s.weighted_score for s in r.fitness_result.scores)
-        raw_total = sum(
-            [
-                prometheus_score,
-                r.fitness_result.krkn_failure_score,
-                r.fitness_result.health_check_failure_score,
-                r.fitness_result.health_check_response_time_score,
-            ]
+        r.fitness_result.fitness_score = _combine_scores(
+            prometheus_score, r.fitness_result, num_components
         )
-        r.fitness_result.fitness_score = (
-            (raw_total / num_components * 100) if num_components else 0.0
+
+
+def _combine_scores(
+    prometheus_score: float, fitness_result: FitnessResult, num_components: int
+) -> float:
+    raw_total = sum(
+        [
+            prometheus_score,
+            fitness_result.krkn_failure_score,
+            fitness_result.health_check_failure_score,
+            fitness_result.health_check_response_time_score,
+        ]
+    )
+    return (raw_total / num_components * 100) if num_components else 0.0
+
+
+def update_item_bounds(
+    bounds: Dict[int, Tuple[float, float]], results: List[CommandRunResult]
+) -> None:
+    """Extend the per-item (min, max) of log-transformed SLO scores.
+
+    ``normalize_generation_scores`` rescales each generation on its own, so
+    its output cannot be compared between generations. These bounds cover every
+    generation seen so far and are used by ``cross_generation_fitness``.
+    """
+    for r in results:
+        if r.fitness_result.fitness_score == -1.0:
+            continue
+        for s in r.fitness_result.scores:
+            value = _log_transform(s.fitness_score)
+            low, high = bounds.get(s.id, (value, value))
+            bounds[s.id] = (min(low, value), max(high, value))
+
+
+def cross_generation_fitness(
+    result: CommandRunResult,
+    bounds: Dict[int, Tuple[float, float]],
+    fitness_items: List[FitnessFunctionItem],
+    num_components: int = 4,
+) -> float:
+    """Fitness on a scale shared by all generations, for stopping criteria and
+    adaptive mutation.
+
+    Same formula as ``normalize_generation_scores`` but each SLO item is
+    scaled by the bounds from ``update_item_bounds`` instead of the bounds of
+    one generation. Results without SLO scores keep their fitness score.
+    """
+    fitness_result = result.fitness_result
+    if not fitness_result.scores or fitness_result.fitness_score == -1.0:
+        return fitness_result.fitness_score
+
+    weights = normalize_weights(item.weight for item in fitness_items)
+    item_weight = {item.id: w for item, w in zip(fitness_items, weights)}
+
+    prometheus_score = 0.0
+    for s in fitness_result.scores:
+        low, high = bounds.get(s.id, (0.0, 0.0))
+        normalized = (
+            0.0
+            if high == low
+            else (_log_transform(s.fitness_score) - low) / (high - low)
         )
+        prometheus_score += item_weight.get(s.id, 0.0) * normalized
+    return _combine_scores(prometheus_score, fitness_result, num_components)

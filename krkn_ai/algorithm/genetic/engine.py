@@ -60,6 +60,10 @@ class GeneticAlgorithm(BaseEngine):
         self.algo_config: GeneticAlgorithmConfig = config.genetic
         self.population: List[BaseScenario] = []
         self.best_of_generation: List[CommandRunResult] = []
+        # Best of each generation on the shared scale; used for stopping
+        # criteria and adaptive mutation. best_of_generation is ranked by the
+        # per-generation score, which can pick a different scenario.
+        self.comparable_best_of_generation: List[CommandRunResult] = []
         self.generation_results: List[List[CommandRunResult]] = []
         self.completed_generations: int = 0
         self.stagnant_generations = 0
@@ -70,7 +74,9 @@ class GeneticAlgorithm(BaseEngine):
         self.generations_reporter = GenerationsReporter(self.output_dir, self.format)
         self._item_bounds: Dict[int, Tuple[float, float]] = {}
         self.stopping = StoppingCriteriaEvaluator(
-            self.algo_config, self.best_of_generation, self.comparable_fitness
+            self.algo_config,
+            self.comparable_best_of_generation,
+            self.comparable_fitness,
         )
 
     def comparable_fitness(self, result: CommandRunResult) -> float:
@@ -160,6 +166,9 @@ class GeneticAlgorithm(BaseEngine):
                 reverse=True,
             )
             self.best_of_generation.append(fitness_scores[0])
+            self.comparable_best_of_generation.append(
+                max(fitness_scores, key=self.comparable_fitness)
+            )
             print_generation_table(cur_generation, fitness_scores)
 
             self.adapt_mutation_rate()
@@ -279,11 +288,11 @@ class GeneticAlgorithm(BaseEngine):
         if not cfg.enable:
             return
 
-        if len(self.best_of_generation) < 2:
+        if len(self.comparable_best_of_generation) < 2:
             return
 
-        prev = self.comparable_fitness(self.best_of_generation[-2])
-        curr = self.comparable_fitness(self.best_of_generation[-1])
+        prev = self.comparable_fitness(self.comparable_best_of_generation[-2])
+        curr = self.comparable_fitness(self.comparable_best_of_generation[-1])
 
         improvement = curr - prev
 

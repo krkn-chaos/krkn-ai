@@ -3,6 +3,7 @@ FitnessCalculator tests — extracted from test_krkn_runner.py
 """
 
 import datetime
+import math
 import pytest
 from unittest.mock import Mock, patch
 
@@ -641,3 +642,14 @@ class TestCrossGenerationFitness:
         assert bounds == {}
         assert cross_generation_fitness(bad, bounds, self.ITEMS, 1) == -1.0
         assert cross_generation_fitness(no_slo, bounds, self.ITEMS, 1) == 42.0
+
+    def test_non_finite_value_does_not_poison_bounds(self):
+        bounds = {}
+        update_item_bounds(bounds, [_make_result([(1, float("nan"), 0.0)])])
+        later = self._generation([1.0, 10.0])
+        update_item_bounds(bounds, later)
+
+        assert bounds == {1: (math.log1p(1.0), math.log1p(10.0))}
+        assert cross_generation_fitness(later[1], bounds, self.ITEMS, 1) == 100.0
+        nan_result = _make_result([(1, float("nan"), 0.0)])
+        assert cross_generation_fitness(nan_result, bounds, self.ITEMS, 1) == 0.0

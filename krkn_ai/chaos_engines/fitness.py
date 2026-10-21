@@ -335,6 +335,9 @@ def update_item_bounds(
             continue
         for s in r.fitness_result.scores:
             value = _log_transform(s.fitness_score)
+            # A NaN would stick in min()/max() and make every later score NaN.
+            if not math.isfinite(value):
+                continue
             low, high = bounds.get(s.id, (value, value))
             bounds[s.id] = (min(low, value), max(high, value))
 
@@ -362,10 +365,11 @@ def cross_generation_fitness(
     prometheus_score = 0.0
     for s in fitness_result.scores:
         low, high = bounds.get(s.id, (0.0, 0.0))
+        value = _log_transform(s.fitness_score)
         normalized = (
             0.0
-            if high == low
-            else (_log_transform(s.fitness_score) - low) / (high - low)
+            if high == low or not math.isfinite(value)
+            else (value - low) / (high - low)
         )
         prometheus_score += item_weight.get(s.id, 0.0) * normalized
     return _combine_scores(prometheus_score, fitness_result, num_components)

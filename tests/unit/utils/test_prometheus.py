@@ -4,9 +4,45 @@ Unit tests for Prometheus utility functions and client creation logic using Kube
 
 import os
 import pytest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from krkn_ai.utils.prometheus import is_openshift, create_prometheus_client
 from krkn_ai.models.custom_errors import PrometheusConnectionError
+
+
+def _ingress(name, host, tls=False, backend_service=None):
+    """Build a minimal V1Ingress-like object for discovery tests."""
+    http = None
+    if backend_service:
+        http = SimpleNamespace(
+            paths=[
+                SimpleNamespace(
+                    backend=SimpleNamespace(
+                        service=SimpleNamespace(name=backend_service)
+                    )
+                )
+            ]
+        )
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name),
+        spec=SimpleNamespace(
+            tls=[SimpleNamespace()] if tls else None,
+            rules=[SimpleNamespace(host=host, http=http)],
+        ),
+    )
+
+
+def _service(name, hostname=None, ip=None, port=9090, svc_type="LoadBalancer"):
+    """Build a minimal V1Service-like object for discovery tests."""
+    lb_ingress = [SimpleNamespace(hostname=hostname, ip=ip)] if (hostname or ip) else []
+    return SimpleNamespace(
+        metadata=SimpleNamespace(name=name),
+        spec=SimpleNamespace(
+            type=svc_type,
+            ports=[SimpleNamespace(port=port)] if port else [],
+        ),
+        status=SimpleNamespace(load_balancer=SimpleNamespace(ingress=lb_ingress)),
+    )
 
 
 class TestPrometheusUtils:
@@ -141,3 +177,91 @@ class TestPrometheusUtils:
             create_prometheus_client("/tmp/test-kubeconfig")
             args, _ = mock_prom_class.call_args
             assert args[0] == "https://my-prom"
+
+
+class TestVanillaPrometheusDiscovery:
+    """Auto-discovery of Prometheus on vanilla (non-OpenShift) Kubernetes."""
+
+    @patch("krkn_ai.utils.prometheus.KrknPrometheus")
+    @patch("krkn_ai.utils.prometheus.client.CoreV1Api")
+    @patch("krkn_ai.utils.prometheus.client.NetworkingV1Api")
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.is_openshift", return_value=False)
+    def test_discovers_prometheus_via_ingress(
+        self, _ocp, _load, mock_net_cls, mock_core_cls, mock_prom_cls
+    ):
+        """A Prometheus Ingress with TLS is discovered as an https:// URL."""
+        mock_net_cls.return_value.list_namespaced_ingress.return_value = (
+            SimpleNamespace(
+                items=[_ingress("prometheus-ingress", "prom.example.com", tls=True)]
+            )
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            mock_prom_cls.return_value = Mock(process_query=Mock(return_value=None))
+            create_prometheus_client("/tmp/test-kubeconfig")
+            args, _ = mock_prom_cls.call_args
+            assert args[0] == "https://prom.example.com"
+
+    @patch("krkn_ai.utils.prometheus.KrknPrometheus")
+    @patch("krkn_ai.utils.prometheus.client.CoreV1Api")
+    @patch("krkn_ai.utils.prometheus.client.NetworkingV1Api")
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.is_openshift", return_value=False)
+    def test_discovers_prometheus_via_loadbalancer(
+        self, _ocp, _load, mock_net_cls, mock_core_cls, mock_prom_cls
+    ):
+        """A LoadBalancer Service is discovered as http://host:port when no Ingress exists."""
+        mock_net_cls.return_value.list_namespaced_ingress.return_value = (
+            SimpleNamespace(items=[])
+        )
+        mock_core_cls.return_value.list_namespaced_service.return_value = (
+            SimpleNamespace(
+                items=[_service("prometheus-k8s", hostname="lb.example.com", port=9090)]
+            )
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            mock_prom_cls.return_value = Mock(process_query=Mock(return_value=None))
+            create_prometheus_client("/tmp/test-kubeconfig")
+            args, _ = mock_prom_cls.call_args
+            assert args[0] == "http://lb.example.com:9090"
+
+    @patch("krkn_ai.utils.prometheus.client.CoreV1Api")
+    @patch("krkn_ai.utils.prometheus.client.NetworkingV1Api")
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.is_openshift", return_value=False)
+    def test_clusterip_service_is_ignored(
+        self, _ocp, _load, mock_net_cls, mock_core_cls
+    ):
+        """A ClusterIP Service (not externally reachable) is not used for discovery."""
+        mock_net_cls.return_value.list_namespaced_ingress.return_value = (
+            SimpleNamespace(items=[])
+        )
+        mock_core_cls.return_value.list_namespaced_service.return_value = (
+            SimpleNamespace(
+                items=[
+                    _service("prometheus-operated", ip="10.0.0.1", svc_type="ClusterIP")
+                ]
+            )
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(PrometheusConnectionError):
+                create_prometheus_client("/tmp/test-kubeconfig")
+
+    @patch("krkn_ai.utils.prometheus.client.CoreV1Api")
+    @patch("krkn_ai.utils.prometheus.client.NetworkingV1Api")
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.is_openshift", return_value=False)
+    def test_discovery_finds_nothing_raises(
+        self, _ocp, _load, mock_net_cls, mock_core_cls
+    ):
+        """When nothing reachable is found, the actionable config error is raised."""
+        mock_net_cls.return_value.list_namespaced_ingress.return_value = (
+            SimpleNamespace(items=[])
+        )
+        mock_core_cls.return_value.list_namespaced_service.return_value = (
+            SimpleNamespace(items=[])
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(PrometheusConnectionError) as exc:
+                create_prometheus_client("/tmp/test-kubeconfig")
+            assert "Prometheus configuration missing" in str(exc.value)

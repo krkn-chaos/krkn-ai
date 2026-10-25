@@ -320,6 +320,15 @@ class StoppingCriteria(BaseModel):
             or self.exploration_saturation is not None
         )
 
+    @field_validator("saturation_threshold", mode="after")
+    @classmethod
+    def validate_saturation_threshold(cls, value: float) -> float:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(
+                "saturation_threshold must be a finite non-negative number."
+            )
+        return value
+
     @field_validator("generation_saturation", "exploration_saturation", mode="after")
     @classmethod
     def validate_positive_int(cls, value: Optional[int], info) -> Optional[int]:
@@ -368,15 +377,8 @@ class GeneticAlgorithmConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_stopping_limit(self) -> "GeneticAlgorithmConfig":
-        if (
-            self.generations is None
-            and self.duration is None
-            and not self.stopping_criteria.has_criteria
-        ):
-            raise ValueError(
-                "At least one stopping limit must be set: 'generations', 'duration', "
-                "or at least one criterion in 'stopping_criteria'."
-            )
+        if self.generations is None and self.duration is None:
+            raise ValueError("At least one of 'generations' or 'duration' must be set.")
         return self
 
 

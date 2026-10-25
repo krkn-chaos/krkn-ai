@@ -131,9 +131,11 @@ class TestStoppingCriteriaEvaluator:
         assert should_stop is True
         assert "Exploration limit reached" in reason
 
-    def test_stops_with_null_generations_when_stopping_criteria_met(self):
+    def test_stops_with_null_generations_when_duration_and_stopping_criteria_set(self):
         criteria = StoppingCriteria(generation_saturation=2)
-        config = GeneticAlgorithmConfig(generations=None, stopping_criteria=criteria)
+        config = GeneticAlgorithmConfig(
+            generations=None, duration=3600, stopping_criteria=criteria
+        )
         best_results = [make_generation_result(50.0), make_generation_result(50.0)]
         evaluator = StoppingCriteriaEvaluator(config, best_results)
 
@@ -141,6 +143,28 @@ class TestStoppingCriteriaEvaluator:
         evaluator.update_saturation_tracking()
         should_stop, reason = evaluator.evaluate(
             cur_generation=2, elapsed_time=20.0, population_size=10
+        )
+        assert should_stop is True
+        assert "Generation saturation reached" in reason
+
+    def test_saturation_tracking_handles_nan_fitness_without_reset(self):
+        criteria = StoppingCriteria(generation_saturation=2)
+        config = GeneticAlgorithmConfig(generations=10, stopping_criteria=criteria)
+        best_results = [
+            make_generation_result(50.0),
+            make_generation_result(float("nan")),
+        ]
+        evaluator = StoppingCriteriaEvaluator(config, best_results)
+
+        evaluator.update_saturation_tracking()
+        assert evaluator.saturation_stagnant_generations == 1
+
+        best_results.append(make_generation_result(float("nan")))
+        evaluator.update_saturation_tracking()
+        assert evaluator.saturation_stagnant_generations == 2
+
+        should_stop, reason = evaluator.evaluate(
+            cur_generation=3, elapsed_time=10.0, population_size=10
         )
         assert should_stop is True
         assert "Generation saturation reached" in reason

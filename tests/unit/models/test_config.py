@@ -292,6 +292,12 @@ class TestStoppingCriteria:
         assert criteria.fitness_threshold == 200.0
         assert criteria.generation_saturation == 10
 
+    def test_stopping_criteria_has_criteria(self):
+        assert StoppingCriteria().has_criteria is False
+        assert StoppingCriteria(fitness_threshold=100.0).has_criteria is True
+        assert StoppingCriteria(generation_saturation=5).has_criteria is True
+        assert StoppingCriteria(exploration_saturation=3).has_criteria is True
+
     def test_config_file_includes_stopping_criteria(self):
         """Test that ConfigFile includes stopping_criteria field"""
         cluster = ClusterComponents(namespaces=[], nodes=[])
@@ -398,8 +404,39 @@ class TestGeneticAlgorithmConfigValidation:
     def test_generations_accepts_positive(self):
         assert GeneticAlgorithmConfig(generations=1).generations == 1
 
-    def test_generations_accepts_none(self):
-        assert GeneticAlgorithmConfig(generations=None).generations is None
+    def test_generations_accepts_none_when_duration_set(self):
+        assert (
+            GeneticAlgorithmConfig(generations=None, duration=3600).generations is None
+        )
+
+    def test_generations_accepts_none_when_stopping_criteria_set(self):
+        criteria = StoppingCriteria(generation_saturation=5)
+        config = GeneticAlgorithmConfig(generations=None, stopping_criteria=criteria)
+        assert config.generations is None
+
+    def test_rejects_when_all_stopping_limits_unset(self):
+        with pytest.raises(
+            ValidationError, match="At least one stopping limit must be set"
+        ):
+            GeneticAlgorithmConfig(generations=None)
+
+    def test_rejects_when_generations_none_and_duration_none(self):
+        with pytest.raises(
+            ValidationError, match="At least one stopping limit must be set"
+        ):
+            GeneticAlgorithmConfig(generations=None, duration=None)
+
+    def test_accepts_when_only_fitness_threshold_set(self):
+        criteria = StoppingCriteria(fitness_threshold=90.0)
+        config = GeneticAlgorithmConfig(generations=None, stopping_criteria=criteria)
+        assert config.generations is None
+        assert config.stopping_criteria.fitness_threshold == 90.0
+
+    def test_accepts_when_only_exploration_saturation_set(self):
+        criteria = StoppingCriteria(exploration_saturation=4)
+        config = GeneticAlgorithmConfig(generations=None, stopping_criteria=criteria)
+        assert config.generations is None
+        assert config.stopping_criteria.exploration_saturation == 4
 
     @pytest.mark.parametrize("bad", [0, -10])
     def test_generations_rejects_non_positive(self, bad):

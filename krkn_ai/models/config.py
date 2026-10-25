@@ -312,6 +312,14 @@ class StoppingCriteria(BaseModel):
         0.0001  # Minimum improvement threshold for generation saturation
     )
 
+    @property
+    def has_criteria(self) -> bool:
+        return (
+            self.fitness_threshold is not None
+            or self.generation_saturation is not None
+            or self.exploration_saturation is not None
+        )
+
     @field_validator("generation_saturation", "exploration_saturation", mode="after")
     @classmethod
     def validate_positive_int(cls, value: Optional[int], info) -> Optional[int]:
@@ -357,6 +365,19 @@ class GeneticAlgorithmConfig(BaseModel):
                 f"{info.field_name} must be a positive integer when set, got {value}"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_stopping_limit(self) -> "GeneticAlgorithmConfig":
+        if (
+            self.generations is None
+            and self.duration is None
+            and not self.stopping_criteria.has_criteria
+        ):
+            raise ValueError(
+                "At least one stopping limit must be set: 'generations', 'duration', "
+                "or at least one criterion in 'stopping_criteria'."
+            )
+        return self
 
 
 class ConfigFile(BaseModel):

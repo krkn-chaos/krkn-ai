@@ -292,12 +292,6 @@ class TestStoppingCriteria:
         assert criteria.fitness_threshold == 200.0
         assert criteria.generation_saturation == 10
 
-    def test_stopping_criteria_has_criteria(self):
-        assert StoppingCriteria().has_criteria is False
-        assert StoppingCriteria(fitness_threshold=100.0).has_criteria is True
-        assert StoppingCriteria(generation_saturation=5).has_criteria is True
-        assert StoppingCriteria(exploration_saturation=3).has_criteria is True
-
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -0.001])
     def test_saturation_threshold_rejects_non_finite_or_negative(self, bad):
         with pytest.raises(

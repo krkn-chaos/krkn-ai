@@ -312,14 +312,6 @@ class StoppingCriteria(BaseModel):
         0.0001  # Minimum improvement threshold for generation saturation
     )
 
-    @property
-    def has_criteria(self) -> bool:
-        return (
-            self.fitness_threshold is not None
-            or self.generation_saturation is not None
-            or self.exploration_saturation is not None
-        )
-
     @field_validator("saturation_threshold", mode="after")
     @classmethod
     def validate_saturation_threshold(cls, value: float) -> float:

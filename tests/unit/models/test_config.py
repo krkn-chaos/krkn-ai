@@ -224,6 +224,37 @@ class TestHealthCheckConfig:
         assert app_no_headers.headers is None
 
 
+class TestElasticConfig:
+    """Test ElasticConfig credential validation"""
+
+    @pytest.mark.parametrize("field", ["username", "password"])
+    @pytest.mark.parametrize("value", ['ab"cd', "secret\\", 'p"a"ss'])
+    def test_rejects_quote_or_backslash_when_enabled(self, field, value):
+        """krkn-hub can't load these inside its double-quoted YAML values"""
+        with pytest.raises(ValidationError, match=f"ElasticConfig.{field} must not"):
+            ElasticConfig(
+                enable=True, server="https://elastic.example.com", **{field: value}
+            )
+
+    def test_accepts_other_special_characters(self):
+        """Characters that are safe in a double-quoted YAML value are kept"""
+        config = ElasticConfig(
+            enable=True,
+            server="https://elastic.example.com",
+            username="it's me",
+            password="p@ss $word;&",
+        )
+
+        assert config.username == "it's me"
+        assert config.password == "p@ss $word;&"
+
+    def test_not_checked_when_disabled(self):
+        """Credentials are unused, so not validated, when ES is disabled"""
+        config = ElasticConfig(enable=False, password='ab"cd')
+
+        assert config.password == 'ab"cd'
+
+
 class TestOutputConfig:
     """Test OutputConfig model"""
 

@@ -258,6 +258,20 @@ class ElasticConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def credentials_fit_krkn_hub_config(self) -> "ElasticConfig":
+        # krkn-hub substitutes these into double-quoted YAML values
+        # (password: "$ES_PASSWORD") without escaping them.
+        if self.enable:
+            for field in ("username", "password"):
+                if any(char in getattr(self, field) for char in '"\\'):
+                    raise ValueError(
+                        f"ElasticConfig.{field} must not contain '\"' or '\\': "
+                        "krkn-hub writes it into a double-quoted YAML value "
+                        "without escaping, so the scenario config would not load."
+                    )
+        return self
+
 
 class HealthCheckResult(BaseModel):
     name: str

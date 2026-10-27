@@ -1,5 +1,5 @@
 """
-Elasticsearch settings injected into scenario commands (#512)
+Elasticsearch settings injected into scenario commands
 """
 
 import shlex
@@ -48,10 +48,10 @@ RUNNERS = [KrknRunnerType.CLI_RUNNER, KrknRunnerType.HUB_RUNNER]
 @pytest.mark.parametrize("runner_type", RUNNERS)
 @pytest.mark.parametrize(
     "password",
-    ['ab"cd', "secret\\", 'p"a"ss', "it's $HOME", "with space"],
+    ["it's", "$HOME", "with space", "a;b&c|d", "`id`", "'"],
 )
 def test_es_credentials_reach_runner_unchanged(runner_type, password):
-    """Quotes, backslashes and spaces in credentials survive shlex.split"""
+    """Shell-special characters in credentials survive shlex.split"""
     command = inject_es_config(
         "krknctl run pod-scenarios {es_env_list}",
         _config(username=password, password=password),

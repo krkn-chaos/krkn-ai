@@ -3,13 +3,16 @@ FitnessCalculator tests — extracted from test_krkn_runner.py
 """
 
 import datetime
+import math
 import pytest
 from unittest.mock import Mock, patch
 
 from krkn_ai.chaos_engines.fitness import (
     FitnessCalculator,
+    cross_generation_fitness,
     normalize_generation_scores,
     normalize_weights,
+    update_item_bounds,
 )
 from krkn_ai.models.app import CommandRunResult, FitnessResult, FitnessScoreResult
 from krkn_ai.models.config import (
@@ -574,3 +577,79 @@ class TestNormalizeGenerationScores:
         assert r_a.fitness_result.fitness_score == pytest.approx(40.0)
         # r_b: raw = 0.0 + 0 + 0 + 0 = 0.0 → pct = 0.0
         assert r_b.fitness_result.fitness_score == pytest.approx(0.0)
+
+
+class TestCrossGenerationFitness:
+    """The best of every generation is 100 after per-generation normalization;
+    cross_generation_fitness keeps generations on one scale."""
+
+    ITEMS = [FitnessFunctionItem(id=1, query="q1", weight=1)]
+
+    def _generation(self, raw_values):
+        results = [_make_result([(1, v, 0.0)]) for v in raw_values]
+        normalize_generation_scores(results, self.ITEMS, num_components=1)
+        return results
+
+    def test_per_generation_normalization_hides_progress(self):
+        low = self._generation([1.0, 10.0])
+        high = self._generation([900.0, 5000.0])
+
+        assert max(r.fitness_result.fitness_score for r in low) == 100.0
+        assert max(r.fitness_result.fitness_score for r in high) == 100.0
+
+    def test_best_of_later_generation_scores_higher(self):
+        low = self._generation([1.0, 10.0])
+        high = self._generation([900.0, 5000.0])
+        bounds = {}
+        update_item_bounds(bounds, low)
+        update_item_bounds(bounds, high)
+
+        best_low = cross_generation_fitness(low[1], bounds, self.ITEMS, 1)
+        best_high = cross_generation_fitness(high[1], bounds, self.ITEMS, 1)
+
+        assert best_high == 100.0
+        assert best_low < 40.0
+
+    def test_no_progress_scores_equal(self):
+        first = self._generation([4999.0, 5000.0])
+        second = self._generation([4999.0, 5000.0])
+        bounds = {}
+        update_item_bounds(bounds, first)
+        update_item_bounds(bounds, second)
+
+        assert cross_generation_fitness(
+            first[1], bounds, self.ITEMS, 1
+        ) == cross_generation_fitness(second[1], bounds, self.ITEMS, 1)
+
+    def test_other_components_still_counted(self):
+        results = [
+            _make_result([(1, 10.0, 0.0)], krkn=1.0),
+            _make_result([(1, 100.0, 0.0)], krkn=1.0),
+        ]
+        normalize_generation_scores(results, self.ITEMS, num_components=2)
+        bounds = {}
+        update_item_bounds(bounds, results)
+
+        assert cross_generation_fitness(results[0], bounds, self.ITEMS, 2) == 50.0
+        assert cross_generation_fitness(results[1], bounds, self.ITEMS, 2) == 100.0
+
+    def test_misconfiguration_and_missing_scores_keep_fitness(self):
+        bounds = {}
+        bad = _make_result([(1, 99.0, 0.0)], fitness=-1.0)
+        no_slo = _make_result([], fitness=42.0)
+        update_item_bounds(bounds, [bad, no_slo])
+
+        assert bounds == {}
+        assert cross_generation_fitness(bad, bounds, self.ITEMS, 1) == -1.0
+        assert cross_generation_fitness(no_slo, bounds, self.ITEMS, 1) == 42.0
+
+    def test_non_finite_value_does_not_poison_bounds(self):
+        bounds = {}
+        update_item_bounds(bounds, [_make_result([(1, float("nan"), 0.0)])])
+        later = self._generation([1.0, 10.0])
+        update_item_bounds(bounds, later)
+
+        assert bounds == {1: (math.log1p(1.0), math.log1p(10.0))}
+        assert cross_generation_fitness(later[1], bounds, self.ITEMS, 1) == 100.0
+        nan_result = _make_result([(1, float("nan"), 0.0)])
+        assert cross_generation_fitness(nan_result, bounds, self.ITEMS, 1) == 0.0

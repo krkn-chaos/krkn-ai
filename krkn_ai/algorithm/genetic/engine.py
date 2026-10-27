@@ -321,8 +321,9 @@ class GeneticAlgorithm(BaseEngine):
                 missing,
             )
 
+            # dict.fromkeys dedupes in insertion order; set order varies with PYTHONHASHSEED
             available_scenarios = list(
-                set(population.copy()) | set(self.seen_population.keys())
+                dict.fromkeys([*population, *self.seen_population.keys()])
             )
 
             if len(available_scenarios) == 0:
@@ -547,7 +548,13 @@ class GeneticAlgorithm(BaseEngine):
                     group.update(groups.pop(i))
             groups.append(group)
         grouped_params = set().union(*groups)
-        groups.extend({param_type} for param_type in common_params - grouped_params)
+        # Follow parameter order: class hashes differ between processes, so set
+        # order would change which rng draw each parameter gets.
+        groups.extend(
+            {param_type}
+            for param_type in dict.fromkeys(type(x) for x in scenario_a.parameters)
+            if param_type in common_params and param_type not in grouped_params
+        )
         return (
             fields_a,
             fields_b,

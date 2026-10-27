@@ -58,6 +58,32 @@ class TestBaseParameter:
         for parameter in parameters:
             assert parameter.get_value(return_krknhub_name=True) is not None
 
+    def test_byte_parameters_keep_exact_value(self):
+        """Byte values that are not a whole Ki or Mi are not rounded down"""
+        mib = 1024 * 1024
+        assert ReadBPSParameter(value=2 * mib - 1).get_value() == "2097151"
+        assert ReadBPSParameter(value=1536 * 1024).get_value() == "1536Ki"
+        assert WriteBPSParameter(value=3 * mib).get_value() == "3Mi"
+        assert WriteBPSParameter(value=512 * 1024).get_value() == "512Ki"
+        assert WriteBPSParameter(value=1000).get_value() == "1000"
+        assert IOBlockSizeParameter(value=2 * mib - 1).get_value() == "2097151b"
+        assert IOBlockSizeParameter(value=1536 * 1024).get_value() == "1536k"
+        assert IOBlockSizeParameter(value=4 * mib).get_value() == "4m"
+
+    def test_mutated_byte_parameters_run_the_recorded_value(self):
+        """The formatted value always converts back to the mutated byte count"""
+        units = {"": 1, "b": 1, "Ki": 1024, "k": 1024, "Mi": 1024**2, "m": 1024**2}
+        for parameter in (
+            ReadBPSParameter(),
+            WriteBPSParameter(),
+            IOBlockSizeParameter(),
+        ):
+            for _ in range(200):
+                parameter.mutate()
+                formatted = parameter.get_value()
+                digits = formatted.rstrip("bkmKMi")
+                assert int(digits) * units[formatted[len(digits) :]] == parameter.value
+
 
 class TestScenario:
     """Test Scenario model"""

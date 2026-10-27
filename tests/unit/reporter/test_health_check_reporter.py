@@ -4,6 +4,7 @@ HealthCheckReporter unit tests
 
 import os
 import pandas as pd
+import pytest
 import datetime
 from unittest.mock import patch, MagicMock
 
@@ -146,6 +147,75 @@ class TestHealthCheckReporter:
 
         # Assert the skip was logged so operators can debug silent gaps
         assert any("zero health-check samples" in msg for msg in caplog.messages)
+
+    def test_save_report_excludes_failed_requests_from_response_times(
+        self, temp_output_dir
+    ):
+        """Failed requests (response_time=-1) count as failures, not latency"""
+        reporter = HealthCheckReporter(output_dir=temp_output_dir)
+        now = datetime.datetime.now()
+
+        def timeout(name):
+            return HealthCheckResult(
+                name=name,
+                response_time=-1,
+                status_code=-1,
+                success=False,
+                error="ReadTimeout",
+            )
+
+        fitness_results = [
+            CommandRunResult(
+                generation_id=0,
+                scenario_id=1,
+                scenario=DummyScenario(cluster_components=ClusterComponents()),
+                cmd="test-cmd",
+                log="test-log",
+                returncode=0,
+                start_time=now,
+                end_time=now,
+                fitness_result=FitnessResult(fitness_score=10.0),
+                health_check_results={
+                    "cart": [
+                        HealthCheckResult(
+                            name="cart",
+                            response_time=0.2,
+                            status_code=200,
+                            success=True,
+                        ),
+                        HealthCheckResult(
+                            name="cart",
+                            response_time=0.4,
+                            status_code=200,
+                            success=True,
+                        ),
+                        timeout("cart"),
+                    ],
+                    "web": [timeout("web"), timeout("web")],
+                },
+            )
+        ]
+
+        reporter.save_report(fitness_results)
+
+        df = pd.read_csv(
+            os.path.join(temp_output_dir, "reports", "health_check_report.csv")
+        )
+        cart = df[df["component_name"] == "cart"].iloc[0]
+        assert cart["min_response_time"] == 0.2
+        assert cart["max_response_time"] == 0.4
+        assert cart["average_response_time"] == pytest.approx(0.3)
+        assert cart["success_count"] == 2
+        assert cart["failure_count"] == 1
+
+        web = df[df["component_name"] == "web"].iloc[0]
+        assert (
+            web[["min_response_time", "max_response_time", "average_response_time"]]
+            .isna()
+            .all()
+        )
+        assert web["success_count"] == 0
+        assert web["failure_count"] == 2
 
     def test_save_report_with_empty_results(self, temp_output_dir):
         """Test saving report with empty fitness results"""

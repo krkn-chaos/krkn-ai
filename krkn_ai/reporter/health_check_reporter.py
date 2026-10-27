@@ -42,15 +42,20 @@ class HealthCheckReporter:
                     )
                     continue
                 component_name = component_results[0].name
-                min_response_time = min(
-                    [result.response_time for result in component_results]
-                )
-                max_response_time = max(
-                    [result.response_time for result in component_results]
-                )
-                average_response_time = sum(
-                    [result.response_time for result in component_results]
-                ) / len(component_results)
+                # Failed requests record response_time=-1 as a "no response"
+                # marker; skip them like the fitness scorer does.
+                response_times = [
+                    result.response_time
+                    for result in component_results
+                    if result.success and result.response_time >= 0
+                ]
+                if response_times:
+                    min_response_time = min(response_times)
+                    max_response_time = max(response_times)
+                    average_response_time = sum(response_times) / len(response_times)
+                else:
+                    min_response_time = max_response_time = float("nan")
+                    average_response_time = float("nan")
                 success_count = sum([result.success for result in component_results])
                 failure_count = len(component_results) - success_count
 

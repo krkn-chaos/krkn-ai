@@ -4,6 +4,8 @@ Tests for StoppingCriteriaEvaluator
 
 from unittest.mock import Mock
 
+import pytest
+
 from krkn_ai.algorithm.genetic.stopping import StoppingCriteriaEvaluator
 from krkn_ai.models.app import FitnessResult
 from krkn_ai.models.config import GeneticAlgorithmConfig, StoppingCriteria
@@ -168,3 +170,32 @@ class TestStoppingCriteriaEvaluator:
         )
         assert should_stop is True
         assert "Generation saturation reached" in reason
+
+    @pytest.mark.parametrize(
+        "non_finite_score", [float("nan"), float("inf"), float("-inf")]
+    )
+    def test_finite_fitness_recovery_restarts_saturation_tracking(
+        self, non_finite_score
+    ):
+        criteria = StoppingCriteria(generation_saturation=2)
+        config = GeneticAlgorithmConfig(generations=10, stopping_criteria=criteria)
+        best_results = [make_generation_result(50.0)]
+        evaluator = StoppingCriteriaEvaluator(config, best_results)
+
+        for generation, (score, expected_stop) in enumerate(
+            [
+                (non_finite_score, False),
+                (60.0, False),
+                (60.0, False),
+                (60.0, True),
+            ],
+            start=2,
+        ):
+            best_results.append(make_generation_result(score))
+            evaluator.update_saturation_tracking()
+            should_stop, _ = evaluator.evaluate(
+                cur_generation=generation,
+                elapsed_time=float(generation),
+                population_size=10,
+            )
+            assert should_stop is expected_stop

@@ -888,7 +888,7 @@ class TestRecommendHealthChecks:
 
     @patch.object(ClusterManager, "_check_reachable", return_value=True)
     def test_same_name_across_namespaces_all_kept(self, _mock_reach, cluster_manager):
-        """Distinct services sharing a name across namespaces are all kept."""
+        """Same-named services across namespaces are kept under unique names."""
         components = ClusterComponents(
             namespaces=[Namespace(name="shop"), Namespace(name="store")]
         )
@@ -902,7 +902,32 @@ class TestRecommendHealthChecks:
 
         result = cluster_manager.recommend_health_checks(components)
 
-        assert len(result) == 2
+        assert [rec["name"] for rec in result] == ["shop/cart", "store/cart"]
+
+    @patch.object(ClusterManager, "_check_reachable", return_value=True)
+    def test_unique_names_across_namespaces_stay_unqualified(
+        self, _mock_reach, cluster_manager
+    ):
+        """Only colliding names get a namespace prefix."""
+        components = ClusterComponents(
+            namespaces=[Namespace(name="shop"), Namespace(name="store")]
+        )
+        services = {
+            "shop": [_svc("cart", ip="1.1.1.1", ports=[_svc_port(80)])],
+            "store": [
+                _svc("cart", ip="2.2.2.2", ports=[_svc_port(80)]),
+                _svc("web", ip="3.3.3.3", ports=[_svc_port(80)]),
+            ],
+        }
+        cluster_manager.core_api.list_namespaced_service.side_effect = (
+            lambda namespace: Mock(items=services[namespace])
+        )
+        cluster_manager.core_api.list_namespaced_pod.return_value.items = []
+
+        result = cluster_manager.recommend_health_checks(components)
+
+        assert [rec["name"] for rec in result] == ["shop/cart", "store/cart", "web"]
+        assert all("namespace" not in rec for rec in result)
 
     def test_check_reachable_returns_true_on_200(self):
         """_check_reachable returns True for a 200 response."""

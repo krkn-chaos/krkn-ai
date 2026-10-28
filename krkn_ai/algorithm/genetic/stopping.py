@@ -1,3 +1,4 @@
+import math
 from typing import List, Tuple
 
 from krkn_ai.models.app import CommandRunResult
@@ -104,6 +105,22 @@ class StoppingCriteriaEvaluator:
 
         prev_best = self.best_of_generation[-2].fitness_result.fitness_score
         curr_best = self.best_of_generation[-1].fitness_result.fitness_score
+
+        if not math.isfinite(curr_best):
+            self.saturation_stagnant_generations += 1
+            logger.debug(
+                "Non-finite fitness score encountered | stagnant_generations=%d/%s",
+                self.saturation_stagnant_generations,
+                self.config.stopping_criteria.generation_saturation,
+            )
+            return
+
+        if not math.isfinite(prev_best):
+            self.saturation_stagnant_generations = 0
+            logger.debug(
+                "Fitness score recovered to a finite value, resetting saturation counter"
+            )
+            return
 
         improvement = curr_best - prev_best
         threshold = self.config.stopping_criteria.saturation_threshold

@@ -259,13 +259,25 @@ class TestPatternMatcherEdgeCases:
         assert matcher.matches("test")
         assert not matcher.matches("default|test")  # Literal pipe not matched
 
-        # If you use pipe directly, it's a regex alternation
-        # Note: ^default|test$ means (^default) OR (test$) due to regex precedence
+        # If you use pipe directly, it's a regex alternation that must match fully
         matcher2 = PatternMatcher.from_string("default|test")
         assert matcher2.matches("default")
         assert matcher2.matches("test")
-        # The literal "default|test" matches because "test$" portion matches the end
-        assert matcher2.matches("default|test")
+        assert not matcher2.matches("default|test")
+
+    def test_pipe_alternatives_do_not_prefix_match(self):
+        """Every alternative is anchored, so none acts as a prefix match"""
+        matcher = PatternMatcher.from_string("robot-shop|sock-shop")
+        assert matcher.filter(
+            ["robot-shop", "robot-shop-prod", "sock-shop", "test-sock-shop"]
+        ) == {"robot-shop", "sock-shop"}
+
+    def test_pipe_exclusion_only_excludes_full_matches(self):
+        """An excluded alternation does not also drop names that start with it"""
+        matcher = PatternMatcher.from_string("*,!default|kube-system")
+        assert matcher.filter(
+            ["default", "default-broker", "kube-system", "robot-shop"]
+        ) == {"default-broker", "robot-shop"}
 
     def test_empty_exclusion_pattern_ignored(self):
         """Test empty exclusion pattern (just !) is ignored"""

@@ -1,22 +1,9 @@
 import math
 from typing import Optional
 from pydantic import BaseModel, Field, PrivateAttr
+from krkn_ai.utils import units
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
-
-
-def format_bytes(value: int, suffixes: tuple[str, str, str]) -> str:
-    """Format a byte count with the largest of (bytes, KiB, MiB) that divides it.
-
-    Rounding down to a whole unit would run a different value than the one the
-    genetic algorithm recorded, e.g. 2097151 bytes as 1Mi.
-    """
-    byte_suffix, kib_suffix, mib_suffix = suffixes
-    if value >= 1024 * 1024 and value % (1024 * 1024) == 0:
-        return f"{value // (1024 * 1024)}{mib_suffix}"
-    if value >= 1024 and value % 1024 == 0:
-        return f"{value // 1024}{kib_suffix}"
-    return f"{value}{byte_suffix}"
 
 
 class DummyEndParameter(BaseParameter):
@@ -497,7 +484,7 @@ class IOBlockSizeParameter(BaseParameter):
         Format the value with appropriate unit suffix (b, k, m).
         Returns string like "1m", "512k", "1000b"
         """
-        return format_bytes(self.value, ("b", "k", "m"))
+        return units.format_bytes(self.value, ("b", "k", "m"))
 
     def mutate(self):
         """
@@ -618,7 +605,7 @@ class ReadBPSParameter(BaseParameter):
     value: int = 1048576  # 1Mi in bytes (1024 * 1024)
 
     def get_value(self, return_krknhub_name: bool = False):
-        return format_bytes(self.value, ("", "Ki", "Mi"))
+        return units.format_bytes(self.value, ("", "Ki", "Mi"))
 
     def mutate(self):
         self.value = rng.randint(256 * 1024, 10 * 1024 * 1024)
@@ -630,7 +617,7 @@ class WriteBPSParameter(BaseParameter):
     value: int = 524288  # 512Ki in bytes (512 * 1024)
 
     def get_value(self, return_krknhub_name: bool = False):
-        return format_bytes(self.value, ("", "Ki", "Mi"))
+        return units.format_bytes(self.value, ("", "Ki", "Mi"))
 
     def mutate(self):
         self.value = rng.randint(128 * 1024, 5 * 1024 * 1024)

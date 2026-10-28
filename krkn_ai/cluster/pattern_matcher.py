@@ -147,11 +147,9 @@ class PatternMatcher:
             # Treat as literal - escape special regex characters
             pattern = re.escape(pattern)
 
-        # Anchor pattern for full-string matching if not already anchored
-        if not pattern.startswith("^"):
-            pattern = "^" + pattern
-        if not pattern.endswith("$"):
-            pattern = pattern + "$"
+        # Group before anchoring so ^ and $ bind to every alternative:
+        # "a|b" must become ^(?:a|b)$, since ^a|b$ also matches "a-anything".
+        pattern = f"^(?:{pattern})$"
 
         try:
             return re.compile(pattern)

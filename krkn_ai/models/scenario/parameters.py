@@ -1,6 +1,7 @@
 import math
 from typing import Optional
 from pydantic import BaseModel, Field, PrivateAttr
+from krkn_ai.utils import units
 from krkn_ai.utils.rng import rng
 from krkn_ai.models.scenario.base import BaseParameter
 
@@ -481,14 +482,9 @@ class IOBlockSizeParameter(BaseParameter):
     def get_value(self, return_krknhub_name: bool = False):
         """
         Format the value with appropriate unit suffix (b, k, m).
-        Returns string like "1m", "512k", "1024b"
+        Returns string like "1m", "512k", "1000b"
         """
-        if self.value < 1024:
-            return f"{self.value}b"
-        elif self.value < 1024 * 1024:
-            return f"{self.value // 1024}k"
-        else:
-            return f"{self.value // (1024 * 1024)}m"
+        return units.format_bytes(self.value, ("b", "k", "m"))
 
     def mutate(self):
         """
@@ -609,12 +605,7 @@ class ReadBPSParameter(BaseParameter):
     value: int = 1048576  # 1Mi in bytes (1024 * 1024)
 
     def get_value(self, return_krknhub_name: bool = False):
-        if self.value < 1024:
-            return f"{self.value}"
-        elif self.value < 1024 * 1024:
-            return f"{self.value // 1024}Ki"
-        else:
-            return f"{self.value // (1024 * 1024)}Mi"
+        return units.format_bytes(self.value, ("", "Ki", "Mi"))
 
     def mutate(self):
         self.value = rng.randint(256 * 1024, 10 * 1024 * 1024)
@@ -626,12 +617,7 @@ class WriteBPSParameter(BaseParameter):
     value: int = 524288  # 512Ki in bytes (512 * 1024)
 
     def get_value(self, return_krknhub_name: bool = False):
-        if self.value < 1024:
-            return f"{self.value}"
-        elif self.value < 1024 * 1024:
-            return f"{self.value // 1024}Ki"
-        else:
-            return f"{self.value // (1024 * 1024)}Mi"
+        return units.format_bytes(self.value, ("", "Ki", "Mi"))
 
     def mutate(self):
         self.value = rng.randint(128 * 1024, 5 * 1024 * 1024)

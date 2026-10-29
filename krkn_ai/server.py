@@ -27,6 +27,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
 from krkn_ai.models.config import ConfigFile
@@ -139,14 +141,18 @@ class ArtifactStore:
         except ValueError as exc:
             raise OSError("artifact path escapes artifact root") from exc
 
-    @contextmanager
-    def uid_lock(self, uid: str) -> Iterator[None]:
+    def _open_lock_file(self, uid: str, *, streaming: bool = False) -> BinaryIO:
         safe_uid = _safe_uid(uid)
         lock_dir = self.root / ".run-locks"
         lock_dir.mkdir(parents=True, exist_ok=True)
         self._assert_within_root(lock_dir)
-        lock_name = f"{hashlib.sha256(safe_uid.encode()).hexdigest()}.lock"
-        with (lock_dir / lock_name).open("a+b") as lock_file:
+        lock_name = hashlib.sha256(safe_uid.encode()).hexdigest()
+        suffix = ".streams.lock" if streaming else ".lock"
+        return (lock_dir / (lock_name + suffix)).open("a+b")
+
+    @contextmanager
+    def uid_lock(self, uid: str) -> Iterator[None]:
+        with self._open_lock_file(uid) as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 yield
@@ -210,9 +216,16 @@ class ArtifactStore:
         safe_uid = _safe_uid(uid)
         with self.uid_lock(safe_uid):
             self._persist_tombstone(safe_uid)
-            self._remove_tree(self.run_dir(safe_uid))
-            self._remove_tree(self.projection_path(safe_uid).parent)
-            self._clear_upload_staging(safe_uid)
+            with self._open_lock_file(safe_uid, streaming=True) as lease:
+                try:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "artifact downloads are still active"
+                    ) from exc
+                self._remove_tree(self.run_dir(safe_uid))
+                self._remove_tree(self.projection_path(safe_uid).parent)
+                self._clear_upload_staging(safe_uid)
 
     def _clear_upload_staging(self, uid: str) -> None:
         staging_dir = self.root / ".upload-staging"
@@ -223,6 +236,19 @@ class ArtifactStore:
         for staged_file in staging_dir.iterdir():
             if staged_file.name.startswith(prefix):
                 staged_file.unlink()
+
+    def _open_artifact(self, uid: str, path: str) -> tuple[BinaryIO, int, BinaryIO]:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            manifest = self.manifest(uid)
+            lease = self._open_lock_file(uid, streaming=True)
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_SH)
+                source, size = self.open_verified(uid, path, manifest)
+            except BaseException:
+                lease.close()
+                raise
+        return source, size, lease
 
     def projection_path(self, uid: str) -> Path:
         return self.root / ".result-views" / _safe_uid(uid) / "projection.json"
@@ -256,6 +282,33 @@ class ArtifactStore:
             and not file.name.startswith(".upload-")
         )
 
+    def _begin_upload(self, uid: str) -> tuple[int, str]:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            staging_dir = self.root / ".upload-staging"
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            self._assert_within_root(staging_dir)
+            return tempfile.mkstemp(
+                prefix=f"{hashlib.sha256(uid.encode()).hexdigest()}-",
+                dir=staging_dir,
+            )
+
+    def _publish_upload(
+        self, uid: str, relative_path: PurePosixPath, temporary_name: str, size: int
+    ) -> None:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            run_dir = self.run_dir(uid)
+            destination = run_dir / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            existing_size = destination.stat().st_size if destination.is_file() else 0
+            if self._run_size(run_dir) - existing_size + size > self.max_run_bytes:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
+                )
+            os.replace(temporary_name, destination)
+
     async def upload(
         self, uid: str, path: str, stream: Any, expected_sha256: str
     ) -> int:
@@ -270,17 +323,9 @@ class ArtifactStore:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid SHA-256 checksum"
             )
-        run_dir = self.run_dir(safe_uid)
-        destination = run_dir / relative_path
-        staging_dir = self.root / ".upload-staging"
-        with self.uid_lock(safe_uid):
-            self.ensure_not_deleted(safe_uid)
-            staging_dir.mkdir(parents=True, exist_ok=True)
-            self._assert_within_root(staging_dir)
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f"{hashlib.sha256(safe_uid.encode()).hexdigest()}-",
-                dir=staging_dir,
-            )
+        descriptor, temporary_name = await run_in_threadpool(
+            self._begin_upload, safe_uid
+        )
         digest = hashlib.sha256()
         size = 0
         try:
@@ -300,20 +345,9 @@ class ArtifactStore:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT, "checksum mismatch"
                 )
-            with self.uid_lock(safe_uid):
-                self.ensure_not_deleted(safe_uid)
-                run_dir.mkdir(parents=True, exist_ok=True)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                existing_size = (
-                    destination.stat().st_size if destination.is_file() else 0
-                )
-                run_size = self._run_size(run_dir)
-                if run_size - existing_size + size > self.max_run_bytes:
-                    raise HTTPException(
-                        status.HTTP_413_CONTENT_TOO_LARGE,
-                        "artifact upload exceeds configured storage limit",
-                    )
-                os.replace(temporary_name, destination)
+            await run_in_threadpool(
+                self._publish_upload, safe_uid, relative_path, temporary_name, size
+            )
             return size
         finally:
             if os.path.exists(temporary_name):
@@ -509,6 +543,31 @@ class ArtifactStore:
         except Exception:
             source.close()
             raise
+
+
+class _ArtifactResponse(StreamingResponse):
+    def __init__(self, source: BinaryIO, size: int, lease: BinaryIO):
+        self._source = source
+        self._lease = lease
+
+        def stream():
+            while chunk := source.read(64 * 1024):
+                yield chunk
+
+        super().__init__(
+            stream(),
+            media_type="application/octet-stream",
+            headers={"Content-Length": str(size)},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                self._source.close()
+            finally:
+                self._lease.close()
 
 
 def create_app(
@@ -1090,24 +1149,8 @@ def create_app(
 
     @app.get("/v1/runs/{uid}/files/{path:path}", dependencies=[Depends(authenticate)])
     def artifact(uid: str, path: str) -> StreamingResponse:
-        safe_uid = _safe_uid(uid)
-        with store.uid_lock(safe_uid):
-            store.ensure_not_deleted(safe_uid)
-            manifest = store.manifest(safe_uid)
-            source, size = store.open_verified(safe_uid, path, manifest)
-
-        def stream():
-            try:
-                while chunk := source.read(64 * 1024):
-                    yield chunk
-            finally:
-                source.close()
-
-        return StreamingResponse(
-            stream(),
-            media_type="application/octet-stream",
-            headers={"Content-Length": str(size)},
-        )
+        source, size, lease = store._open_artifact(_safe_uid(uid), path)
+        return _ArtifactResponse(source, size, lease)
 
     return app
 

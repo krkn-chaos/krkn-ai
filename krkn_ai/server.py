@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import fcntl
 import hashlib
 import hmac
 import io
@@ -15,16 +16,19 @@ import shutil
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any, BinaryIO, Literal
+from typing import Annotated, Any, BinaryIO, Iterator, Literal
 from urllib.parse import quote
 
 import requests
 import yaml
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
 from krkn_ai.models.config import ConfigFile
@@ -131,6 +135,121 @@ class ArtifactStore:
         self._commit_lock = threading.Lock()
         self._projection_lock = threading.Lock()
 
+    def _assert_within_root(self, path: Path) -> None:
+        try:
+            path.resolve().relative_to(self.root.resolve())
+        except ValueError as exc:
+            raise OSError("artifact path escapes artifact root") from exc
+
+    def _open_lock_file(self, uid: str, *, streaming: bool = False) -> BinaryIO:
+        safe_uid = _safe_uid(uid)
+        lock_dir = self.root / ".run-locks"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        self._assert_within_root(lock_dir)
+        lock_name = hashlib.sha256(safe_uid.encode()).hexdigest()
+        suffix = ".streams.lock" if streaming else ".lock"
+        return (lock_dir / (lock_name + suffix)).open("a+b")
+
+    @contextmanager
+    def uid_lock(self, uid: str) -> Iterator[None]:
+        with self._open_lock_file(uid) as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def ensure_not_deleted(self, uid: str) -> None:
+        if self._tombstone_path(uid).exists():
+            raise HTTPException(status.HTTP_410_GONE, "run artifacts were deleted")
+
+    def _tombstone_path(self, uid: str) -> Path:
+        return self.root / ".deleted-runs" / _safe_uid(uid)
+
+    def _persist_tombstone(self, uid: str) -> None:
+        marker_dir = self.root / ".deleted-runs"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        self._assert_within_root(marker_dir)
+        marker = self._tombstone_path(uid)
+        if not marker.exists():
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=".delete-", dir=marker_dir
+            )
+            try:
+                with os.fdopen(descriptor, "w") as temporary:
+                    temporary.write(uid + "\n")
+                    temporary.flush()
+                    os.fsync(temporary.fileno())
+                os.replace(temporary_name, marker)
+            finally:
+                if os.path.exists(temporary_name):
+                    os.unlink(temporary_name)
+        if marker.is_symlink():
+            raise OSError("invalid run deletion marker")
+        with marker.open("rb") as persisted_marker:
+            os.fsync(persisted_marker.fileno())
+        directory_fd = os.open(marker_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        root_fd = os.open(self.root, os.O_RDONLY)
+        try:
+            os.fsync(root_fd)
+        finally:
+            os.close(root_fd)
+
+    def _remove_tree(self, path: Path) -> None:
+        self._assert_within_root(path.parent)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return
+        if path.is_symlink():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    def delete(self, uid: str) -> None:
+        safe_uid = _safe_uid(uid)
+        with self.uid_lock(safe_uid):
+            self._persist_tombstone(safe_uid)
+            with self._open_lock_file(safe_uid, streaming=True) as lease:
+                try:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT, "artifact downloads are still active"
+                    ) from exc
+                self._remove_tree(self.run_dir(safe_uid))
+                self._remove_tree(self.projection_path(safe_uid).parent)
+                self._clear_upload_staging(safe_uid)
+
+    def _clear_upload_staging(self, uid: str) -> None:
+        staging_dir = self.root / ".upload-staging"
+        if not staging_dir.exists():
+            return
+        self._assert_within_root(staging_dir)
+        prefix = f"{hashlib.sha256(uid.encode()).hexdigest()}-"
+        for staged_file in staging_dir.iterdir():
+            if staged_file.name.startswith(prefix):
+                staged_file.unlink()
+
+    def _open_artifact(self, uid: str, path: str) -> tuple[BinaryIO, int, BinaryIO]:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            manifest = self.manifest(uid)
+            lease = self._open_lock_file(uid, streaming=True)
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_SH)
+                source, size = self.open_verified(uid, path, manifest)
+            except BaseException:
+                lease.close()
+                raise
+        return source, size, lease
+
     def projection_path(self, uid: str) -> Path:
         return self.root / ".result-views" / _safe_uid(uid) / "projection.json"
 
@@ -163,9 +282,38 @@ class ArtifactStore:
             and not file.name.startswith(".upload-")
         )
 
+    def _begin_upload(self, uid: str) -> tuple[int, str]:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            staging_dir = self.root / ".upload-staging"
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            self._assert_within_root(staging_dir)
+            return tempfile.mkstemp(
+                prefix=f"{hashlib.sha256(uid.encode()).hexdigest()}-",
+                dir=staging_dir,
+            )
+
+    def _publish_upload(
+        self, uid: str, relative_path: PurePosixPath, temporary_name: str, size: int
+    ) -> None:
+        with self.uid_lock(uid):
+            self.ensure_not_deleted(uid)
+            run_dir = self.run_dir(uid)
+            destination = run_dir / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            existing_size = destination.stat().st_size if destination.is_file() else 0
+            if self._run_size(run_dir) - existing_size + size > self.max_run_bytes:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
+                )
+            os.replace(temporary_name, destination)
+
     async def upload(
         self, uid: str, path: str, stream: Any, expected_sha256: str
     ) -> int:
+        safe_uid = _safe_uid(uid)
+        self.ensure_not_deleted(safe_uid)
         relative_path = _safe_path(path)
         if (
             not expected_sha256
@@ -175,13 +323,8 @@ class ArtifactStore:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid SHA-256 checksum"
             )
-        run_dir = self.run_dir(uid)
-        destination = run_dir / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        existing_size = destination.stat().st_size if destination.is_file() else 0
-        run_size = self._run_size(run_dir)
-        descriptor, temporary_name = tempfile.mkstemp(
-            prefix=".upload-", dir=destination.parent
+        descriptor, temporary_name = await run_in_threadpool(
+            self._begin_upload, safe_uid
         )
         digest = hashlib.sha256()
         size = 0
@@ -189,10 +332,7 @@ class ArtifactStore:
             with os.fdopen(descriptor, "wb") as temporary:
                 async for chunk in stream:
                     size += len(chunk)
-                    if (
-                        size > self.max_artifact_bytes
-                        or run_size - existing_size + size > self.max_run_bytes
-                    ):
+                    if size > self.max_artifact_bytes:
                         raise HTTPException(
                             status.HTTP_413_CONTENT_TOO_LARGE,
                             "artifact upload exceeds configured storage limit",
@@ -205,13 +345,21 @@ class ArtifactStore:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT, "checksum mismatch"
                 )
-            os.replace(temporary_name, destination)
+            await run_in_threadpool(
+                self._publish_upload, safe_uid, relative_path, temporary_name, size
+            )
             return size
         finally:
             if os.path.exists(temporary_name):
                 os.unlink(temporary_name)
 
     def commit(self, uid: str, request: CommitRequest) -> dict[str, Any]:
+        safe_uid = _safe_uid(uid)
+        with self.uid_lock(safe_uid):
+            self.ensure_not_deleted(safe_uid)
+            return self._commit_locked(safe_uid, request)
+
+    def _commit_locked(self, uid: str, request: CommitRequest) -> dict[str, Any]:
         run_dir = self.run_dir(uid)
         files: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -273,6 +421,7 @@ class ArtifactStore:
         return manifest
 
     def manifest(self, uid: str) -> dict[str, Any]:
+        self.ensure_not_deleted(uid)
         try:
             value = json.loads(self._manifest_path(uid).read_text())
         except FileNotFoundError as exc:
@@ -312,6 +461,7 @@ class ArtifactStore:
         manifest: dict[str, Any],
         lookup: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[bytes, str]:
+        self.ensure_not_deleted(uid)
         relative_path = _safe_path(path)
         entry = (
             lookup.get(str(relative_path))
@@ -352,6 +502,7 @@ class ArtifactStore:
         manifest: dict[str, Any],
         lookup: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[BinaryIO, int]:
+        self.ensure_not_deleted(uid)
         relative_path = _safe_path(path)
         entry = (
             lookup.get(str(relative_path))
@@ -392,6 +543,31 @@ class ArtifactStore:
         except Exception:
             source.close()
             raise
+
+
+class _ArtifactResponse(StreamingResponse):
+    def __init__(self, source: BinaryIO, size: int, lease: BinaryIO):
+        self._source = source
+        self._lease = lease
+
+        def stream():
+            while chunk := source.read(64 * 1024):
+                yield chunk
+
+        super().__init__(
+            stream(),
+            media_type="application/octet-stream",
+            headers={"Content-Length": str(size)},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                self._source.close()
+            finally:
+                self._lease.close()
 
 
 def create_app(
@@ -619,6 +795,12 @@ def create_app(
         return projection, detail_record
 
     def typed_views(uid: str, detail_key: str | None = None):
+        safe_uid = _safe_uid(uid)
+        with store.uid_lock(safe_uid):
+            store.ensure_not_deleted(safe_uid)
+            return _typed_views_locked(safe_uid, detail_key)
+
+    def _typed_views_locked(uid: str, detail_key: str | None = None):
         try:
             manifest = store.manifest(uid)
         except HTTPException as exc:
@@ -863,6 +1045,7 @@ def create_app(
         dependencies=[Depends(authenticate)],
     )
     def scenario_index(uid: str, request: Request) -> dict[str, Any]:
+        store.ensure_not_deleted(uid)
         if request.query_params:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid query")
         manifest, projection, _detail = typed_views(uid)
@@ -877,6 +1060,7 @@ def create_app(
     def scenario_detail_route(
         uid: str, generation: str, scenario_id: str
     ) -> dict[str, Any]:
+        store.ensure_not_deleted(uid)
         try:
             generation_id = int(generation)
         except ValueError as exc:
@@ -924,6 +1108,15 @@ def create_app(
             if os.path.exists(temporary_name):
                 os.unlink(temporary_name)
 
+    @app.delete(
+        "/v1/runs/{uid}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(authenticate)],
+    )
+    def delete_run(uid: str) -> Response:
+        store.delete(uid)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     @app.put("/v1/runs/{uid}/files/{path:path}", dependencies=[Depends(authenticate)])
     async def upload(
         uid: str,
@@ -949,25 +1142,15 @@ def create_app(
 
     @app.get("/v1/runs/{uid}/results", dependencies=[Depends(authenticate)])
     def results(uid: str) -> dict[str, Any]:
-        return store.manifest(uid)
+        safe_uid = _safe_uid(uid)
+        with store.uid_lock(safe_uid):
+            store.ensure_not_deleted(safe_uid)
+            return store.manifest(safe_uid)
 
     @app.get("/v1/runs/{uid}/files/{path:path}", dependencies=[Depends(authenticate)])
     def artifact(uid: str, path: str) -> StreamingResponse:
-        manifest = store.manifest(uid)
-        source, size = store.open_verified(uid, path, manifest)
-
-        def stream():
-            try:
-                while chunk := source.read(64 * 1024):
-                    yield chunk
-            finally:
-                source.close()
-
-        return StreamingResponse(
-            stream(),
-            media_type="application/octet-stream",
-            headers={"Content-Length": str(size)},
-        )
+        source, size, lease = store._open_artifact(_safe_uid(uid), path)
+        return _ArtifactResponse(source, size, lease)
 
     return app
 
@@ -1090,15 +1273,23 @@ def upload_results() -> None:
     )
     headers = {"Authorization": f"Bearer {token}"}
     state = _load_state()
-    while not marker.exists():
+    try:
+        while not marker.exists():
+            files = _upload_files(output, uid, service_url, headers, state)
+            _commit_files(service_url, uid, headers, files, "in_progress")
+            for _ in range(interval):
+                if marker.exists():
+                    break
+                time.sleep(1)
         files = _upload_files(output, uid, service_url, headers, state)
-        _commit_files(service_url, uid, headers, files, "in_progress")
-        for _ in range(interval):
-            if marker.exists():
-                break
-            time.sleep(1)
-    files = _upload_files(output, uid, service_url, headers, state)
-    _commit_files(service_url, uid, headers, files, _final_status(marker))
+        _commit_files(service_url, uid, headers, files, _final_status(marker))
+    except requests.HTTPError as exc:
+        if (
+            exc.response is not None
+            and exc.response.status_code == status.HTTP_410_GONE
+        ):
+            return
+        raise
 
 
 def main() -> None:

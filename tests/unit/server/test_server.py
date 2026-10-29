@@ -1,8 +1,12 @@
+import asyncio
 import base64
 import datetime
 import hashlib
 import json
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -11,6 +15,7 @@ import yaml
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from requests import ConnectionError, HTTPError, Response
+from starlette.requests import ClientDisconnect
 
 import krkn_ai.server as server_module
 from krkn_ai.models.app import CommandRunResult, FitnessResult
@@ -18,6 +23,7 @@ from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.run_results import parse_run_artifacts
 from krkn_ai.server import (
+    ArtifactStore,
     _request_with_retry,
     _upload_files,
     create_app,
@@ -25,6 +31,31 @@ from krkn_ai.server import (
 )
 
 TOKEN_HEADERS = {"Authorization": "Bearer service-token"}
+
+
+def _track_delete_lock_attempt(monkeypatch, attempted: threading.Event, name: str):
+    original_flock = server_module.fcntl.flock
+    original_delete = ArtifactStore.delete
+
+    def tracked_flock(descriptor, operation):
+        if (
+            threading.current_thread().name == name
+            and operation & server_module.fcntl.LOCK_EX
+        ):
+            attempted.set()
+        return original_flock(descriptor, operation)
+
+    def tracked_delete(store, uid):
+        current_thread = threading.current_thread()
+        previous_name = current_thread.name
+        current_thread.name = name
+        try:
+            return original_delete(store, uid)
+        finally:
+            current_thread.name = previous_name
+
+    monkeypatch.setattr(server_module.fcntl, "flock", tracked_flock)
+    monkeypatch.setattr(ArtifactStore, "delete", tracked_delete)
 
 
 @pytest.mark.parametrize(
@@ -1347,3 +1378,514 @@ def test_cached_offspring_keep_distinct_artifacts_and_consistent_api_counts(
         assert response.status_code == 200
         assert response.json()["origin"] == "crossover"
         assert response.json()["fitnessState"] == "final"
+
+
+@pytest.mark.parametrize(
+    "uid",
+    ["run-delete", "missing-run"],
+)
+def test_delete_run_is_authenticated_idempotent_and_removes_both_trees(
+    tmp_path: Path, uid: str
+):
+    root = tmp_path
+    client = TestClient(create_app(root, "service-token"))
+    if uid == "run-delete":
+        run = root / "runs" / uid
+        run.mkdir(parents=True)
+        (run / ".uncommitted").write_text("uncommitted")
+        cache = root / ".result-views" / uid
+        (cache / "views" / ".view-old").mkdir(parents=True)
+        (cache / "projection.json").write_text("{}")
+        (cache / "views" / ".view-old" / "detail.json").write_text("{}")
+        other_run = root / "runs" / "other-run"
+        other_run.mkdir(parents=True)
+        (other_run / "keep.txt").write_text("keep")
+        other_cache = root / ".result-views" / "other-run"
+        other_cache.mkdir(parents=True)
+        (other_cache / "keep.json").write_text("{}")
+    assert client.delete(f"/v1/runs/{uid}").status_code == 401
+
+    first = client.delete(f"/v1/runs/{uid}", headers=TOKEN_HEADERS)
+    second = client.delete(f"/v1/runs/{uid}", headers=TOKEN_HEADERS)
+    assert first.status_code == second.status_code == 204
+    assert (root / ".deleted-runs" / uid).is_file()
+    if uid == "run-delete":
+        assert not (root / "runs" / uid).exists()
+        assert not (root / ".result-views" / uid).exists()
+        assert (root / "runs" / "other-run" / "keep.txt").read_text() == "keep"
+        assert (root / ".result-views" / "other-run" / "keep.json").is_file()
+
+
+def test_tombstone_survives_store_restart_and_fences_reads_and_writes(
+    tmp_path: Path,
+):
+    first_client = TestClient(create_app(tmp_path, "service-token"))
+    assert (
+        first_client.delete("/v1/runs/restarted", headers=TOKEN_HEADERS).status_code
+        == 204
+    )
+
+    client = TestClient(create_app(tmp_path, "service-token"))
+    for path in (
+        "/v1/runs/restarted/results",
+        "/v1/runs/restarted/summary",
+        "/v1/runs/restarted/scenarios",
+        "/v1/runs/restarted/files/result.txt",
+    ):
+        assert client.get(path, headers=TOKEN_HEADERS).status_code == 410
+    checksum = hashlib.sha256(b"late").hexdigest()
+    assert (
+        client.put(
+            "/v1/runs/restarted/files/result.txt",
+            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+            content=b"late",
+        ).status_code
+        == 410
+    )
+    assert (
+        client.post(
+            "/v1/runs/restarted/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": []},
+        ).status_code
+        == 410
+    )
+    assert not (tmp_path / "runs" / "restarted").exists()
+    assert not (tmp_path / ".result-views" / "restarted").exists()
+
+
+def test_delete_rejects_invalid_uid_and_does_not_follow_run_symlinks(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    assert client.delete("/v1/runs/%2E%2E", headers=TOKEN_HEADERS).status_code == 422
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir(exist_ok=True)
+    (outside / "keep.txt").write_text("keep")
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    (runs / "linked-run").symlink_to(outside, target_is_directory=True)
+
+    response = client.delete("/v1/runs/linked-run", headers=TOKEN_HEADERS)
+    assert response.status_code == 204
+    assert not (runs / "linked-run").exists()
+    assert (outside / "keep.txt").read_text() == "keep"
+    (outside / "keep.txt").unlink()
+    outside.rmdir()
+
+
+def test_delete_retry_finishes_after_partial_filesystem_failure(
+    tmp_path: Path, monkeypatch
+):
+    client = TestClient(
+        create_app(tmp_path, "service-token"), raise_server_exceptions=False
+    )
+    run = tmp_path / "runs" / "partial"
+    run.mkdir(parents=True)
+    (run / "artifact").write_text("data")
+    cache = tmp_path / ".result-views" / "partial"
+    cache.mkdir(parents=True)
+    (cache / "projection.json").write_text("{}")
+    real_rmtree = server_module.shutil.rmtree
+    failed = False
+
+    def fail_cache_once(path, *args, **kwargs):
+        nonlocal failed
+        if Path(path) == cache and not failed:
+            failed = True
+            raise OSError("simulated partial delete")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(server_module.shutil, "rmtree", fail_cache_once)
+    response = client.delete("/v1/runs/partial", headers=TOKEN_HEADERS)
+    assert response.status_code == 500
+    assert (tmp_path / ".deleted-runs" / "partial").is_file()
+    assert not run.exists()
+    assert cache.exists()
+
+    monkeypatch.setattr(server_module.shutil, "rmtree", real_rmtree)
+    assert client.delete("/v1/runs/partial", headers=TOKEN_HEADERS).status_code == 204
+    assert not cache.exists()
+
+
+def test_streaming_upload_started_before_delete_cannot_recreate_run(
+    tmp_path: Path,
+):
+    store = ArtifactStore(tmp_path)
+    payload = b"streamed before deletion"
+    checksum = hashlib.sha256(payload).hexdigest()
+    upload_started = threading.Event()
+    resume_upload = threading.Event()
+    delete_finished = threading.Event()
+    result = {}
+    errors = {}
+
+    async def body():
+        upload_started.set()
+        await asyncio.to_thread(resume_upload.wait)
+        yield payload
+
+    def upload():
+        try:
+            result["upload"] = asyncio.run(
+                store.upload("streamed", "nested/file", body(), checksum)
+            )
+        except Exception as error:
+            errors["upload"] = error
+
+    def delete():
+        try:
+            with TestClient(create_app(tmp_path, "service-token")) as client:
+                result["delete"] = client.delete(
+                    "/v1/runs/streamed", headers=TOKEN_HEADERS
+                )
+        except Exception as error:
+            errors["delete"] = error
+        finally:
+            delete_finished.set()
+
+    upload_thread = threading.Thread(target=upload, daemon=True)
+    delete_thread = threading.Thread(target=delete, daemon=True)
+    threads = []
+    try:
+        upload_thread.start()
+        threads.append(upload_thread)
+        assert upload_started.wait(5)
+        delete_thread.start()
+        threads.append(delete_thread)
+        assert delete_finished.wait(5)
+        assert result["delete"].status_code == 204
+        assert not list((tmp_path / ".upload-staging").iterdir())
+    finally:
+        resume_upload.set()
+        for thread in threads:
+            thread.join(5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert set(errors) == {"upload"}
+    assert isinstance(errors["upload"], HTTPException)
+    assert errors["upload"].status_code == 410
+    assert not (tmp_path / "runs" / "streamed").exists()
+
+
+def test_delete_waits_for_inflight_projection_before_removing_cache(
+    tmp_path: Path, monkeypatch
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    payload = b'{"completedGenerations":0}'
+    checksum = hashlib.sha256(payload).hexdigest()
+    assert (
+        client.put(
+            "/v1/runs/projected/files/progress.json",
+            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+            content=payload,
+        ).status_code
+        == 201
+    )
+    projection_started = threading.Event()
+    resume_projection = threading.Event()
+    delete_lock_attempted = threading.Event()
+    result = {}
+    errors = {}
+
+    def blocked_parser(files):
+        projection_started.set()
+        assert resume_projection.wait(5)
+        return SimpleNamespace(
+            progress={"completedGenerations": 0},
+            final_results=None,
+            scenarios={},
+            generation_finality={},
+        )
+
+    monkeypatch.setattr(server_module, "parse_run_artifacts", blocked_parser)
+    _track_delete_lock_attempt(monkeypatch, delete_lock_attempted, "projection-delete")
+
+    def commit():
+        try:
+            with TestClient(create_app(tmp_path, "service-token")) as commit_client:
+                result["commit"] = commit_client.post(
+                    "/v1/runs/projected/commit",
+                    headers=TOKEN_HEADERS,
+                    json={
+                        "status": "in_progress",
+                        "files": [
+                            {
+                                "path": "progress.json",
+                                "sha256": checksum,
+                                "size": len(payload),
+                            }
+                        ],
+                    },
+                )
+        except Exception as error:
+            errors["commit"] = error
+
+    def delete():
+        try:
+            with TestClient(create_app(tmp_path, "service-token")) as delete_client:
+                result["delete"] = delete_client.delete(
+                    "/v1/runs/projected", headers=TOKEN_HEADERS
+                )
+        except Exception as error:
+            errors["delete"] = error
+
+    commit_thread = threading.Thread(target=commit, daemon=True)
+    delete_thread = threading.Thread(
+        target=delete, daemon=True, name="projection-delete"
+    )
+    threads = []
+    try:
+        commit_thread.start()
+        threads.append(commit_thread)
+        assert projection_started.wait(5)
+        delete_thread.start()
+        threads.append(delete_thread)
+        assert delete_lock_attempted.wait(5)
+    finally:
+        resume_projection.set()
+        for thread in threads:
+            thread.join(5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors
+    assert result["commit"].status_code == 200
+    assert result["delete"].status_code == 204
+    assert not (tmp_path / "runs" / "projected").exists()
+    assert not (tmp_path / ".result-views" / "projected").exists()
+    assert (
+        client.get("/v1/runs/projected/summary", headers=TOKEN_HEADERS).status_code
+        == 410
+    )
+
+
+@pytest.mark.parametrize(("error_status", "should_raise"), [(410, False), (500, True)])
+def test_uploader_cancels_only_for_deleted_run(
+    tmp_path: Path, monkeypatch, error_status: int, should_raise: bool
+):
+    output = tmp_path / "output"
+    run_output = output / "upload-cancel"
+    run_output.mkdir(parents=True)
+    (run_output / "result.txt").write_text("result")
+    (run_output / ".krkn-ai-complete").write_text('{"exitCode":0}\n')
+    monkeypatch.setenv("KRKNAI_RUN_UID", "upload-cancel")
+    monkeypatch.setenv("KRKNAI_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("KRKNAI_SERVICE_URL", "http://service")
+    monkeypatch.setenv("KRKNAI_SERVICE_TOKEN", "token")
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(tmp_path / "state"))
+
+    response = Response()
+    response.status_code = error_status
+    attempted_methods = []
+
+    def reject_upload(method, *args, **kwargs):
+        attempted_methods.append(method)
+        raise HTTPError(response=response)
+
+    monkeypatch.setattr(server_module, "_request_with_retry", reject_upload)
+    if should_raise:
+        with pytest.raises(HTTPError):
+            upload_results()
+    else:
+        upload_results()
+    assert attempted_methods == ["PUT"], "uploader must stop before any commit"
+
+
+@pytest.mark.parametrize("completion", ["finish", "disconnect", "cancel_before_body"])
+def test_delete_waits_for_stream_descriptor_to_close(
+    tmp_path: Path, monkeypatch, completion: str
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    payload = b"read before deletion"
+    checksum = hashlib.sha256(payload).hexdigest()
+    assert (
+        client.put(
+            "/v1/runs/raw-read/files/result.txt",
+            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+            content=payload,
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/v1/runs/raw-read/commit",
+            headers=TOKEN_HEADERS,
+            json={
+                "status": "in_progress",
+                "files": [
+                    {"path": "result.txt", "sha256": checksum, "size": len(payload)}
+                ],
+            },
+        ).status_code
+        == 200
+    )
+    opened = []
+    original_open = ArtifactStore.open_verified
+
+    def record_open(store, *args, **kwargs):
+        source, size = original_open(store, *args, **kwargs)
+        opened.append(source)
+        return source, size
+
+    monkeypatch.setattr(ArtifactStore, "open_verified", record_open)
+    route = next(
+        route
+        for route in client.app.routes
+        if getattr(route, "path", None) == "/v1/runs/{uid}/files/{path:path}"
+        and "GET" in route.methods
+    )
+    response = route.endpoint("raw-read", "result.txt")
+
+    async def exercise():
+        paused = asyncio.Event()
+        resume = asyncio.Event()
+        chunks = []
+
+        async def send(message):
+            pause_at = (
+                "http.response.start"
+                if completion == "cancel_before_body"
+                else "http.response.body"
+            )
+            if message["type"] == pause_at:
+                paused.set()
+                await resume.wait()
+                if completion == "disconnect":
+                    raise OSError("client disconnected")
+            if message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        task = asyncio.create_task(
+            response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+        )
+        try:
+            await asyncio.wait_for(paused.wait(), 5)
+            deleting = await asyncio.to_thread(
+                client.delete, "/v1/runs/raw-read", headers=TOKEN_HEADERS
+            )
+            assert deleting.status_code == 409
+            assert not opened[-1].closed
+            assert (tmp_path / "runs" / "raw-read" / "result.txt").exists()
+            assert (tmp_path / ".result-views" / "raw-read").exists()
+            assert (
+                client.get(
+                    "/v1/runs/raw-read/files/result.txt", headers=TOKEN_HEADERS
+                ).status_code
+                == 410
+            )
+            assert (
+                client.put(
+                    "/v1/runs/raw-read/files/late.txt",
+                    headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+                    content=payload,
+                ).status_code
+                == 410
+            )
+            if completion == "cancel_before_body":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                resume.set()
+                if completion == "disconnect":
+                    with pytest.raises(ClientDisconnect):
+                        await task
+                else:
+                    await task
+                    assert b"".join(chunks) == payload
+        finally:
+            resume.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(exercise())
+    assert opened[-1].closed
+    assert client.delete("/v1/runs/raw-read", headers=TOKEN_HEADERS).status_code == 204
+    assert not (tmp_path / "runs" / "raw-read").exists()
+    assert not (tmp_path / ".result-views" / "raw-read").exists()
+
+
+@pytest.mark.parametrize("stage", ["begin", "publish"])
+def test_contended_upload_does_not_block_other_runs(
+    tmp_path: Path, monkeypatch, stage: str
+):
+    store = ArtifactStore(tmp_path)
+    holder = ArtifactStore(tmp_path)
+    attempted = threading.Event()
+    body_finished = threading.Event()
+    resume = threading.Event()
+    ready = threading.Event()
+    loop: asyncio.AbstractEventLoop | None = None
+    stopped: asyncio.Event | None = None
+    original_lock = store.uid_lock
+
+    @contextmanager
+    def observe_lock(uid):
+        if uid == "busy":
+            attempted.set()
+        with original_lock(uid):
+            yield
+
+    monkeypatch.setattr(store, "uid_lock", observe_lock)
+
+    async def content(pause=False):
+        yield b"x"
+        if pause:
+            body_finished.set()
+            await asyncio.to_thread(resume.wait)
+
+    def serve_loop():
+        async def serve():
+            nonlocal loop, stopped
+            loop = asyncio.get_running_loop()
+            stopped = asyncio.Event()
+            ready.set()
+            await stopped.wait()
+
+        asyncio.run(serve())
+
+    thread = threading.Thread(target=serve_loop, daemon=True)
+    futures = []
+    thread.start()
+    try:
+        assert ready.wait(5)
+        assert loop is not None
+        checksum = hashlib.sha256(b"x").hexdigest()
+        if stage == "publish":
+            busy = asyncio.run_coroutine_threadsafe(
+                store.upload("busy", "result.txt", content(True), checksum), loop
+            )
+            futures.append(busy)
+            assert body_finished.wait(5)
+        with holder.uid_lock("busy"):
+            attempted.clear()
+            if stage == "begin":
+                busy = asyncio.run_coroutine_threadsafe(
+                    store.upload("busy", "result.txt", content(), checksum), loop
+                )
+                futures.append(busy)
+            else:
+                resume.set()
+            assert attempted.wait(5)
+            other = asyncio.run_coroutine_threadsafe(
+                store.upload("other", "result.txt", content(), checksum), loop
+            )
+            futures.append(other)
+            assert other.result(timeout=5) == 1
+            assert (tmp_path / "runs" / "other" / "result.txt").read_bytes() == b"x"
+            assert not busy.done()
+    finally:
+        resume.set()
+        try:
+            for future in futures:
+                future.result(timeout=5)
+        finally:
+            if loop is not None and stopped is not None:
+                loop.call_soon_threadsafe(stopped.set)
+            thread.join(5)
+    assert not thread.is_alive()
+    assert (tmp_path / "runs" / "busy" / "result.txt").read_bytes() == b"x"

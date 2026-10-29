@@ -55,25 +55,30 @@ def run_shell(command, do_not_log=False, timeout=None):
     reader.start()
 
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.terminate()
         try:
-            # Wait for process to terminate gracefully
-            process.wait(timeout=5)
+            process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            # Forcefully terminate
-            process.kill()
-            process.wait()
+            process.terminate()
+            try:
+                # Wait for process to terminate gracefully
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # Forcefully terminate
+                process.kill()
+                process.wait()
+            reader.join(timeout=5)
+            raise ShellCommandTimeoutError(
+                f"Command '{command[0]}' timed out after {timeout} seconds"
+            )
+
         reader.join(timeout=5)
-        raise ShellCommandTimeoutError(
-            f"Command '{command[0]}' timed out after {timeout} seconds"
-        )
-
-    reader.join(timeout=5)
-
-    if process.stdout:
-        process.stdout.close()
+    finally:
+        # Close the pipe on every exit path, including timeout, so a long run
+        # with many timed-out commands does not leak file descriptors. Skip it
+        # while the reader is still blocked on a grandchild that kept the pipe
+        # open: close() would wait for that read and stall past the timeout.
+        if process.stdout and not reader.is_alive():
+            process.stdout.close()
 
     logs = "".join(output_lines)
 

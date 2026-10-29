@@ -44,18 +44,19 @@ class TimeScenario(Scenario):
         ]
 
     def mutate(self):
-        # Pre-check if data is available for scenario
-        namespace = rng.choice(
-            [
-                namespace
-                for namespace in self._cluster_components.namespaces
-                if len(namespace.pods) > 0
-            ]
-        )
+        # Pre-check if data is available for scenario. Without any pods the
+        # scenario can still target nodes, so only pick a namespace if one has pods.
+        namespaces_with_pods = [
+            namespace
+            for namespace in self._cluster_components.namespaces
+            if len(namespace.pods) > 0
+        ]
         all_pod_labels = set()
-        for p in namespace.pods:
-            for label, value in p.labels.items():
-                all_pod_labels.add(f"{label}={value}")
+        if namespaces_with_pods:
+            namespace = rng.choice(namespaces_with_pods)
+            for p in namespace.pods:
+                for label, value in p.labels.items():
+                    all_pod_labels.add(f"{label}={value}")
 
         all_node_labels = set()
         for n in self._cluster_components.nodes:

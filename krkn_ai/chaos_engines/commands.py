@@ -1,14 +1,16 @@
+import shlex
+
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.scenario.base import Scenario
 
 PODMAN_TEMPLATE = 'podman run -e PUBLISH_KRAKEN_STATUS="False" -e TELEMETRY_PROMETHEUS_BACKUP="False" -e WAIT_DURATION={wait_duration} {env_list} {{es_env_list}} --net=host -v {kubeconfig}:/home/krkn/.kube/config:Z {image}'
 
-PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER="{server}" -e ES_PORT="{port}" -e ES_USERNAME="{username}" -e ES_PASSWORD="{password}" -e ES_VERIFY_CERTS="{verify_certs}" '
+PODMAN_ES_TEMPLATE = ' -e ENABLE_ES="True" -e ES_SERVER={server} -e ES_PORT={port} -e ES_USERNAME={username} -e ES_PASSWORD={password} -e ES_VERIFY_CERTS={verify_certs} '
 
 KRKNCTL_TEMPLATE = "krknctl run {name} --telemetry-prometheus-backup False --wait-duration {wait_duration} --kubeconfig {kubeconfig} {env_list} {{es_env_list}}"
 
-KRKNCTL_ES_TEMPLATE = ' --enable-es True --es-server "{server}" --es-port "{port}" --es-username "{username}" --es-password "{password}" --es-verify-certs "{verify_certs}" '
+KRKNCTL_ES_TEMPLATE = " --enable-es True --es-server {server} --es-port {port} --es-username {username} --es-password {password} --es-verify-certs {verify_certs} "
 
 
 def build_scenario_command(
@@ -48,22 +50,23 @@ def inject_es_config(
     if not enable or config.elastic is None or config.elastic.enable is False:
         return command.replace("{es_env_list}", "")
 
+    # run_shell() splits the command with shlex, so quote each value for it;
+    # raw quotes or a trailing backslash in a password would break the split.
+    es_values = {
+        key: shlex.quote(str(value))
+        for key, value in {
+            "server": config.elastic.server,
+            "port": config.elastic.port,
+            "username": config.elastic.username,
+            "password": config.elastic.password,
+            "verify_certs": config.elastic.verify_certs,
+        }.items()
+    }
+
     es_env_list = ""
     if runner_type == KrknRunnerType.HUB_RUNNER:
-        es_env_list = PODMAN_ES_TEMPLATE.format(
-            server=config.elastic.server,
-            port=config.elastic.port,
-            username=config.elastic.username,
-            password=config.elastic.password,
-            verify_certs=config.elastic.verify_certs,
-        )
+        es_env_list = PODMAN_ES_TEMPLATE.format(**es_values)
     elif runner_type == KrknRunnerType.CLI_RUNNER:
-        es_env_list = KRKNCTL_ES_TEMPLATE.format(
-            server=config.elastic.server,
-            port=config.elastic.port,
-            username=config.elastic.username,
-            password=config.elastic.password,
-            verify_certs=config.elastic.verify_certs,
-        )
+        es_env_list = KRKNCTL_ES_TEMPLATE.format(**es_values)
 
     return command.replace("{es_env_list}", es_env_list)

@@ -197,12 +197,35 @@ class HealthCheckApplicationConfig(BaseModel):
     interval: int = 2  # in seconds
     headers: Optional[Dict[str, str]] = None
 
+    @field_validator("name", mode="after")
+    @classmethod
+    def validate_non_empty_name(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Health check application name must not be empty.")
+        return value
+
 
 class HealthCheckConfig(BaseModel):
     stop_watcher_on_failure: bool = False
     stop_timeout: float = Field(default=5.0, ge=0)  # in seconds
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
+
+    @model_validator(mode="after")
+    def validate_unique_application_names(self) -> "HealthCheckConfig":
+        seen = set()
+        duplicates = []
+        for app in self.applications:
+            if app.name in seen and app.name not in duplicates:
+                duplicates.append(app.name)
+            seen.add(app.name)
+        if duplicates:
+            dup_list = ", ".join(f"'{name}'" for name in duplicates)
+            raise ValueError(
+                f"Health check application names must be unique; "
+                f"duplicate name(s): {dup_list}"
+            )
+        return self
 
 
 class OutputConfig(BaseModel):

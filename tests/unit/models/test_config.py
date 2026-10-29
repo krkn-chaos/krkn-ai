@@ -223,6 +223,28 @@ class TestHealthCheckConfig:
         )
         assert app_no_headers.headers is None
 
+    @pytest.mark.parametrize("bad_name", ["", "   "])
+    def test_health_check_application_rejects_empty_name(self, bad_name):
+        """Health check application name must be non-empty"""
+        with pytest.raises(ValidationError, match="must not be empty"):
+            HealthCheckApplicationConfig(
+                name=bad_name, url="http://localhost:8080/health"
+            )
+
+    def test_health_check_config_rejects_duplicate_application_names(self):
+        """HealthCheckConfig rejects duplicate application names"""
+        with pytest.raises(ValidationError, match="must be unique"):
+            HealthCheckConfig(
+                applications=[
+                    HealthCheckApplicationConfig(
+                        name="api", url="http://localhost:8080/health"
+                    ),
+                    HealthCheckApplicationConfig(
+                        name="api", url="http://localhost:8081/health"
+                    ),
+                ]
+            )
+
 
 class TestOutputConfig:
     """Test OutputConfig model"""

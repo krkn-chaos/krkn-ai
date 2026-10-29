@@ -41,5 +41,5 @@ def generate_mock_health_check_results(
                     error=None if success else "mock: service unavailable",
                 )
             )
-        results[str(app.url)] = samples
+        results[app.name] = samples
     return results

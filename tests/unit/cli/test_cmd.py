@@ -12,7 +12,9 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from krkn_ai.cli.cmd import main
-from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
+from krkn_ai.models.custom_errors import (
+    FitnessFunctionCalculationError,
+)
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile
 
@@ -825,3 +827,250 @@ class TestDiscoverCommand:
             assert result.exit_code != 0
         finally:
             os.unlink(kubeconfig_path)
+
+
+class TestRunDryRun:
+    """Test the --dry-run flag of the run command"""
+
+    def _write_config(self, tmp_path, config_dict=None, text=None):
+        config_path = tmp_path / "krkn-ai.yaml"
+        if text is not None:
+            config_path.write_text(text)
+        else:
+            config_path.write_text(yaml.safe_dump(config_dict))
+        return str(config_path)
+
+    def _valid_config_dict(self):
+        return {
+            "kubeconfig_file_path": "/tmp/does-not-exist",
+            "generations": 2,
+            "population_size": 4,
+            "baseline": {"enable": True, "duration": 5},
+            "fitness_function": {"query": "up"},
+            "health_checks": {
+                "applications": [{"name": "web", "url": "http://$HOST/health"}]
+            },
+            "cluster_components": {
+                "namespaces": [
+                    {
+                        "name": "demo",
+                        "pods": [
+                            {
+                                "name": "web-1",
+                                "labels": {"app": "web"},
+                                "containers": [{"name": "web"}],
+                            }
+                        ],
+                    }
+                ],
+                "nodes": [],
+            },
+            "scenario": {"pod_scenarios": {"enable": True}},
+        }
+
+    def test_dry_run_simulates_whole_run_offline(self, tmp_path):
+        """A dry run completes without a cluster, Prometheus or krknctl and leaves --output untouched"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+        output_dir = tmp_path / "results"
+
+        with (
+            patch.dict(os.environ, {}, clear=False),  # undo the mock switches
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"
+            ) as mock_prom,
+            patch("krkn_ai.chaos_engines.krkn_runner.run_shell") as mock_shell,
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main,
+                [
+                    "run",
+                    "--dry-run",
+                    "-c",
+                    config_path,
+                    "-o",
+                    str(output_dir),
+                    "-p",
+                    "HOST=example.com",
+                    "-s",
+                    "1",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_prom.assert_not_called()
+        mock_shell.assert_not_called()
+        assert not output_dir.exists()
+        summary = [
+            call.args[0] % call.args[1:]
+            for call in mock_logger.info.call_args_list
+            if "Dry run complete" in call.args[0]
+        ]
+        assert len(summary) == 1, mock_logger.info.call_args_list
+        assert "Scenarios: pod_scenarios" in summary[0]
+        assert "Simulated 2 generation(s) with population size 4" in summary[0]
+
+    def test_normal_run_leaves_mock_switches_off(self, tmp_path, minimal_config):
+        """Without --dry-run the run must not flip the MOCK environment"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config),
+            patch("krkn_ai.cli.cmd.GeneticAlgorithm"),
+        ):
+            os.environ.pop("MOCK", None)
+            os.environ.pop("KRKN_AI_DRY_RUN", None)
+            result = runner.invoke(
+                main, ["run", "-c", config_path, "-o", str(tmp_path / "out")]
+            )
+            assert result.exit_code == 0, result.output
+            assert "MOCK" not in os.environ
+            assert "KRKN_AI_DRY_RUN" not in os.environ
+
+    def test_dry_run_reports_each_schema_error_by_field(self, tmp_path):
+        """Schema errors are listed per field instead of as a pydantic dump"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        del config["fitness_function"]
+        config["wait_duration"] = -1
+        config_path = self._write_config(tmp_path, config)
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["run", "--dry-run", "-c", config_path, "-o", str(tmp_path)]
+            )
+
+        assert result.exit_code == 1
+        mock_logger.error.assert_called_once()
+        error_call = mock_logger.error.call_args
+        message = error_call.args[0] % error_call.args[1:]
+        assert "2 validation error(s)" in message
+        assert "wait_duration:" in message
+        assert "fitness_function:" in message
+
+    def test_dry_run_rejects_malformed_yaml(self, tmp_path):
+        """Broken YAML is reported as such rather than as a traceback"""
+        runner = CliRunner()
+        config_path = self._write_config(
+            tmp_path, text="kubeconfig_file_path: [unclosed\n"
+        )
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["run", "--dry-run", "-c", config_path, "-o", str(tmp_path)]
+            )
+
+        assert result.exit_code == 1
+        mock_logger.error.assert_called_once()
+        assert "not valid YAML" in str(mock_logger.error.call_args)
+
+    def test_dry_run_fails_when_no_scenario_is_enabled(self, tmp_path):
+        """A schema-valid config with every scenario disabled fails the dry run"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["scenario"] = {"pod_scenarios": {"enable": False}}
+        config_path = self._write_config(tmp_path, config)
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main, ["run", "--dry-run", "-c", config_path, "-o", str(tmp_path)]
+            )
+
+        assert result.exit_code == 1
+        mock_logger.error.assert_called_once()
+        assert "No scenarios found" in str(mock_logger.error.call_args)
+
+    def test_dry_run_disables_duration_elastic_and_dashboard(self, tmp_path):
+        """Wall-clock limits, Elasticsearch and the dashboard are switched off"""
+        runner = CliRunner()
+        config = self._valid_config_dict()
+        config["generations"] = None
+        config["duration"] = 3600
+        config["elastic"] = {"enable": True, "server": "http://elastic.local"}
+        config_path = self._write_config(tmp_path, config)
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("krkn_ai.cli.cmd.GeneticAlgorithm") as mock_ga_class,
+            patch("krkn_ai.cli.cmd.DashboardManager") as mock_dashboard,
+        ):
+            mock_ga = Mock(
+                valid_scenarios=[("pod_scenarios", Mock)],
+                completed_generations=20,
+                seen_population={},
+            )
+            mock_ga_class.return_value = mock_ga
+            result = runner.invoke(
+                main,
+                [
+                    "run",
+                    "--dry-run",
+                    "--monitoring",
+                    "-c",
+                    config_path,
+                    "-o",
+                    str(tmp_path),
+                    "-p",
+                    "HOST=example.com",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        engine_config = mock_ga_class.call_args.kwargs["config"]
+        assert engine_config.genetic.duration is None
+        assert engine_config.genetic.generations == 20
+        assert engine_config.elastic is None
+        mock_dashboard.assert_not_called()
+        mock_ga.simulate.assert_called_once()
+
+    def test_missing_kubeconfig_override_is_reported(self, tmp_path, minimal_config):
+        """A -k path that does not exist is logged instead of silently ignored"""
+        runner = CliRunner()
+        config_path = self._write_config(tmp_path, self._valid_config_dict())
+
+        with (
+            patch(
+                "krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config
+            ) as mock_read,
+            patch("krkn_ai.cli.cmd.GeneticAlgorithm"),
+            patch("krkn_ai.cli.cmd.get_logger") as mock_get_logger,
+        ):
+            mock_logger = Mock()
+            mock_get_logger.return_value = mock_logger
+            result = runner.invoke(
+                main,
+                [
+                    "run",
+                    "-c",
+                    config_path,
+                    "-o",
+                    str(tmp_path),
+                    "-k",
+                    "/nonexistent/kubeconfig",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        mock_read.assert_called_once_with(config_path, (), "/nonexistent/kubeconfig")
+        warnings = [str(call) for call in mock_logger.warning.call_args_list]
+        assert any("/nonexistent/kubeconfig" in entry for entry in warnings), warnings

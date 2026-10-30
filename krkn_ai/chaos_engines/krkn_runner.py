@@ -21,6 +21,7 @@ from krkn_ai.models.scenario.base import (
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.mock import (
     MockType,
+    is_dry_run,
     is_mock_enabled,
     generate_mock_health_check_results,
 )
@@ -129,7 +130,10 @@ class KrknRunner:
         )
 
         if is_mock_enabled(MockType.RUN):
-            time.sleep(rng.randint(1, 3))
+            if not is_dry_run():
+                # Stand in for a scenario's wall-clock time; a dry run only
+                # checks the pipeline, so it skips the delay.
+                time.sleep(rng.randint(1, 3))
             log, returncode = "", 0
         else:
             assert self.runner_type is not None

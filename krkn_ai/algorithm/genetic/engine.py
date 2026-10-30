@@ -23,6 +23,7 @@ from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.mock import is_dry_run
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
@@ -142,7 +143,16 @@ class GeneticAlgorithm(BaseEngine):
                 reverse=True,
             )
             self.best_of_generation.append(fitness_scores[0])
-            print_generation_table(cur_generation, fitness_scores)
+            if is_dry_run():
+                # Mock fitness values are random, so a table of them would
+                # only mislead; report that the generation went through.
+                logger.info(
+                    "Generation %d simulated with %d scenarios (dry run)",
+                    cur_generation + 1,
+                    len(fitness_scores),
+                )
+            else:
+                print_generation_table(cur_generation, fitness_scores)
 
             self.adapt_mutation_rate()
 
@@ -204,11 +214,12 @@ class GeneticAlgorithm(BaseEngine):
             self.end_time = datetime.datetime.now(datetime.timezone.utc)
             logger.info("Stopping algorithm: %s", reason)
             self.completed_generations = cur_generation
-            print_run_summary(
-                self.best_of_generation,
-                cur_generation,
-                elapsed_time,
-            )
+            if not is_dry_run():
+                print_run_summary(
+                    self.best_of_generation,
+                    cur_generation,
+                    elapsed_time,
+                )
             return True
         return False
 

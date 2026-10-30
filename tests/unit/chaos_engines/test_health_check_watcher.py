@@ -472,6 +472,35 @@ class TestHealthCheckWatcherResults:
 
         assert score_consecutive > score_scattered
 
+    def test_summarize_success_rate_streak_does_not_span_urls(self):
+        """A streak ending one URL's results must not join the next URL's."""
+        watcher = HealthCheckWatcher(HealthCheckConfig(applications=[]))
+
+        def checks(pattern):
+            return [
+                HealthCheckResult(
+                    name="app",
+                    status_code=200 if ok else 500,
+                    success=ok,
+                    response_time=0.1,
+                )
+                for ok in pattern
+            ]
+
+        # Each URL has 3 consecutive failures out of 10 checks.
+        fails_at_end = checks([True] * 7 + [False] * 3)
+        fails_at_start = checks([False] * 3 + [True] * 7)
+        fails_in_middle = checks([True] * 4 + [False] * 3 + [True] * 3)
+
+        # failure_rate = 6/20, longest single-URL streak = 3/20
+        expected = (6 / 20 + 3 / 20) / 2
+        for results in (
+            {"http://a": fails_at_end, "http://b": fails_at_start},
+            {"http://b": fails_at_start, "http://a": fails_at_end},
+            {"http://a": fails_at_end, "http://c": fails_in_middle},
+        ):
+            assert watcher.summarize_success_rate(results) == expected
+
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_handles_request_exceptions_gracefully(self, mock_get):
         """Test health check handles request exceptions gracefully"""

@@ -143,6 +143,17 @@ def describe_query(query: str):
     return None, None
 
 
+def _count_affected_pods(key: str, text: str) -> int:
+    """Number of pods across every non-empty `"<key>": [...]` array in a log."""
+    count = 0
+    for inner in re.findall(r'"' + key + r'"\s*:\s*\[([^\]]+)\]', text):
+        try:
+            count += len(json.loads(f"[{inner}]"))
+        except json.JSONDecodeError:
+            count += max(inner.count('"pod_name"'), 1)
+    return count
+
+
 def _config_block(text: str, key: str) -> List[str]:
     """Lines under a top-level config key, comments included."""
     block: List[str] = []
@@ -581,9 +592,8 @@ def load_logs(output_dir: str):
         exit_status = scen_field("exit_status")
 
         # Count affected pods from raw log
-        rec_count = len(re.findall(r'"recovered"\s*:\s*\[([^\]]+)\]', clean_raw))
-        unrec_count = len(re.findall(r'"unrecovered"\s*:\s*\[([^\]]+)\]', clean_raw))
-        # If arrays are empty lists, counts above may be 0
+        rec_count = _count_affected_pods("recovered", clean_raw)
+        unrec_count = _count_affected_pods("unrecovered", clean_raw)
 
         # Extract scen_params from the nested "parameters" > "scenarios" block
         params_m = re.search(

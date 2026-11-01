@@ -194,7 +194,7 @@ container-scenarios ran for 3m12s
 
 
 def test_load_logs_counts_affected_pods_not_arrays():
-    """Recovered/unrecovered counts are pods, summed across scenarios"""
+    """Recovered/unrecovered counts are pods, summed across scenarios, VMIs excluded"""
 
     def pod(name, recovery_time=None):
         return {
@@ -205,21 +205,33 @@ def test_load_logs_counts_affected_pods_not_arrays():
             "pod_rescheduling_time": None,
         }
 
+    def vmi(name):
+        return {"vmi_name": name, "namespace": "shop", "total_recovery_time": None}
+
     telemetry = {
         "scenarios": [
             {
                 "scenario_type": "pod_disruption_scenarios",
                 "affected_pods": {
-                    "recovered": [pod("cart-a", 4.2), pod("cart-b", 3.9)],
-                    "unrecovered": [pod("web-a")],
+                    "recovered": [
+                        pod("cart-a", 4.2),
+                        pod("cart-b", 3.9),
+                        pod("cart-c", 4.0),
+                    ],
+                    "unrecovered": [pod("web-a"), pod("web-b")],
+                },
+                "affected_vmis": {
+                    "recovered": [vmi("vm-a"), vmi("vm-b")],
+                    "unrecovered": [],
                 },
             },
             {
                 "scenario_type": "pod_disruption_scenarios",
                 "affected_pods": {
-                    "recovered": [pod("cart-c", 5.0)],
+                    "recovered": [pod("cart-d", 5.0)],
                     "unrecovered": [],
                 },
+                "affected_vmis": {"recovered": [], "unrecovered": []},
             },
         ]
     }
@@ -232,8 +244,8 @@ def test_load_logs_counts_affected_pods_not_arrays():
     ):
         log = load_logs("/tmp")[0]
 
-    assert log["affected_recovered"] == 3
-    assert log["affected_unrecovered"] == 1
+    assert log["affected_recovered"] == 4
+    assert log["affected_unrecovered"] == 2
 
 
 def test_load_logs_exception():

@@ -144,13 +144,24 @@ def describe_query(query: str):
 
 
 def _count_affected_pods(key: str, text: str) -> int:
-    """Number of pods across every non-empty `"<key>": [...]` array in a log."""
+    """Number of pods across every non-empty `"<key>": [...]` array in a log.
+
+    Telemetry has these arrays under both affected_pods and affected_vmis;
+    VMI entries (vmi_name) are skipped.
+    """
     count = 0
     for inner in re.findall(r'"' + key + r'"\s*:\s*\[([^\]]+)\]', text):
         try:
-            count += len(json.loads(f"[{inner}]"))
+            entries = json.loads(f"[{inner}]")
         except json.JSONDecodeError:
-            count += max(inner.count('"pod_name"'), 1)
+            if '"vmi_name"' not in inner:
+                count += max(inner.count('"pod_name"'), 1)
+            continue
+        count += sum(
+            1
+            for entry in entries
+            if not (isinstance(entry, dict) and "vmi_name" in entry)
+        )
     return count
 
 

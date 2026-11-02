@@ -51,39 +51,58 @@ def read_config_from_file(
     if kubeconfig is not None and kubeconfig != "" and os.path.exists(kubeconfig):
         config["kubeconfig_file_path"] = kubeconfig
 
-    # param refers to Key-value passed with -p flag during krkn-ai test run
-    if param:
-        params = {}
-        existing = config.get("parameters")
-        if isinstance(existing, dict):
-            for k, v in existing.items():
-                params[str(k)] = ParameterValue.from_cli(str(k), str(v))
-
-        for p in param:
+    # param refers to Key-value passed with -p flag during krkn-ai test run.
+    # Parameters from the config file apply even when no -p is passed.
+    existing = config.get("parameters")
+    if param or (isinstance(existing, dict) and existing):
+        # Apply CLI values before validation, preserving file privacy metadata.
+        values = (
+            {str(k): v for k, v in existing.items()}
+            if isinstance(existing, dict)
+            else {}
+        )
+        for p in param or ():
             if "=" in p:
                 key, value = p.split("=", 1)
             else:
                 key, value = p, ""
-            params[str(key)] = ParameterValue.from_cli(str(key), str(value))
+            previous = values.get(key)
+            values[key] = (
+                {**previous, "value": value} if isinstance(previous, dict) else value
+            )
+
+        params = {}
+        for k, v in values.items():
+            if v is None:
+                raise ValueError(f"Parameter '{k}' in the config file has no value")
+            if isinstance(v, dict):
+                pv = ParameterValue.model_validate(v)
+                # __ keys are private, as they are for -p
+                pv.is_private = pv.is_private or k.startswith("__")
+                params[k] = pv
+            else:
+                params[k] = ParameterValue.from_cli(k, str(v))
 
         raw = {k: v.value for k, v in params.items()}
 
         # Replace parameter in health check url string
-        for app in config.get("health_checks", {}).get("applications", []):
-            if "url" in app:
+        # Leave malformed sections untouched so pydantic reports them by field.
+        health_checks = config.get("health_checks")
+        applications = (
+            health_checks.get("applications")
+            if isinstance(health_checks, dict)
+            else None
+        )
+        for app in applications if isinstance(applications, list) else []:
+            if isinstance(app, dict) and "url" in app:
                 app["url"] = preprocess_param_string(app["url"], raw)
 
         # Replace parameters in elastic configuration without forcing optional keys.
+        # Boolean fields are left to pydantic, so an invalid value fails validation.
         if isinstance(config.get("elastic"), dict):
-            bool_fields = {"enable", "verify_certs"}
             for key, value in config["elastic"].items():
                 if isinstance(value, str):
-                    value = preprocess_param_string(value, raw)
-                config["elastic"][key] = (
-                    is_truthy(value)
-                    if key in bool_fields and value is not None
-                    else value
-                )
+                    config["elastic"][key] = preprocess_param_string(value, raw)
 
         config["parameters"] = params
 

@@ -55,25 +55,33 @@ def read_config_from_file(
     # Parameters from the config file apply even when no -p is passed.
     existing = config.get("parameters")
     if param or (isinstance(existing, dict) and existing):
-        params = {}
-        if isinstance(existing, dict):
-            for k, v in existing.items():
-                if v is None:
-                    raise ValueError(f"Parameter '{k}' in the config file has no value")
-                if isinstance(v, dict):
-                    pv = ParameterValue.model_validate(v)
-                    # __ keys are private, as they are for -p
-                    pv.is_private = pv.is_private or str(k).startswith("__")
-                    params[str(k)] = pv
-                else:
-                    params[str(k)] = ParameterValue.from_cli(str(k), str(v))
-
+        # Apply CLI values before validation, preserving file privacy metadata.
+        values = (
+            {str(k): v for k, v in existing.items()}
+            if isinstance(existing, dict)
+            else {}
+        )
         for p in param or ():
             if "=" in p:
                 key, value = p.split("=", 1)
             else:
                 key, value = p, ""
-            params[str(key)] = ParameterValue.from_cli(str(key), str(value))
+            previous = values.get(key)
+            values[key] = (
+                {**previous, "value": value} if isinstance(previous, dict) else value
+            )
+
+        params = {}
+        for k, v in values.items():
+            if v is None:
+                raise ValueError(f"Parameter '{k}' in the config file has no value")
+            if isinstance(v, dict):
+                pv = ParameterValue.model_validate(v)
+                # __ keys are private, as they are for -p
+                pv.is_private = pv.is_private or k.startswith("__")
+                params[k] = pv
+            else:
+                params[k] = ParameterValue.from_cli(k, str(v))
 
         raw = {k: v.value for k, v in params.items()}
 

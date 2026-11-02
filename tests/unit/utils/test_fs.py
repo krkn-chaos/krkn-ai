@@ -317,13 +317,62 @@ class TestReadConfigFromFileHeaders:
         assert result.parameters["__TOKEN"].is_private is True
         assert result.model_dump(mode="json")["parameters"]["__TOKEN"] == "***"
 
-    def test_config_file_parameter_without_value_is_rejected(self, tmp_path):
+    @pytest.mark.parametrize("cli", [None, ["OTHER=1"]], ids=["no_cli", "cli"])
+    def test_config_file_parameter_without_value_is_rejected(self, tmp_path, cli):
         """A parameter left blank in the config file fails with its name, not as 'None'."""
         config_file = str(tmp_path / "config.yaml")
         self._write_param_config(config_file, {"HOST": None})
 
         with pytest.raises(ValueError, match="HOST"):
-            read_config_from_file(config_file)
+            read_config_from_file(config_file, param=cli)
+
+    @pytest.mark.parametrize(
+        "default",
+        [None, {"value": None}, {"is_private": False}],
+        ids=["null", "structured_null", "structured_missing_value"],
+    )
+    def test_cli_parameter_overrides_invalid_file_value(self, tmp_path, default):
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(config_file, {"HOST": default})
+
+        result = read_config_from_file(config_file, param=["HOST=example.com"])
+
+        assert result.parameters["HOST"].value == "example.com"
+        assert (
+            str(result.health_checks.applications[0].url) == "http://example.com/health"
+        )
+
+    @pytest.mark.parametrize(
+        "key, is_private, expected_private",
+        [
+            ("TOKEN", True, True),
+            ("TOKEN", False, False),
+            ("TOKEN", "false", False),
+            ("__TOKEN", False, True),
+        ],
+        ids=["private", "public", "string_false", "private_prefix"],
+    )
+    def test_cli_parameter_override_retains_file_privacy(
+        self, tmp_path, key, is_private, expected_private
+    ):
+        config_file = str(tmp_path / "config.yaml")
+        self._write_param_config(
+            config_file,
+            {
+                "HOST": "example.com",
+                key: {"value": "old-secret", "is_private": is_private},
+            },
+        )
+
+        result = read_config_from_file(
+            config_file, param=[f"{key}=intermediate", f"{key}=new-secret"]
+        )
+
+        assert result.parameters[key].value == "new-secret"
+        assert result.parameters[key].is_private is expected_private
+        assert result.model_dump(mode="json")["parameters"][key] == (
+            "***" if expected_private else "new-secret"
+        )
 
     def test_invalid_elastic_verify_certs_with_file_parameters(self, tmp_path):
         """An unrecognised verify_certs value is rejected, not turned into False."""

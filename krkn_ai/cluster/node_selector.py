@@ -80,7 +80,11 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
         count = rng.randint(1, len(all_matching_nodes))
         selected_nodes = rng.sample(all_matching_nodes, k=count)
 
-        taints_json = _collect_taints_from_nodes(selected_nodes)
+        # krkn only receives the selector and the count, and picks its own
+        # `count` nodes from every node matching the selector. Tolerate the
+        # taints of all of them, or a hog pod can land on a tainted node it
+        # has no toleration for.
+        taints_json = _collect_taints_from_nodes(all_matching_nodes)
 
         logger.debug(
             f"Selected label {selected_label}: "

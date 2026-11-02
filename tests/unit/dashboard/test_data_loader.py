@@ -1,3 +1,4 @@
+import json
 import os
 import streamlit as st
 import pytest
@@ -190,6 +191,61 @@ container-scenarios ran for 3m12s
         assert log["env_vars"] == {"FOO": "BAR"}
         assert log["affected_recovered"] == 1
         assert len(log["timeline"]) == 1
+
+
+def test_load_logs_counts_affected_pods_not_arrays():
+    """Recovered/unrecovered counts are pods, summed across scenarios, VMIs excluded"""
+
+    def pod(name, recovery_time=None):
+        return {
+            "pod_name": name,
+            "namespace": "shop",
+            "total_recovery_time": recovery_time,
+            "pod_readiness_time": None,
+            "pod_rescheduling_time": None,
+        }
+
+    def vmi(name):
+        return {"vmi_name": name, "namespace": "shop", "total_recovery_time": None}
+
+    telemetry = {
+        "scenarios": [
+            {
+                "scenario_type": "pod_disruption_scenarios",
+                "affected_pods": {
+                    "recovered": [
+                        pod("cart-a", 4.2),
+                        pod("cart-b", 3.9),
+                        pod("cart-c", 4.0),
+                    ],
+                    "unrecovered": [pod("web-a"), pod("web-b")],
+                },
+                "affected_vmis": {
+                    "recovered": [vmi("vm-a"), vmi("vm-b")],
+                    "unrecovered": [],
+                },
+            },
+            {
+                "scenario_type": "pod_disruption_scenarios",
+                "affected_pods": {
+                    "recovered": [pod("cart-d", 5.0)],
+                    "unrecovered": [],
+                },
+                "affected_vmis": {"recovered": [], "unrecovered": []},
+            },
+        ]
+    }
+    log_content = json.dumps(telemetry, indent=2)
+
+    with (
+        patch("os.path.isdir", return_value=True),
+        patch("glob.glob", return_value=["/tmp/scenario_1.log"]),
+        patch("builtins.open", mock_open(read_data=log_content)),
+    ):
+        log = load_logs("/tmp")[0]
+
+    assert log["affected_recovered"] == 4
+    assert log["affected_unrecovered"] == 2
 
 
 def test_load_logs_exception():

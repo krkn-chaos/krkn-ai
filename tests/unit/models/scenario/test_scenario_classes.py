@@ -401,6 +401,28 @@ class TestTimeScenario:
         with pytest.raises(ScenarioParameterInitError, match="No labels found"):
             TimeScenario(cluster_components=cluster)
 
+    @pytest.mark.parametrize(
+        "namespaces",
+        [[], [Namespace(name="empty-ns", pods=[])]],
+        ids=["no-namespaces", "namespace-without-pods"],
+    )
+    def test_time_scenario_targets_nodes_when_no_pods(self, namespaces):
+        """Test that TimeScenario falls back to node labels when no namespace has pods"""
+        node = Node(name="test-node", labels={"os": "linux"})
+        cluster = ClusterComponents(namespaces=namespaces, nodes=[node])
+
+        scenario = TimeScenario(cluster_components=cluster)
+        assert scenario.object_type.value == "node"
+        assert scenario.label_selector.value == "os=linux"
+        assert scenario.namespace.value == ""
+
+    def test_time_scenario_raises_error_when_no_pods_or_node_labels(self):
+        """Test that TimeScenario raises a clear error when there is nothing to target"""
+        cluster = ClusterComponents(nodes=[Node(name="test-node", labels={})])
+
+        with pytest.raises(ScenarioParameterInitError, match="No labels found"):
+            TimeScenario(cluster_components=cluster)
+
 
 class TestNetworkScenario:
     """Test NetworkScenario class"""

@@ -7,7 +7,7 @@ from typing import Union, List, Dict
 
 from pydantic import ValidationError
 
-from krkn_ai.models.config import ConfigFile, ParameterValue
+from krkn_ai.models.config import ConfigFile, FitnessFunction, ParameterValue
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.utils.logger import get_logger
@@ -189,8 +189,15 @@ def _build_merged_config(
 ) -> Union[str, None]:
     """Merge discovered components into the existing config, keeping the user's
     edits."""
+    # Only the sections merge writes into are validated: other values may
+    # hold $PARAM placeholders that are only filled in with -p at run time.
     try:
-        config = read_config_from_file(output, kubeconfig=kubeconfig)
+        with open(output, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        if not isinstance(raw, dict) or "cluster_components" not in raw:
+            raise ValueError("no cluster_components section")
+        existing = ClusterComponents.model_validate(raw["cluster_components"])
+        FitnessFunction.model_validate(raw.get("fitness_function"))
     except (yaml.YAMLError, ValueError, ValidationError) as e:
         logger.warning(
             "Could not read existing config %s (%s); leaving file unchanged.",
@@ -199,9 +206,7 @@ def _build_merged_config(
         )
         return None
     # edit the raw file so user fields aren't dropped on a model dump
-    with open(output, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-    merged = merge_components(config.cluster_components, discovered)
+    merged = merge_components(existing, discovered)
     raw["cluster_components"] = merged.model_dump(
         mode="json", warnings="none", exclude_defaults=True
     )

@@ -86,17 +86,7 @@ class GeneticAlgorithm(BaseEngine):
         start_time = time.time()
         cur_generation = 0
 
-        logger.info(
-            "Starting genetic algorithm | run_uuid=%s generations=%s duration=%s "
-            "population_size=%d population_injection_rate=%.3f "
-            "population_injection_size=%d",
-            self.run_uuid,
-            self.algo_config.generations,
-            self.algo_config.duration,
-            self.algo_config.population_size,
-            self.algo_config.population_injection_rate,
-            self.algo_config.population_injection_size,
-        )
+        logger.info("Starting genetic algorithm | run_uuid=%s", self.run_uuid)
 
         # Baseline run establishes cluster health before chaos testing
         self.run_baseline()
@@ -249,13 +239,11 @@ class GeneticAlgorithm(BaseEngine):
                     self.create_population(self.algo_config.population_injection_size)
                 )
                 logger.info(
-                    "Generation %d population injection | added=%d offspring=%d "
-                    "total=%d population_injection_rate=%.3f",
+                    "Generation %d population injection | added=%d offspring=%d total=%d",
                     cur_generation + 1,
                     self.algo_config.population_injection_size,
                     self.algo_config.population_size,
                     len(self.population),
-                    self.algo_config.population_injection_rate,
                 )
 
     def _check_and_stop(self, cur_generation: int, elapsed_time: float) -> bool:

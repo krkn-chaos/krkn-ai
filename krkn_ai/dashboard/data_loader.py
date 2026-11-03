@@ -346,14 +346,21 @@ def _get_output_config(output_dir: str) -> OutputConfig:
 @st.cache_data(ttl=300)
 def load_detailed_scenarios_data(output_dir: str):
     output_config = _get_output_config(output_dir)
-    yaml_glob = fmt_to_glob(output_config.result_name_fmt)
-    base_name, _ext = os.path.splitext(yaml_glob)
-    yaml_glob = f"{base_name}.yaml"
-    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", yaml_glob)
-    yaml_files = glob.glob(yaml_pattern)
+    result_glob = fmt_to_glob(output_config.result_name_fmt)
+    base_name, _ext = os.path.splitext(result_glob)
+    # results live under <output>/<format>/generation_*/ for the run's -f
+    # format, so a run has only one of the two trees. yaml.safe_load also
+    # parses json.
+    result_files = glob.glob(
+        os.path.join(output_dir, "json", "generation_*", f"{base_name}.json")
+    )
+    if not result_files:
+        result_files = glob.glob(
+            os.path.join(output_dir, "yaml", "generation_*", f"{base_name}.yaml")
+        )
 
     rows = []
-    for filepath in yaml_files:
+    for filepath in result_files:
         try:
             with open(filepath, "r") as f:
                 data = yaml.safe_load(f)

@@ -271,6 +271,58 @@ def test_load_detailed_scenarios_data_uses_configured_result_fmt():
         assert called_pattern.endswith(os.path.join("generation_*", "gen_*_*_*.yaml"))
 
 
+def test_load_detailed_scenarios_data_reads_json_results(tmp_path):
+    """A run saved with -f json writes json/generation_*/*.json; its health
+    check rows must reach the dashboard like a yaml run's do."""
+    result = {
+        "scenario_id": 7,
+        "start_time": "2026-11-03T10:00:00",
+        "health_check_results": {
+            "http://cart": [
+                {
+                    "name": "cart",
+                    "timestamp": "2026-11-03T10:00:05",
+                    "response_time": 0.2,
+                    "status_code": 200,
+                    "success": True,
+                    "error": None,
+                }
+            ]
+        },
+    }
+    gen_dir = tmp_path / "json" / "generation_0"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "scenario_7.json").write_text(json.dumps(result))
+
+    with patch("krkn_ai.dashboard.data_loader.load_config_yaml", return_value=None):
+        df = load_detailed_scenarios_data(str(tmp_path))
+
+    assert list(df["scenario_id"]) == ["7"]
+    assert list(df["seconds_into_scenario"]) == [5.0]
+
+
+def test_load_detailed_scenarios_data_json_uses_configured_result_fmt(tmp_path):
+    """A json run with a custom result_name_fmt is found by that format."""
+    result = {
+        "scenario_id": 3,
+        "start_time": "2026-11-03T10:00:00",
+        "health_check_results": {
+            "http://cart": [{"name": "cart", "timestamp": "2026-11-03T10:00:01"}]
+        },
+    }
+    gen_dir = tmp_path / "json" / "generation_0"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "gen_0_x_3.json").write_text(json.dumps(result))
+
+    with patch(
+        "krkn_ai.dashboard.data_loader.load_config_yaml",
+        return_value={"output": {"result_name_fmt": "gen_%g_%c_%s.yaml"}},
+    ):
+        df = load_detailed_scenarios_data(str(tmp_path))
+
+    assert list(df["scenario_id"]) == ["3"]
+
+
 def test_load_logs_uses_configured_log_fmt_for_scenario_id():
     log_content = """
 2026-03-17 11:58:12,164 [INFO] some message

@@ -86,6 +86,8 @@ class GeneticAlgorithm(BaseEngine):
         start_time = time.time()
         cur_generation = 0
 
+        logger.info("Starting genetic algorithm | run_uuid=%s", self.run_uuid)
+
         # Baseline run establishes cluster health before chaos testing
         self.run_baseline()
 
@@ -108,18 +110,42 @@ class GeneticAlgorithm(BaseEngine):
                     format_duration(remaining_time),
                 )
 
+            generation_started = time.monotonic()
             logger.info(
-                "Generation %d — %d scenarios",
+                "Generation %d started | generation_id=%d population=%d",
                 cur_generation + 1,
+                cur_generation,
                 len(self.population),
             )
-            for i, scenario in enumerate(self.population):
-                logger.debug("  [%d] %s", i, scenario)
-
-            fitness_scores = [
-                self.calculate_fitness(member, cur_generation)
-                for member in self.population
-            ]
+            fitness_scores = []
+            for i, member in enumerate(self.population, start=1):
+                logger.info(
+                    "Generation %d | scenario %d/%d evaluating: %s",
+                    cur_generation + 1,
+                    i,
+                    len(self.population),
+                    member,
+                )
+                try:
+                    result = self.calculate_fitness(member, cur_generation)
+                except Exception:
+                    logger.exception(
+                        "Generation %d | scenario %d/%d failed",
+                        cur_generation + 1,
+                        i,
+                        len(self.population),
+                    )
+                    raise
+                fitness_scores.append(result)
+                logger.info(
+                    "Generation %d | scenario %d/%d completed | "
+                    "scenario_id=%s returncode=%d",
+                    cur_generation + 1,
+                    i,
+                    len(self.population),
+                    result.scenario_id,
+                    result.returncode,
+                )
 
             if len(self.config.fitness_function.items) > 0:
                 to_normalize = list(fitness_scores)
@@ -150,12 +176,29 @@ class GeneticAlgorithm(BaseEngine):
             self.stopping.update_exploration_tracking()
             self.complete_generation(cur_generation, fitness_scores)
             self.generation_results.append(fitness_scores)
+            logger.info(
+                "Generation %d completed | generation_id=%d evaluated=%d "
+                "elapsed=%s best_scenario_id=%s best=%s fitness=%.1f%%",
+                cur_generation + 1,
+                cur_generation,
+                len(fitness_scores),
+                format_duration(time.monotonic() - generation_started),
+                fitness_scores[0].scenario_id,
+                fitness_scores[0].scenario.name,
+                fitness_scores[0].fitness_result.fitness_score,
+            )
 
             cur_generation += 1
 
             elapsed_after_eval = time.time() - start_time
             if self._check_and_stop(cur_generation, elapsed_after_eval):
                 break
+
+            logger.info(
+                "Preparing generation %d | offspring=%d",
+                cur_generation + 1,
+                self.algo_config.population_size,
+            )
 
             # Repopulate: each pair of parents produces 2 offspring
             self.population = []
@@ -194,6 +237,13 @@ class GeneticAlgorithm(BaseEngine):
             if rng.random() < self.algo_config.population_injection_rate:
                 self.population.extend(
                     self.create_population(self.algo_config.population_injection_size)
+                )
+                logger.info(
+                    "Generation %d population injection | added=%d offspring=%d total=%d",
+                    cur_generation + 1,
+                    self.algo_config.population_injection_size,
+                    self.algo_config.population_size,
+                    len(self.population),
                 )
 
     def _check_and_stop(self, cur_generation: int, elapsed_time: float) -> bool:
@@ -349,15 +399,20 @@ class GeneticAlgorithm(BaseEngine):
 
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
         if scenario in self.seen_population:
-            logger.info(
-                "Scenario %s already evaluated, skipping fitness calculation.",
-                scenario,
-            )
-            result = self.seen_population[scenario]
-            result = copy.deepcopy(result)
+            cached_result = self.seen_population[scenario]
+            result = copy.deepcopy(cached_result)
             result.scenario_id = next(auto_id)
             result.generation_id = generation_id
             result.scenario = scenario
+            logger.info(
+                "Generation %d | scenario_id=%s reusing cached result from "
+                "generation_id=%d scenario_id=%s; no chaos executed: %s",
+                generation_id + 1,
+                result.scenario_id,
+                cached_result.generation_id,
+                cached_result.scenario_id,
+                scenario,
+            )
             return result
 
         self.stopping.record_new_scenario()

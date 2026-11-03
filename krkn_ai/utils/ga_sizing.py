@@ -1,6 +1,7 @@
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Tuple
 
+from krkn_ai.constants import POPULATION_INJECTION_RATE
 from krkn_ai.models.cluster_components import ClusterComponents, Node
 from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
 from krkn_ai.models.scenario.factory import ScenarioFactory, scenario_specs
@@ -201,7 +202,7 @@ def recommend_genetic_params(
         "population_size": population_size,
         "tournament_size": max(2, min(6, population_size // 3)),
         "composition_rate": 0.0 if tier == "small" else 0.3,
-        "population_injection_rate": 0.0 if tier == "small" else 0.1,
+        "population_injection_rate": POPULATION_INJECTION_RATE,
         "exploration_saturation": EXPLORATION_SATURATION,
         "generation_saturation": GENERATION_SATURATION,
     }

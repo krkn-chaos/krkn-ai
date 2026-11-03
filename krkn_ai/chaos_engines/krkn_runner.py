@@ -113,9 +113,14 @@ class KrknRunner:
         generation_id: int,
         scenario_id: int | str | None = None,
     ) -> CommandRunResult:
-        logger.info("Running scenario: %s", scenario)
         if scenario_id is None:
             scenario_id = next(auto_id)
+        logger.info(
+            "Scenario started | generation_id=%d scenario_id=%s scenario=%s",
+            generation_id,
+            scenario_id,
+            scenario,
+        )
 
         start_time = datetime.datetime.now()
         mono_start = time.monotonic()
@@ -151,7 +156,6 @@ class KrknRunner:
                     recovery_failed = telemetry.recovery_failed and returncode in (1, 2)
                     run_uuid = telemetry.run_uuid
                     resiliency_score = telemetry.resiliency_score
-                    logger.info("Krkn scenario return code: %d", returncode)
                 finally:
                     health_check_watcher.stop()
             else:
@@ -185,10 +189,16 @@ class KrknRunner:
                         )
                         run_uuid = telemetry.run_uuid
                         resiliency_score = telemetry.resiliency_score
-                    logger.info("Krkn scenario return code: %d", returncode)
 
                 finally:
                     health_check_watcher.stop()
+
+        logger.info(
+            "Krkn scenario finished | generation_id=%d scenario_id=%s returncode=%d",
+            generation_id,
+            scenario_id,
+            returncode,
+        )
 
         end_time = datetime.datetime.now()
         duration_seconds = time.monotonic() - mono_start
@@ -264,7 +274,10 @@ class KrknRunner:
             fitness_result.fitness_score = (raw_total / n * 100) if n else 0.0
             slo_total = sum(s.weighted_score for s in fitness_result.scores)
             logger.info(
-                "Fitness: %.1f%%  (SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
+                "Fitness | generation_id=%d scenario_id=%s: %.1f%% "
+                "(SLO: %.3f | HC fail: %.3f | HC resp: %.3f | krkn: %.3f)",
+                generation_id,
+                scenario_id,
                 fitness_result.fitness_score,
                 slo_total,
                 fitness_result.health_check_failure_score,

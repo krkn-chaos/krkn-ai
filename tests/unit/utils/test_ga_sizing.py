@@ -166,21 +166,19 @@ class TestRecommendGeneticParams:
         assert profile["tournament_size"] <= profile["population_size"]
         assert profile["tournament_size"] >= 2
 
-    def test_small_cluster_skips_composition_and_injection(self):
+    def test_small_cluster_skips_composition(self):
         cluster = build_cluster(namespaces=1, pods=1, nodes=1, pvcs=0)
         with patch.object(ga_sizing, "count_target_space", return_value=(10, 5)):
             profile = recommend_genetic_params(cluster, "kubeconfig.yaml")
 
         assert profile["composition_rate"] == 0.0
-        assert profile["population_injection_rate"] == 0.0
 
-    def test_large_cluster_enables_composition_and_injection(self):
+    def test_large_cluster_enables_composition(self):
         cluster = build_cluster(namespaces=5, pods=5, nodes=3)
         with patch.object(ga_sizing, "count_target_space", return_value=(600, 12)):
             profile = recommend_genetic_params(cluster, "kubeconfig.yaml")
 
         assert profile["composition_rate"] > 0
-        assert profile["population_injection_rate"] > 0
 
     def test_returns_none_when_no_targets_found(self):
         cluster = build_cluster()

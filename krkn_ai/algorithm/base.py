@@ -17,7 +17,7 @@ from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.elastic_client import ElasticSearchClient
 from krkn_ai.utils.atomic import atomic_write_bytes, atomic_write_text
 from krkn_ai.utils.logger import get_logger
-from krkn_ai.utils.output import format_result_filename
+from krkn_ai.utils.output import format_duration, format_result_filename
 from krkn_ai.utils.rng import rng
 from krkn_ai.chaos_engines.health_check_watcher import compute_baseline_response_stats
 
@@ -87,7 +87,9 @@ class BaseEngine(ABC):
             return
 
         logger.info(
-            "Running baseline scenario for %d seconds", self.config.baseline.duration
+            "Baseline started | scenario_id=baseline duration=%d seconds "
+            "(excluded from generation population)",
+            self.config.baseline.duration,
         )
         baseline_scenario = ScenarioFactory.create_dummy_scenario()
         baseline_scenario.end.value = self.config.baseline.duration
@@ -108,6 +110,11 @@ class BaseEngine(ABC):
         self.health_check_reporter.write_fitness_result(self.baseline_result)
         if self.elastic_client is not None:
             self.elastic_client.index_run_result(self.baseline_result, self.run_uuid)
+        logger.info(
+            "Baseline completed | scenario_id=baseline returncode=%d elapsed=%s",
+            self.baseline_result.returncode,
+            format_duration(self.baseline_result.duration_seconds),
+        )
 
     def evaluate_scenario(
         self, scenario: BaseScenario, generation_id: int

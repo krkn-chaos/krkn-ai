@@ -3,6 +3,7 @@ import os
 import streamlit as st
 import pytest
 import pandas as pd
+import yaml
 from unittest.mock import patch, mock_open
 
 from krkn_ai.dashboard.data_loader import (
@@ -321,6 +322,65 @@ def test_load_detailed_scenarios_data_json_uses_configured_result_fmt(tmp_path):
         df = load_detailed_scenarios_data(str(tmp_path))
 
     assert list(df["scenario_id"]) == ["3"]
+
+
+def test_load_detailed_scenarios_data_json_keeps_small_numbers_numeric(tmp_path):
+    """json.dumps writes a tiny float as 1e-06, which YAML reads as a string;
+    the heatmaps aggregate response_time, so it must stay a number."""
+    result = {
+        "scenario_id": 1,
+        "start_time": "2026-11-03T10:00:00",
+        "health_check_results": {
+            "http://cart": [
+                {
+                    "name": "cart",
+                    "timestamp": "2026-11-03T10:00:01",
+                    "response_time": 0.000001,
+                }
+            ]
+        },
+    }
+    gen_dir = tmp_path / "json" / "generation_0"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "scenario_1.json").write_text(json.dumps(result))
+
+    with patch("krkn_ai.dashboard.data_loader.load_config_yaml", return_value=None):
+        df = load_detailed_scenarios_data(str(tmp_path))
+
+    assert pd.api.types.is_numeric_dtype(df["response_time"])
+    assert df["response_time"].iloc[0] == 0.000001
+
+
+def test_load_detailed_scenarios_data_reused_run_uses_newest_result(tmp_path):
+    """--run-uuid reused with a different -f leaves both trees: every scenario
+    is read, and one saved in both comes from the newer file."""
+
+    def result(scenario_id, service):
+        return {
+            "scenario_id": scenario_id,
+            "start_time": "2026-11-03T10:00:00",
+            "health_check_results": {
+                "http://cart": [{"name": service, "timestamp": "2026-11-03T10:00:01"}]
+            },
+        }
+
+    json_dir = tmp_path / "json" / "generation_0"
+    yaml_dir = tmp_path / "yaml" / "generation_0"
+    json_dir.mkdir(parents=True)
+    yaml_dir.mkdir(parents=True)
+    old_json = json_dir / "scenario_1.json"
+    old_json.write_text(json.dumps(result(1, "stale")))
+    os.utime(old_json, (1000, 1000))
+    new_yaml = yaml_dir / "scenario_1.yaml"
+    new_yaml.write_text(yaml.safe_dump(result(1, "current")))
+    os.utime(new_yaml, (2000, 2000))
+    (json_dir / "scenario_2.json").write_text(json.dumps(result(2, "json_only")))
+
+    with patch("krkn_ai.dashboard.data_loader.load_config_yaml", return_value=None):
+        df = load_detailed_scenarios_data(str(tmp_path))
+
+    services = dict(zip(df["scenario_id"], df["service"]))
+    assert services == {"1": "current", "2": "json_only"}
 
 
 def test_load_logs_uses_configured_log_fmt_for_scenario_id():

@@ -349,21 +349,28 @@ def load_detailed_scenarios_data(output_dir: str):
     result_glob = fmt_to_glob(output_config.result_name_fmt)
     base_name, _ext = os.path.splitext(result_glob)
     # results live under <output>/<format>/generation_*/ for the run's -f
-    # format, so a run has only one of the two trees. yaml.safe_load also
-    # parses json.
-    result_files = glob.glob(
-        os.path.join(output_dir, "json", "generation_*", f"{base_name}.json")
-    )
-    if not result_files:
-        result_files = glob.glob(
-            os.path.join(output_dir, "yaml", "generation_*", f"{base_name}.yaml")
-        )
+    # format. Reusing --run-uuid with another -f leaves both trees; a scenario
+    # saved in both comes from the newer file.
+    newest: dict = {}
+    for fmt in ("json", "yaml"):
+        pattern = os.path.join(output_dir, fmt, "generation_*", f"{base_name}.{fmt}")
+        for path in glob.glob(pattern):
+            key = (
+                os.path.basename(os.path.dirname(path)),
+                os.path.splitext(os.path.basename(path))[0],
+            )
+            current = newest.get(key)
+            if current is None or (
+                current != path and os.path.getmtime(path) > os.path.getmtime(current)
+            ):
+                newest[key] = path
 
     rows = []
-    for filepath in result_files:
+    for filepath in newest.values():
         try:
             with open(filepath, "r") as f:
-                data = yaml.safe_load(f)
+                # yaml.safe_load reads a json number like 1e-06 as a string
+                data = json.load(f) if filepath.endswith(".json") else yaml.safe_load(f)
 
             scen_id = data.get("scenario_id")
             start_time_str = data.get("start_time")

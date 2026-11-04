@@ -184,7 +184,6 @@ def _merge_fitness_items(raw: dict, fitness_queries: list = None) -> None:
 def _build_merged_config(
     output: str,
     discovered: ClusterComponents,
-    kubeconfig: str,
     fitness_queries: list = None,
 ) -> Union[str, None]:
     """Merge discovered components into the existing config, keeping the user's
@@ -263,7 +262,7 @@ def save_discovery(
         return
 
     if exists and strategy == "merge":
-        text = _build_merged_config(output, components, kubeconfig, fitness_queries)
+        text = _build_merged_config(output, components, fitness_queries)
         if text is None:
             return
         with open(output, "w", encoding="utf-8") as f:

@@ -67,7 +67,7 @@ class HealthCheckWatcher:
             return  # Skip if thread ID is None (should not happen in normal operation)
         thread_results: List[HealthCheckResult] = []
         with self._results_lock:
-            self._thread_results[thread_id] = (str(health_check.url), thread_results)
+            self._thread_results[thread_id] = (health_check.name, thread_results)
 
         resolved_headers = self._resolve_headers(health_check)
 

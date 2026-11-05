@@ -291,6 +291,128 @@ class TestKrknRunnerRun:
         assert result.fitness_result.krkn_failure_score == KRKN_HUB_FAILURE_SCORE
         assert result.fitness_result.fitness_score == KRKN_HUB_FAILURE_SCORE / 2 * 100
 
+    @pytest.mark.parametrize(
+        "log, expected_returncode, expected_score",
+        [
+            # krknctl graph run exits 0 even when a node fails; a scored run
+            # is the mocked fitness value (10.5) scaled by 100
+            ("EXITING 0\n", 0, 1050.0),
+            (
+                "scenario b at step 1 with exit status 1, check log file b-1.log.\n",
+                1,
+                -1.0,
+            ),
+            (
+                "scenario b at step 1 with exit status 2, check log file b-1.log.\n",
+                2,
+                1050.0,
+            ),
+        ],
+    )
+    def test_composite_run_uses_node_exit_status(
+        self,
+        minimal_config,
+        temp_output_dir,
+        monkeypatch,
+        tmp_path,
+        log,
+        expected_returncode,
+        expected_score,
+    ):
+        monkeypatch.chdir(tmp_path)
+        minimal_config.fitness_function = FitnessFunction(
+            query="up",
+            include_krkn_failure=False,
+            include_health_check_failure=False,
+            include_health_check_response_time=False,
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+        composite = CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.run_shell",
+                return_value=(log, 0),
+            ),
+        ):
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                minimal_config, temp_output_dir, KrknRunnerType.CLI_RUNNER
+            )
+            runner.fitness_calculator.calculate_fitness_value = Mock(return_value=10.5)
+            result = runner.run(composite, 0)
+
+        assert result.returncode == expected_returncode
+        assert result.fitness_result.fitness_score == expected_score
+
+    def test_composite_recovery_failure_is_scored_not_misconfiguration(
+        self, minimal_config, temp_output_dir, monkeypatch, tmp_path
+    ):
+        """A node that exits 1 with unrecovered targets in its own log is a real
+        chaos result, as it is for a single scenario."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "b-1.log").write_text(
+            "Chaos data:"
+            + json.dumps(
+                {
+                    "telemetry": {
+                        "scenarios": [
+                            {
+                                "exit_status": 1,
+                                "affected_pods": {
+                                    "unrecovered": [{"pod_name": "shipping"}],
+                                    "error": None,
+                                },
+                            }
+                        ],
+                        "error_logs": [],
+                    }
+                }
+            )
+        )
+        minimal_config.fitness_function = FitnessFunction(
+            query="up",
+            include_krkn_failure=True,
+            include_health_check_failure=False,
+            include_health_check_response_time=False,
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+        composite = CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+        log = "scenario b at step 1 with exit status 1, check log file b-1.log.\n"
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.run_shell",
+                return_value=(log, 0),
+            ),
+        ):
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                minimal_config, temp_output_dir, KrknRunnerType.CLI_RUNNER
+            )
+            runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
+            result = runner.run(composite, 0)
+
+        assert result.returncode == 1
+        assert result.fitness_result.krkn_failure_score == KRKN_HUB_FAILURE_SCORE
+        assert result.fitness_result.fitness_score == KRKN_HUB_FAILURE_SCORE / 2 * 100
+
     def test_run_raises_for_unsupported_scenario_type(
         self, minimal_config, temp_output_dir
     ):

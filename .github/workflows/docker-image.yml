@@ -23,6 +23,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,25 +34,27 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Quay
-        uses: docker/login-action@v3
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USERNAME }}
-          password: ${{ secrets.QUAY_PASSWORD }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Determine tags
         id: tags
+        env:
+          IMAGE_TAG: ${{ inputs.tag }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
         run: |
-          TAGS="quay.io/krkn-chaos/krkn-ai:${{ inputs.tag }}"
-          OPERATOR_TAGS="quay.io/krkn-chaos/krkn-ai-operator:${{ inputs.tag }}"
-          SERVICE_TAGS="quay.io/krkn-chaos/krkn-ai-service:${{ inputs.tag }}"
-          if [ "${{ inputs.push_latest }}" = "true" ]; then
+          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid image tag" >&2
+            exit 1
+          fi
+          TAGS="quay.io/krkn-chaos/krkn-ai:$IMAGE_TAG"
+          OPERATOR_TAGS="quay.io/krkn-chaos/krkn-ai-operator:$IMAGE_TAG"
+          SERVICE_TAGS="quay.io/krkn-chaos/krkn-ai-service:$IMAGE_TAG"
+          if [ "$PUSH_LATEST" = "true" ]; then
             TAGS="${TAGS},quay.io/krkn-chaos/krkn-ai:latest"
             OPERATOR_TAGS="${OPERATOR_TAGS},quay.io/krkn-chaos/krkn-ai-operator:latest"
             SERVICE_TAGS="${SERVICE_TAGS},quay.io/krkn-chaos/krkn-ai-service:latest"
@@ -57,17 +62,24 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "operator_tags=${OPERATOR_TAGS}" >> "$GITHUB_OUTPUT"
           echo "service_tags=${SERVICE_TAGS}" >> "$GITHUB_OUTPUT"
-          echo "image=quay.io/krkn-chaos/krkn-ai:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          echo "operator_image=quay.io/krkn-chaos/krkn-ai-operator:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          echo "service_image=quay.io/krkn-chaos/krkn-ai-service:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          echo "image=quay.io/krkn-chaos/krkn-ai:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "operator_image=quay.io/krkn-chaos/krkn-ai-operator:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "service_image=quay.io/krkn-chaos/krkn-ai-service:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Quay
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Build and push krkn-ai image
         id: build-ai
         if: ${{ inputs.image == 'krkn-ai' || inputs.image == 'all' }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: containers/Containerfile
@@ -96,7 +108,7 @@ jobs:
       - name: Build and push krkn-ai operator image
         id: build-operator
         if: ${{ inputs.image == 'krkn-ai-operator' || inputs.image == 'all' }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: containers/Containerfile.operator
@@ -124,7 +136,7 @@ jobs:
       - name: Build and push krkn-ai-service image
         id: build-service
         if: ${{ inputs.image == 'krkn-ai-service' || inputs.image == 'all' }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: containers/Containerfile.server

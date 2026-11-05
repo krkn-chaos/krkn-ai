@@ -5,11 +5,244 @@ import json
 import pytest
 
 from krkn_ai.chaos_engines.telemetry_parser import (
+    extract_graph_telemetry,
     extract_telemetry_from_log,
     strip_ansi,
     _try_json_extraction,
     _try_regex_extraction,
 )
+
+
+def _graph_failure(node, status):
+    """The line krknctl graph run prints for a failed node (v0.14.2-beta)."""
+    return (
+        f"scenario {node} at step 1 with exit status {status}, "
+        f"check log file krknctl-{node}-123.log.\n"
+    )
+
+
+def _node_log(status, unrecovered):
+    return "Chaos data:" + json.dumps(
+        {
+            "telemetry": {
+                "scenarios": [
+                    {
+                        "exit_status": status,
+                        "affected_pods": {"unrecovered": unrecovered, "error": None},
+                    }
+                ],
+                "error_logs": [],
+            }
+        }
+    )
+
+
+class TestExtractGraphTelemetry:
+    """krknctl graph run exits 0 when a node fails, and only says so in its output."""
+
+    def test_no_failed_node_keeps_krknctl_returncode(self):
+        result = extract_graph_telemetry("Release the krkn 0\nEXITING 0\n", 0)
+        assert result.exit_status == 0
+        assert result.recovery_failed is False
+
+    def test_krknctl_error_without_node_lines_keeps_returncode(self):
+        log = "Error: failed to validate scenario: pod-scenarios\n"
+        assert extract_graph_telemetry(log, 1).exit_status == 1
+
+    def test_failed_node_sets_exit_status_when_krknctl_exits_zero(self):
+        result = extract_graph_telemetry(_graph_failure("bad-node", 1), 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_exit_2_node_is_reported(self):
+        assert extract_graph_telemetry(_graph_failure("alerts", 2), 0).exit_status == 2
+
+    @pytest.mark.parametrize(
+        "lines",
+        [
+            _graph_failure("a", 2) + _graph_failure("b", 1),
+            _graph_failure("b", 1) + _graph_failure("a", 2),
+        ],
+    )
+    def test_misconfigured_node_wins_over_exit_2_in_any_order(self, lines):
+        """Parallel nodes print in completion order; exit 2 is still scored but
+        any other code means the run is not usable."""
+        assert extract_graph_telemetry(lines, 0).exit_status == 1
+
+    def test_ansi_codes_around_the_line_are_ignored(self):
+        log = "\x1b[31m" + _graph_failure("bad", 1) + "\x1b[0m"
+        assert extract_graph_telemetry(log, 0).exit_status == 1
+
+    def test_other_text_mentioning_exit_status_is_not_a_node_failure(self):
+        log = 'node said: scenario x finished "exit_status": 1\n'
+        assert extract_graph_telemetry(log, 0).exit_status == 0
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "Release the krkn 3" + _graph_failure("b", 1),
+            _graph_failure("b", 1).replace("\n", "\r\n"),
+            "\x1b[2K\r" + _graph_failure("b", 1),
+        ],
+    )
+    def test_failure_line_sharing_stdout_with_a_node_is_still_seen(self, line):
+        """Parallel nodes share krknctl's stdout. Wrongly seeing a failure is
+        visible; missing one is the silent success this exists to stop."""
+        assert extract_graph_telemetry(line, 0).exit_status == 1
+
+    @pytest.mark.parametrize("status", [3, 4, 255])
+    def test_other_exit_status_is_kept(self, status):
+        result = extract_graph_telemetry(_graph_failure("b", status), 0)
+        assert result.exit_status == status
+
+    def test_node_id_krkn_ai_generates_is_parsed(self):
+        assert extract_graph_telemetry(_graph_failure("rootlr", 1), 0).exit_status == 1
+
+    def test_node_telemetry_status_wins_over_container_status(
+        self, tmp_path, monkeypatch
+    ):
+        """As for a single scenario: a health check or alert can make krkn exit
+        non-zero while the scenario itself passed."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-b-123.log").write_text(_node_log(0, []))
+        assert extract_graph_telemetry(_graph_failure("b", 3), 0).exit_status == 0
+
+    def test_node_with_telemetry_0_does_not_hide_a_failed_node(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-a-123.log").write_text(_node_log(0, []))
+        (tmp_path / "krknctl-b-123.log").write_text(_node_log(1, []))
+        log = _graph_failure("a", 3) + _graph_failure("b", 1)
+        assert extract_graph_telemetry(log, 0).exit_status == 1
+
+    def test_exit_2_node_with_empty_log_stays_exit_2(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-b-123.log").write_text("")
+        log = _graph_failure("b", 2) + (
+            "Failed to parse resiliency report from krknctl-b-123.log: "
+            "resiliency report marker not found in logs\n"
+        )
+        assert extract_graph_telemetry(log, 0).exit_status == 2
+
+    def test_named_log_that_is_missing_is_not_treated_as_never_ran(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        log = (
+            "Failed to parse resiliency report from krknctl-gone-1.log: "
+            "resiliency report marker not found in logs\n"
+        )
+        assert extract_graph_telemetry(log, 0).exit_status == 0
+
+    def test_node_log_with_a_bad_byte_still_parses_its_telemetry(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-b-123.log").write_bytes(
+            b"\xff\n" + _node_log(0, []).encode()
+        )
+        assert extract_graph_telemetry(_graph_failure("b", 3), 0).exit_status == 0
+
+    def test_color_codes_around_the_failure_text_are_ignored(self):
+        """krknctl prints this line in red, so the reset code follows the period."""
+        log = "\x1b[91m" + _graph_failure("b", 1).rstrip() + "\x1b[0m\n"
+        assert extract_graph_telemetry(log, 0).exit_status == 1
+
+    def test_node_that_never_ran_is_a_failure(self, tmp_path, monkeypatch):
+        """krknctl output when a node's image is rejected or its container can't
+        be created: no failure line, an empty log, exit 0."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-ok-1.log").write_text("EXITING 0\n")
+        (tmp_path / "krknctl-bad-2.log").write_text("")
+        log = (
+            "Failed to parse resiliency report from krknctl-ok-1.log: "
+            "resiliency report marker not found in logs\n"
+            "⛔  image REJECTED: signature could not be verified\n"
+            "Failed to parse resiliency report from krknctl-bad-2.log: "
+            "resiliency report marker not found in logs\n"
+        )
+        result = extract_graph_telemetry(log, 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_node_that_ran_with_no_report_is_not_a_failure(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-ok-1.log").write_text("EXITING 0\n")
+        log = (
+            "Failed to parse resiliency report from krknctl-ok-1.log: "
+            "resiliency report marker not found in logs\n"
+        )
+        assert extract_graph_telemetry(log, 0).exit_status == 0
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            b"\xff\xfe not utf-8",
+            b'Chaos data: {"telemetry": {"scenarios": [{"exit_status": 1}], '
+            b'"overall_resiliency_report": {"resiliency_score": "n/a"}}}',
+        ],
+    )
+    def test_unreadable_node_log_does_not_crash_the_run(
+        self, tmp_path, monkeypatch, content
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-b-123.log").write_bytes(content)
+        result = extract_graph_telemetry(_graph_failure("b", 1), 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_unrecovered_targets_in_node_log_count_as_recovery_failure(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-bad-123.log").write_text(
+            _node_log(1, [{"pod_name": "shipping"}])
+        )
+        result = extract_graph_telemetry(_graph_failure("bad", 1), 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is True
+
+    def test_node_log_without_unrecovered_targets_stays_misconfiguration(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-bad-123.log").write_text(_node_log(1, []))
+        result = extract_graph_telemetry(_graph_failure("bad", 1), 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_misconfigured_node_wins_over_a_recovery_failure(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-recovery-123.log").write_text(
+            _node_log(1, [{"pod_name": "shipping"}])
+        )
+        (tmp_path / "krknctl-setup-123.log").write_text(_node_log(1, []))
+        log = _graph_failure("recovery", 1) + _graph_failure("setup", 1)
+        result = extract_graph_telemetry(log, 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_missing_node_log_is_not_a_crash(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = extract_graph_telemetry(_graph_failure("gone", 1), 0)
+        assert result.exit_status == 1
+        assert result.recovery_failed is False
+
+    def test_node_log_path_cannot_leave_the_working_directory(
+        self, tmp_path, monkeypatch
+    ):
+        work = tmp_path / "work"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        (tmp_path / "outside.log").write_text(_node_log(1, [{"pod_name": "x"}]))
+        log = (
+            "scenario evil at step 1 with exit status 1, "
+            "check log file ../outside.log.\n"
+        )
+        assert extract_graph_telemetry(log, 0).recovery_failed is False
 
 
 class TestStripAnsi:

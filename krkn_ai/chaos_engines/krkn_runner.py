@@ -27,7 +27,10 @@ from krkn_ai.utils.mock import (
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
-from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
+from krkn_ai.chaos_engines.telemetry_parser import (
+    extract_graph_telemetry,
+    extract_telemetry_from_log,
+)
 from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
 
 logger = get_logger(__name__)
@@ -179,7 +182,9 @@ class KrknRunner:
                     )
 
                     if isinstance(scenario, CompositeScenario):
-                        pass
+                        telemetry = extract_graph_telemetry(log, returncode)
+                        returncode = telemetry.exit_status
+                        recovery_failed = telemetry.recovery_failed
                     else:
                         telemetry = extract_telemetry_from_log(log, returncode)
                         returncode = telemetry.exit_status

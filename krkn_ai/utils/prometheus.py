@@ -182,10 +182,12 @@ def _validate_and_create_client(
     logger.debug("Initializing Prometheus client: %s", url)
 
     try:
-        client = KrknPrometheus(url.strip(), token.strip())
-        if discovery_timeout is not None:
-            # KrknPrometheus doesn't expose PrometheusConnect's timeout argument.
-            client.prom_cli._timeout = discovery_timeout
+        if discovery_timeout is None:
+            client = KrknPrometheus(url.strip(), token.strip())
+        else:
+            client = KrknPrometheus(
+                url.strip(), token.strip(), timeout=discovery_timeout
+            )
         # Connection test: run a dummy query unless in mock mode
         if not is_mock_enabled(MockType.FITNESS):
             client.process_query("1")

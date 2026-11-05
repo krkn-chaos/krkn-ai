@@ -394,7 +394,7 @@ def _discover_data(
     fitness_queries = None
     if recommend_fitness:
         try:
-            prom_client = create_prometheus_client(kubeconfig)
+            prom_client = create_prometheus_client(kubeconfig, discovery_timeout=30)
             fitness_queries = recommend_fitness_queries(
                 cluster_components,
                 prom_client,

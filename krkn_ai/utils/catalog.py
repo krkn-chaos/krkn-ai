@@ -1,7 +1,9 @@
 """Catalog of PromQL fitness queries and a recommender that adapts them per cluster."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
+from itertools import repeat
 from typing import Dict, List, Optional, Union
 
 import yaml
@@ -14,6 +16,8 @@ from krkn_ai.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _CATALOG_PATH = os.path.join(os.path.dirname(__file__), "catalog.yaml")
+
+_VALIDATION_CONCURRENCY = 8
 _VALIDATION_RANGE = "5m"
 
 
@@ -116,6 +120,7 @@ def recommend_fitness_queries(
     ]
 
     results: List[Dict[str, Union[str, bool, float]]] = []
+    validation_jobs = []
     for entry in get_base_catalog():
         missing = [m for m in entry.requires if m not in available]
         targets = active_namespaces if entry.scope is Scope.namespace else [None]
@@ -124,21 +129,31 @@ def recommend_fitness_queries(
             query = _safe_query(entry.resolved_query(namespace))
             name = f"{entry.key}:{namespace}" if namespace else entry.key
 
+            result = {
+                "name": name,
+                "query": query,
+                "type": entry.type.value,
+                "weight": learned_weights.get(query, entry.default_weight),
+                "enabled": False,
+                "reason": "",
+            }
+            results.append(result)
             if missing:
-                enabled, reason = False, "metric(s) not scraped: " + ", ".join(missing)
+                result["reason"] = "metric(s) not scraped: " + ", ".join(missing)
             else:
-                enabled, reason = _validate_shape(prom_client, query)
+                validation_jobs.append((result, query))
 
-            results.append(
-                {
-                    "name": name,
-                    "query": query,
-                    "type": entry.type.value,
-                    "weight": learned_weights.get(query, entry.default_weight),
-                    "enabled": enabled,
-                    "reason": reason,
-                }
-            )
+    # Keep discovery bounded while preserving catalog/namespace output order.
+    # The executor context waits for all finite-timeout requests before returning.
+    with ThreadPoolExecutor(max_workers=_VALIDATION_CONCURRENCY) as executor:
+        validations = executor.map(
+            _validate_shape,
+            repeat(prom_client),
+            (query for _, query in validation_jobs),
+        )
+        for (result, _), (enabled, reason) in zip(validation_jobs, validations):
+            result["enabled"] = enabled
+            result["reason"] = reason
 
     _assign_weights([r for r in results if r["enabled"]])
     return results

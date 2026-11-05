@@ -1,4 +1,6 @@
 import os
+from typing import Optional
+
 from kubernetes import client, config
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 from krkn_ai.utils.mock import MockType, is_mock_enabled
@@ -33,7 +35,9 @@ def is_openshift(kubeconfig: str) -> bool:
         return False
 
 
-def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
+def create_prometheus_client(
+    kubeconfig: str, discovery_timeout: Optional[int] = None
+) -> KrknPrometheus:
     """
     Creates a Prometheus client with intelligent discovery and fallback logic.
 
@@ -45,6 +49,8 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
 
     Args:
         kubeconfig: Path to the Kubernetes configuration file.
+        discovery_timeout: Optional HTTP timeout in seconds for discovery-only use.
+            Omit it to retain the Prometheus client's default runtime behavior.
 
     Returns:
         A configured KrknPrometheus client instance.
@@ -57,7 +63,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
 
     # Case 1: Both environment variables provided
     if url and token:
-        return _validate_and_create_client(url, token)
+        return _validate_and_create_client(url, token, discovery_timeout)
 
     is_ocp = is_openshift(kubeconfig)
 
@@ -94,7 +100,7 @@ def create_prometheus_client(kubeconfig: str) -> KrknPrometheus:
             "  export PROMETHEUS_TOKEN=$(oc whoami -t)"
         )
 
-    return _validate_and_create_client(url, token)
+    return _validate_and_create_client(url, token, discovery_timeout)
 
 
 def _discover_openshift_prometheus_url(kubeconfig: str) -> str:
@@ -152,13 +158,16 @@ def _discover_openshift_prometheus_token(kubeconfig: str) -> str:
         return ""
 
 
-def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
+def _validate_and_create_client(
+    url: str, token: str, discovery_timeout: Optional[int] = None
+) -> KrknPrometheus:
     """
     Validates connection parameters and initializes the Prometheus client.
 
     Args:
         url: The Prometheus API endpoint URL.
         token: Authentication token.
+        discovery_timeout: Optional HTTP timeout in seconds for discovery-only use.
 
     Returns:
         An initialized KrknPrometheus client.
@@ -174,6 +183,9 @@ def _validate_and_create_client(url: str, token: str) -> KrknPrometheus:
 
     try:
         client = KrknPrometheus(url.strip(), token.strip())
+        if discovery_timeout is not None:
+            # KrknPrometheus doesn't expose PrometheusConnect's timeout argument.
+            client.prom_cli._timeout = discovery_timeout
         # Connection test: run a dummy query unless in mock mode
         if not is_mock_enabled(MockType.FITNESS):
             client.process_query("1")

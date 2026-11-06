@@ -583,6 +583,58 @@ class TestSaveDiscovery:
         names = [n["name"] for n in result["cluster_components"]["namespaces"]]
         assert "pay" in names and "shop" in names
 
+    def test_merge_keeps_parameter_placeholders(self, tmp_path):
+        """Merge works on a config whose values use $PARAM placeholders that
+        are only filled in with -p at run time, and keeps them as written."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        _write_existing(path, ClusterComponents(namespaces=[Namespace(name="shop")]))
+        doc = yaml.safe_load(open(path))
+        doc["health_checks"] = {
+            "applications": [{"name": "cart", "url": "$HOST/cart/add/1/Watson/1"}]
+        }
+        with open(path, "w") as f:
+            yaml.safe_dump(doc, f)
+
+        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
+        save_discovery(path, "merge", discovered, KUBECONFIG)
+
+        result = yaml.safe_load(open(path))
+        names = [n["name"] for n in result["cluster_components"]["namespaces"]]
+        assert "pay" in names and "shop" in names
+        url = result["health_checks"]["applications"][0]["url"]
+        assert url == "$HOST/cart/add/1/Watson/1"
+
+    @pytest.mark.parametrize(
+        "section, value",
+        [
+            ("cluster_components", {"namespaces": "shop"}),
+            ("cluster_components", None),
+            ("fitness_function", None),
+            ("fitness_function", {"items": ["up"]}),
+        ],
+    )
+    def test_merge_leaves_file_unchanged_when_merged_section_invalid(
+        self, tmp_path, section, value
+    ):
+        """Merge writes into cluster_components and fitness_function; if either
+        is invalid the file is left unchanged with a warning, not a crash."""
+        path = str(tmp_path / "krkn-ai.yaml")
+        _write_existing(path, ClusterComponents(namespaces=[Namespace(name="shop")]))
+        doc = yaml.safe_load(open(path))
+        doc[section] = value
+        with open(path, "w") as f:
+            yaml.safe_dump(doc, f)
+        original = open(path).read()
+
+        discovered = ClusterComponents(namespaces=[Namespace(name="pay")])
+        queries = [{"query": "up", "type": "point", "weight": 1, "enabled": True}]
+        with patch("krkn_ai.utils.fs.logger") as mock_logger:
+            save_discovery(
+                path, "merge", discovered, KUBECONFIG, fitness_queries=queries
+            )
+            assert mock_logger.warning.called
+        assert open(path).read() == original
+
     def test_merge_safe_to_repeat(self, tmp_path):
         """Running merge twice produces the same result."""
         path = str(tmp_path / "krkn-ai.yaml")

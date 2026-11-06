@@ -216,3 +216,170 @@ def test_generate_html_report_with_logs_config_and_lineage():
     assert "Origin Distribution" in html
     assert "GA Strategy per Generation" in html
     assert "Crossover" in html
+
+
+def test_generate_html_report_escaping_security():
+    malicious = "<script>alert('xss')</script>"
+    df_logs = [
+        {
+            "scenario_id": "1",
+            "job_status": False,
+            "run_uuid": malicious,
+            "timestamp": malicious,
+            "scenario_type": malicious,
+            "cluster_version": malicious,
+            "total_node_count": malicious,
+            "exit_status": malicious,
+            "duration": malicious,
+            "raw_text": malicious,
+        }
+    ]
+    config_data = {
+        "fitness_function": {
+            "query": malicious,
+            "type": malicious,
+        },
+        "health_checks": {
+            "applications": [
+                {
+                    "name": malicious,
+                    "url": malicious,
+                    "status_code": malicious,
+                    "timeout": malicious,
+                    "interval": malicious,
+                }
+            ]
+        },
+        "scenario": {malicious: {"enable": True}},
+        "cluster_components": {
+            "namespaces": [{"name": malicious}],
+            "nodes": [{"name": malicious}],
+        },
+    }
+    fitness_items = [
+        {
+            "name": malicious,
+            "category": malicious,
+            "type": malicious,
+            "enabled": False,
+            "weight": 0.0,
+            "reason": malicious,
+            "query": malicious,
+        }
+    ]
+    health_check_recos = [
+        {
+            "name": malicious,
+            "url": malicious,
+            "reason": malicious,
+        }
+    ]
+
+    html = generate_html_report(
+        df_results=pd.DataFrame(),
+        df_logs=df_logs,
+        config_data=config_data,
+        fitness_items=fitness_items,
+        health_check_recos=health_check_recos,
+        scen_id_to_name={"1": malicious},
+    )
+
+    # Ensure no raw unescaped script tags exist in the report output
+    assert "<script>alert('xss')</script>" not in html
+    assert "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;" in html or "&lt;script&gt;alert('xss')&lt;/script&gt;" in html
+
+
+def test_generate_html_report_config_parity_and_defaults():
+    # Empty fitness function should default flags to True according to model defaults
+    config_data = {"fitness_function": {}}
+    fitness_items = [
+        {
+            "name": "cpu_item",
+            "category": "node",
+            "type": "point",
+            "enabled": False,
+            "weight": 0.0,
+            "reason": "Metric not found in Prometheus",
+            "query": "node_cpu_utilization",
+        },
+        {
+            "name": "mem_item",
+            "category": "node",
+            "type": "range",
+            "enabled": True,
+            "weight": 1.5,
+            "reason": "",
+            "query": "node_memory_utilization",
+        },
+    ]
+    health_check_recos = [
+        {
+            "name": "auth-service",
+            "url": "http://auth:8080/health",
+            "reason": "Discovery found service but port closed",
+        }
+    ]
+
+    html = generate_html_report(
+        df_results=pd.DataFrame(),
+        config_data=config_data,
+        fitness_items=fitness_items,
+        health_check_recos=health_check_recos,
+    )
+
+    # Check defaults
+    assert "include_krkn_failure" in html
+    assert "include_health_check_failure" in html
+    assert "include_health_check_response_time" in html
+
+    # Check rejected item formatting
+    assert "Metric not found in Prometheus" in html
+    assert "rejected" in html
+    assert "in use" in html
+    assert "1.5000" in html
+
+    # Check recommended health checks table
+    assert "Discover found these services but left them commented out:" in html
+    assert "auth-service" in html
+    assert "http://auth:8080/health" in html
+    assert "Discovery found service but port closed" in html
+
+
+def test_generate_html_report_filtering_and_log_truncation():
+    df_logs = [
+        {
+            "scenario_id": "1",
+            "job_status": True,
+            "duration": "10s",
+            "raw_text": "X" * 60_000,
+        },
+        {
+            "scenario_id": "2",
+            "job_status": False,
+            "duration": "5s",
+            "raw_text": "Should be filtered out",
+        },
+    ]
+    df_lineage = pd.DataFrame(
+        {
+            "scenario_id": ["1", "2"],
+            "generation": [0, 0],
+            "origin": ["initial", "crossover"],
+        }
+    )
+
+    # Filter to scenario 1 only
+    html = generate_html_report(
+        df_results=pd.DataFrame(),
+        df_logs=df_logs,
+        df_lineage=df_lineage,
+        filtered_scenario_ids=["1"],
+    )
+
+    # Scenario 1 should be included and truncated
+    assert "Scenario 1" in html
+    assert "log truncated at 50,000 characters for HTML export" in html
+
+    # Scenario 2 should be excluded from logs and lineage
+    assert "Scenario 2" not in html
+    assert "Should be filtered out" not in html

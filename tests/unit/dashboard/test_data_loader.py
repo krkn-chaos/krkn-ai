@@ -1,5 +1,4 @@
 import json
-import os
 import streamlit as st
 import pytest
 import pandas as pd
@@ -117,7 +116,7 @@ def test_load_detailed_scenarios_data_no_files():
         assert df.empty
 
 
-def test_load_detailed_scenarios_data_valid_yaml():
+def test_load_detailed_scenarios_data_valid_yaml(tmp_path):
     yaml_content = """
 scenario_id: "scen_1"
 start_time: "2026-05-19T10:00:00Z"
@@ -130,19 +129,19 @@ health_check_results:
       success: true
       error: null
 """
-    with (
-        patch("glob.glob", return_value=["/tmp/scen1.yaml"]),
-        patch("builtins.open", mock_open(read_data=yaml_content)),
-    ):
-        df = load_detailed_scenarios_data("/tmp")
-        assert not df.empty
-        assert len(df) == 1
-        row = df.iloc[0]
-        assert row["scenario_id"] == "scen_1"
-        assert row["service"] == "svc1"
-        assert bool(row["success"]) is True
-        assert row["error"] == "None"
-        assert row["seconds_into_scenario"] == 5.0
+    gen_dir = tmp_path / "yaml" / "generation_0"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "scenario_1.yaml").write_text(yaml_content)
+
+    df = load_detailed_scenarios_data(str(tmp_path))
+
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["scenario_id"] == "scen_1"
+    assert row["service"] == "svc1"
+    assert bool(row["success"]) is True
+    assert row["error"] == "None"
+    assert row["seconds_into_scenario"] == 5.0
 
 
 def test_load_detailed_scenarios_data_exception():
@@ -259,19 +258,6 @@ def test_load_logs_exception():
         assert logs == []
 
 
-def test_load_detailed_scenarios_data_uses_configured_result_fmt():
-    with (
-        patch(
-            "krkn_ai.dashboard.data_loader.load_config_yaml",
-            return_value={"output": {"result_name_fmt": "gen_%g_%c_%s.yaml"}},
-        ),
-        patch("glob.glob", return_value=[]) as mock_glob,
-    ):
-        load_detailed_scenarios_data("/tmp")
-        called_pattern = mock_glob.call_args[0][0]
-        assert called_pattern.endswith(os.path.join("generation_*", "gen_*_*_*.yaml"))
-
-
 def test_load_detailed_scenarios_data_reads_json_results(tmp_path):
     """A run saved with -f json writes json/generation_*/*.json; its health
     check rows must reach the dashboard like a yaml run's do."""
@@ -302,8 +288,9 @@ def test_load_detailed_scenarios_data_reads_json_results(tmp_path):
     assert list(df["seconds_into_scenario"]) == [5.0]
 
 
-def test_load_detailed_scenarios_data_json_uses_configured_result_fmt(tmp_path):
-    """A json run with a custom result_name_fmt is found by that format."""
+@pytest.mark.parametrize("fmt, dump", [("json", json.dumps), ("yaml", yaml.safe_dump)])
+def test_load_detailed_scenarios_data_uses_configured_result_fmt(tmp_path, fmt, dump):
+    """Results in either format are found using the configured filename."""
     result = {
         "scenario_id": 3,
         "start_time": "2026-11-03T10:00:00",
@@ -311,9 +298,9 @@ def test_load_detailed_scenarios_data_json_uses_configured_result_fmt(tmp_path):
             "http://cart": [{"name": "cart", "timestamp": "2026-11-03T10:00:01"}]
         },
     }
-    gen_dir = tmp_path / "json" / "generation_0"
+    gen_dir = tmp_path / fmt / "generation_0"
     gen_dir.mkdir(parents=True)
-    (gen_dir / "gen_0_x_3.json").write_text(json.dumps(result))
+    (gen_dir / f"gen_0_x_3.{fmt}").write_text(dump(result))
 
     with patch(
         "krkn_ai.dashboard.data_loader.load_config_yaml",
@@ -349,38 +336,6 @@ def test_load_detailed_scenarios_data_json_keeps_small_numbers_numeric(tmp_path)
 
     assert pd.api.types.is_numeric_dtype(df["response_time"])
     assert df["response_time"].iloc[0] == 0.000001
-
-
-def test_load_detailed_scenarios_data_reused_run_uses_newest_result(tmp_path):
-    """--run-uuid reused with a different -f leaves both trees: every scenario
-    is read, and one saved in both comes from the newer file."""
-
-    def result(scenario_id, service):
-        return {
-            "scenario_id": scenario_id,
-            "start_time": "2026-11-03T10:00:00",
-            "health_check_results": {
-                "http://cart": [{"name": service, "timestamp": "2026-11-03T10:00:01"}]
-            },
-        }
-
-    json_dir = tmp_path / "json" / "generation_0"
-    yaml_dir = tmp_path / "yaml" / "generation_0"
-    json_dir.mkdir(parents=True)
-    yaml_dir.mkdir(parents=True)
-    old_json = json_dir / "scenario_1.json"
-    old_json.write_text(json.dumps(result(1, "stale")))
-    os.utime(old_json, (1000, 1000))
-    new_yaml = yaml_dir / "scenario_1.yaml"
-    new_yaml.write_text(yaml.safe_dump(result(1, "current")))
-    os.utime(new_yaml, (2000, 2000))
-    (json_dir / "scenario_2.json").write_text(json.dumps(result(2, "json_only")))
-
-    with patch("krkn_ai.dashboard.data_loader.load_config_yaml", return_value=None):
-        df = load_detailed_scenarios_data(str(tmp_path))
-
-    services = dict(zip(df["scenario_id"], df["service"]))
-    assert services == {"1": "current", "2": "json_only"}
 
 
 def test_load_logs_uses_configured_log_fmt_for_scenario_id():

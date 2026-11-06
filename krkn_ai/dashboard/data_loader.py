@@ -348,25 +348,13 @@ def load_detailed_scenarios_data(output_dir: str):
     output_config = _get_output_config(output_dir)
     result_glob = fmt_to_glob(output_config.result_name_fmt)
     base_name, _ext = os.path.splitext(result_glob)
-    # results live under <output>/<format>/generation_*/ for the run's -f
-    # format. Reusing --run-uuid with another -f leaves both trees; a scenario
-    # saved in both comes from the newer file.
-    newest: dict = {}
+    result_files = []
     for fmt in ("json", "yaml"):
         pattern = os.path.join(output_dir, fmt, "generation_*", f"{base_name}.{fmt}")
-        for path in glob.glob(pattern):
-            key = (
-                os.path.basename(os.path.dirname(path)),
-                os.path.splitext(os.path.basename(path))[0],
-            )
-            current = newest.get(key)
-            if current is None or (
-                current != path and os.path.getmtime(path) > os.path.getmtime(current)
-            ):
-                newest[key] = path
+        result_files.extend(glob.glob(pattern))
 
     rows = []
-    for filepath in newest.values():
+    for filepath in result_files:
         try:
             with open(filepath, "r") as f:
                 # yaml.safe_load reads a json number like 1e-06 as a string

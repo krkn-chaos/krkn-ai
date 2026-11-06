@@ -57,12 +57,10 @@ class GenerationsReporter:
         results = []
         with open(save_path, "w", encoding="utf-8") as f:
             for i in range(len(best_generations)):
-                scenario_result = best_generations[i].model_dump()
+                # JSON mode turns enums (scenario.origin) and timestamps into plain
+                # values, so the YAML writer never emits Python-specific tags.
+                scenario_result = best_generations[i].model_dump(mode="json")
                 del scenario_result["log"]
-                scenario_result["start_time"] = (
-                    scenario_result["start_time"]
-                ).isoformat()
-                scenario_result["end_time"] = (scenario_result["end_time"]).isoformat()
                 results.append(scenario_result)
             if self.format == "json":
                 json.dump(results, f, indent=4)

@@ -204,6 +204,24 @@ class HealthCheckConfig(BaseModel):
     applications: List[HealthCheckApplicationConfig] = []
     headers: Optional[Dict[str, str]] = None
 
+    @field_validator("applications", mode="after")
+    @classmethod
+    def unique_application_names(
+        cls, applications: List[HealthCheckApplicationConfig]
+    ) -> List[HealthCheckApplicationConfig]:
+        seen = set()
+        duplicates = set()
+        for app in applications:
+            if app.name in seen:
+                duplicates.add(app.name)
+            seen.add(app.name)
+        if duplicates:
+            raise ValueError(
+                f"Health check application names must be unique. "
+                f"Duplicate name(s) found: {', '.join(sorted(duplicates))}"
+            )
+        return applications
+
 
 class OutputConfig(BaseModel):
     """

@@ -257,9 +257,9 @@ class TestContainerScenario:
         cluster = ClusterComponents(namespaces=[Namespace(name="app", pods=[pod])])
         active = cluster.get_active_components()
 
-        for _ in range(50):
-            scenario = ContainerScenario(cluster_components=active)
-            assert scenario.container_name.value == "web"
+        assert [c.name for c in active.namespaces[0].pods[0].containers] == ["web"]
+        scenario = ContainerScenario(cluster_components=active)
+        assert scenario.container_name.value == "web"
 
     def test_container_scenario_raises_when_every_container_disabled(self):
         """With every container disabled there is nothing to target."""

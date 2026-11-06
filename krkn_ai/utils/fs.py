@@ -170,15 +170,32 @@ def _merge_fitness_items(raw: dict, fitness_queries: list = None) -> None:
         return
     ff = raw.setdefault("fitness_function", {})
     items = ff.get("items") or []
+    query = ff.get("query")
     seen = {item.get("query") for item in items}
+    new_items = []
     for f in fitness_queries:
-        if f.get("enabled") and f["query"] not in seen:
-            items.append(
+        if f.get("enabled") and f["query"] not in seen | {query}:
+            new_items.append(
                 {"query": f["query"], "type": f["type"], "weight": f["weight"]}
             )
             seen.add(f["query"])
-    if items:
-        ff["items"] = items
+    # A lone query with nothing new stays as it is
+    if not new_items and (query is None or not items):
+        return
+    # query wins over items at run time, so it moves to items for them to count.
+    # That includes items an earlier merge added next to the query.
+    if query is not None:
+        if query not in seen:
+            items.append(
+                {"query": query, "type": ff.get("type", "point"), "weight": 1.0}
+            )
+        del ff["query"]
+        ff.pop("type", None)
+        logger.warning(
+            "Moved fitness_function.query into fitness_function.items so that "
+            "all of them are scored."
+        )
+    ff["items"] = items + new_items
 
 
 def _build_merged_config(

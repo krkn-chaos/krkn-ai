@@ -5,9 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from krkn_ai.models.config import FitnessFunctionItem, FitnessFunctionType
+import yaml
+
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace
+from krkn_ai.models.config import (
+    FitnessFunction,
+    FitnessFunctionItem,
+    FitnessFunctionType,
+)
 from krkn_ai.templates.generator import create_krkn_ai_template
-from krkn_ai.utils.fs import _merge_fitness_items
+from krkn_ai.utils.fs import _merge_fitness_items, save_discovery
 from krkn_ai.utils.catalog import (
     BASE_CATALOG,
     CatalogEntry,
@@ -305,6 +312,101 @@ class TestMergeFitnessItems:
         raw = {"cluster_components": {}}
         _merge_fitness_items(raw, None)
         assert "fitness_function" not in raw
+
+    def test_query_moves_to_items_with_new_recommendations(self):
+        """A top-level query wins over items at run time, so it has to move for
+        the new items to count."""
+        raw = {"fitness_function": {"query": "old", "type": "range"}}
+        _merge_fitness_items(
+            raw, [{"query": "new", "type": "point", "weight": 0.3, "enabled": True}]
+        )
+        assert raw["fitness_function"] == {
+            "items": [
+                {"query": "old", "type": "range", "weight": 1.0},
+                {"query": "new", "type": "point", "weight": 0.3},
+            ]
+        }
+
+    def test_moved_query_defaults_to_point_type(self):
+        raw = {"fitness_function": {"query": "old"}}
+        _merge_fitness_items(
+            raw, [{"query": "new", "type": "range", "weight": 0.3, "enabled": True}]
+        )
+        assert raw["fitness_function"]["items"][0]["type"] == "point"
+
+    def test_query_already_in_items_is_not_added_twice(self):
+        raw = {
+            "fitness_function": {
+                "query": "old",
+                "items": [{"query": "old", "type": "range", "weight": 0.5}],
+            }
+        }
+        _merge_fitness_items(
+            raw, [{"query": "new", "type": "point", "weight": 0.3, "enabled": True}]
+        )
+        assert raw["fitness_function"] == {
+            "items": [
+                {"query": "old", "type": "range", "weight": 0.5},
+                {"query": "new", "type": "point", "weight": 0.3},
+            ]
+        }
+
+    @pytest.mark.parametrize(
+        "recommended",
+        [
+            {"query": "old", "type": "point", "weight": 0.3, "enabled": True},
+            {"query": "other", "type": "point", "weight": 0.0, "enabled": False},
+        ],
+        ids=["same_as_query", "disabled"],
+    )
+    def test_query_stays_when_nothing_new_is_added(self, recommended):
+        raw = {"fitness_function": {"query": "old", "type": "range"}}
+        _merge_fitness_items(raw, [recommended])
+        assert raw["fitness_function"] == {"query": "old", "type": "range"}
+
+    def test_config_from_an_earlier_merge_moves_query_without_new_items(self):
+        """An earlier merge left items next to query; merging again must not leave
+        them ignored just because they are all known already."""
+        raw = {
+            "fitness_function": {
+                "query": "old",
+                "items": [{"query": "new", "type": "range", "weight": 0.5}],
+            }
+        }
+        _merge_fitness_items(
+            raw, [{"query": "new", "type": "range", "weight": 0.5, "enabled": True}]
+        )
+        assert raw["fitness_function"] == {
+            "items": [
+                {"query": "new", "type": "range", "weight": 0.5},
+                {"query": "old", "type": "point", "weight": 1.0},
+            ]
+        }
+
+    def test_merged_config_loads_with_items_and_no_query(self, tmp_path):
+        """Through save_discovery and the model, the way a run reads the file."""
+        path = tmp_path / "krkn-ai.yaml"
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("apiVersion: v1\n")
+        components = ClusterComponents(namespaces=[Namespace(name="shop")])
+        save_discovery(str(path), "overwrite", components, str(kubeconfig))
+        old_query = yaml.safe_load(path.read_text())["fitness_function"]["query"]
+
+        save_discovery(
+            str(path),
+            "merge",
+            components,
+            str(kubeconfig),
+            fitness_queries=[
+                {"query": "new", "type": "point", "weight": 0.3, "enabled": True}
+            ],
+        )
+
+        fitness = FitnessFunction(
+            **yaml.safe_load(path.read_text())["fitness_function"]
+        )
+        assert fitness.query is None
+        assert [item.query for item in fitness.items] == [old_query, "new"]
 
 
 class TestTemplateWiring:

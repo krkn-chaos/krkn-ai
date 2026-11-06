@@ -156,14 +156,17 @@ class HealthCheckWatcher:
         failed = sum(1 for r in all_results if not r.success)
         failure_rate = failed / total
 
-        current_streak = 0
+        # Streaks are counted per URL so the tail of one URL's results does
+        # not join the head of the next URL's results.
         max_streak = 0
-        for r in all_results:
-            if not r.success:
-                current_streak += 1
-                max_streak = max(max_streak, current_streak)
-            else:
-                current_streak = 0
+        for result_list in results.values():
+            current_streak = 0
+            for r in result_list:
+                if not r.success:
+                    current_streak += 1
+                    max_streak = max(max_streak, current_streak)
+                else:
+                    current_streak = 0
         streak_ratio = max_streak / total
 
         score = (failure_rate + streak_ratio) / 2.0

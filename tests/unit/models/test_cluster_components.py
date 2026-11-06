@@ -5,6 +5,7 @@ ClusterComponents model tests
 from krkn_ai.models.cluster_components import (
     ClusterComponents,
     Namespace,
+    OwnerReference,
     Pod,
     Container,
     Service,
@@ -177,3 +178,86 @@ class TestPVC:
         # Test with usage percentage
         pvc = PVC(name="test-pvc", current_usage_percentage=85.5)
         assert pvc.current_usage_percentage == 85.5
+
+
+class TestActiveComponentsContainers:
+    """get_active_components must drop containers marked ``disabled: true``."""
+
+    def _cluster(self):
+        pod = Pod(
+            name="cart-1",
+            labels={"service": "cart"},
+            containers=[
+                Container(name="cart"),
+                Container(name="istio-proxy", disabled=True),
+            ],
+        )
+        return ClusterComponents(namespaces=[Namespace(name="shop", pods=[pod])])
+
+    def test_disabled_container_is_filtered_out(self):
+        active = self._cluster().get_active_components()
+        names = [c.name for c in active.namespaces[0].pods[0].containers]
+        assert names == ["cart"]
+
+    def test_filters_every_pod_and_namespace_and_keeps_other_fields(self):
+        """All disabled containers go, in every pod and namespace. A pod with
+        only disabled containers stays for pod-level scenarios, a disabled pod
+        does not, and the rest of a filtered pod is kept."""
+        owner = OwnerReference(kind="Deployment", name="cart")
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(
+                    name="shop",
+                    pods=[
+                        Pod(name="plain", containers=[Container(name="app")]),
+                        Pod(
+                            name="sidecars",
+                            labels={"service": "cart"},
+                            owner=owner,
+                            containers=[
+                                Container(name="cart"),
+                                Container(name="istio-proxy", disabled=True),
+                                Container(name="fluentd", disabled=True),
+                            ],
+                        ),
+                        Pod(
+                            name="all-off",
+                            containers=[Container(name="job", disabled=True)],
+                        ),
+                        Pod(name="off", disabled=True),
+                    ],
+                ),
+                Namespace(
+                    name="pay",
+                    pods=[
+                        Pod(
+                            name="ledger",
+                            containers=[
+                                Container(name="db", disabled=True),
+                                Container(name="api"),
+                            ],
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        active = cluster.get_active_components()
+
+        result = {
+            ns.name: {p.name: [c.name for c in p.containers] for p in ns.pods}
+            for ns in active.namespaces
+        }
+        assert result == {
+            "shop": {"plain": ["app"], "sidecars": ["cart"], "all-off": []},
+            "pay": {"ledger": ["api"]},
+        }
+        sidecars = active.namespaces[0].pods[1]
+        assert sidecars.owner == owner
+        assert sidecars.labels == {"service": "cart"}
+
+    def test_original_components_are_not_modified(self):
+        cluster = self._cluster()
+        cluster.get_active_components()
+        names = [c.name for c in cluster.namespaces[0].pods[0].containers]
+        assert names == ["cart", "istio-proxy"]

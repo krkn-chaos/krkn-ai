@@ -346,17 +346,19 @@ def _get_output_config(output_dir: str) -> OutputConfig:
 @st.cache_data(ttl=300)
 def load_detailed_scenarios_data(output_dir: str):
     output_config = _get_output_config(output_dir)
-    yaml_glob = fmt_to_glob(output_config.result_name_fmt)
-    base_name, _ext = os.path.splitext(yaml_glob)
-    yaml_glob = f"{base_name}.yaml"
-    yaml_pattern = os.path.join(output_dir, "yaml", "generation_*", yaml_glob)
-    yaml_files = glob.glob(yaml_pattern)
+    result_glob = fmt_to_glob(output_config.result_name_fmt)
+    base_name, _ext = os.path.splitext(result_glob)
+    result_files = []
+    for fmt in ("json", "yaml"):
+        pattern = os.path.join(output_dir, fmt, "generation_*", f"{base_name}.{fmt}")
+        result_files.extend(glob.glob(pattern))
 
     rows = []
-    for filepath in yaml_files:
+    for filepath in result_files:
         try:
             with open(filepath, "r") as f:
-                data = yaml.safe_load(f)
+                # yaml.safe_load reads a json number like 1e-06 as a string
+                data = json.load(f) if filepath.endswith(".json") else yaml.safe_load(f)
 
             scen_id = data.get("scenario_id")
             start_time_str = data.get("start_time")

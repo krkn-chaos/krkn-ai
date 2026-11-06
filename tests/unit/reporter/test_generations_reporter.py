@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
+from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.cluster_components import ClusterComponents
 
@@ -61,6 +62,39 @@ class TestGenerationsReporter:
             assert "log" not in results[0]  # log should be removed
             assert results[1]["generation_id"] == 1
             assert results[1]["fitness_result"]["fitness_score"] == 20.0
+
+    def test_save_best_generations_yaml_is_plain_yaml(self, temp_output_dir):
+        """best_scenarios.yaml has no Python-specific tags, so safe_load reads it"""
+        reporter = GenerationsReporter(output_dir=temp_output_dir, format="yaml")
+        scenario = DummyScenario(cluster_components=ClusterComponents())
+        scenario.origin = ScenarioOrigin.CROSSOVER
+        start = datetime.datetime(2026, 11, 6, 10, 0, 0, 123456)
+
+        reporter.save_best_generations(
+            [
+                CommandRunResult(
+                    generation_id=1,
+                    scenario_id=7,
+                    scenario=scenario,
+                    cmd="test-cmd",
+                    log="test-log",
+                    returncode=0,
+                    start_time=start,
+                    end_time=start,
+                    fitness_result=FitnessResult(fitness_score=42.0),
+                )
+            ]
+        )
+
+        save_path = os.path.join(temp_output_dir, "reports", "best_scenarios.yaml")
+        with open(save_path, "r") as f:
+            content = f.read()
+        assert "!!python" not in content
+
+        results = yaml.safe_load(content)
+        assert results[0]["scenario"]["origin"] == "crossover"
+        assert results[0]["start_time"] == "2026-11-06T10:00:00.123456"
+        assert "log" not in results[0]
 
     def test_save_best_generations_json_format(self, temp_output_dir):
         """Test saving best generations in JSON format"""

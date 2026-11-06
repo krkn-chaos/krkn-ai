@@ -462,6 +462,11 @@ def main():
                     anomaly_mode=amode,
                     fitness_items=fitness_items,
                     learned_weights=learned_weights,
+                    df_logs=df_logs,
+                    config_data=config_data,
+                    df_lineage=df_lineage,
+                    scen_id_to_name=scen_id_to_name,
+                    health_check_recos=health_check_recos,
                 ).encode("utf-8")
 
         from datetime import datetime as _dt

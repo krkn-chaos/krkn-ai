@@ -1,7 +1,9 @@
 """Unit tests for the fitness catalog and its recommender."""
 
 from threading import Barrier, Lock
+import copy
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -334,11 +336,13 @@ class TestMergeFitnessItems:
         )
         assert raw["fitness_function"]["items"][0]["type"] == "point"
 
-    def test_query_already_in_items_is_not_added_twice(self):
+    def test_query_already_in_items_keeps_the_query_type(self):
+        """The top-level type is what was scoring, so it wins over the item's."""
         raw = {
             "fitness_function": {
                 "query": "old",
-                "items": [{"query": "old", "type": "range", "weight": 0.5}],
+                "type": "range",
+                "items": [{"query": "old", "type": "point", "weight": 0.5}],
             }
         }
         _merge_fitness_items(
@@ -364,24 +368,28 @@ class TestMergeFitnessItems:
         _merge_fitness_items(raw, [recommended])
         assert raw["fitness_function"] == {"query": "old", "type": "range"}
 
-    def test_config_from_an_earlier_merge_moves_query_without_new_items(self):
-        """An earlier merge left items next to query; merging again must not leave
-        them ignored just because they are all known already."""
-        raw = {
-            "fitness_function": {
-                "query": "old",
-                "items": [{"query": "new", "type": "range", "weight": 0.5}],
-            }
+    @pytest.mark.parametrize(
+        "recommended",
+        [
+            None,
+            [],
+            [{"query": "known", "type": "range", "weight": 0.5, "enabled": True}],
+        ],
+        ids=["none", "empty", "already_known"],
+    )
+    def test_query_and_items_stay_and_warn_when_nothing_new(self, recommended):
+        """Items may be inactive on purpose, so scoring must not change; the
+        warning says how to make them count."""
+        original = {
+            "query": "old",
+            "items": [{"query": "known", "type": "range", "weight": 0.5}],
         }
-        _merge_fitness_items(
-            raw, [{"query": "new", "type": "range", "weight": 0.5, "enabled": True}]
-        )
-        assert raw["fitness_function"] == {
-            "items": [
-                {"query": "new", "type": "range", "weight": 0.5},
-                {"query": "old", "type": "point", "weight": 1.0},
-            ]
-        }
+        raw = {"fitness_function": copy.deepcopy(original)}
+        with patch("krkn_ai.utils.fs.logger") as logger:
+            _merge_fitness_items(raw, recommended)
+        assert raw["fitness_function"] == original
+        logger.warning.assert_called_once()
+        assert "not scored" in logger.warning.call_args[0][0]
 
     def test_merged_config_loads_with_items_and_no_query(self, tmp_path):
         """Through save_discovery and the model, the way a run reads the file."""

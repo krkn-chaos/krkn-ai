@@ -127,12 +127,12 @@ class HealthCheckWatcher:
 
         with self._results_lock:
             snapshots = [
-                (url, list(thread_results))
-                for url, thread_results in self._thread_results.values()
+                (app_name, list(thread_results))
+                for app_name, thread_results in self._thread_results.values()
             ]
 
-        for url, thread_results in snapshots:
-            results[url].extend(thread_results)
+        for app_name, thread_results in snapshots:
+            results[app_name].extend(thread_results)
 
         return dict(results)
 
@@ -197,7 +197,7 @@ class HealthCheckWatcher:
         """
         url_scores: List[float] = []
 
-        for url, results in health_check_results.items():
+        for app_name, results in health_check_results.items():
             response_times = [
                 r.response_time for r in results if r.success and r.response_time >= 0
             ]
@@ -217,8 +217,8 @@ class HealthCheckWatcher:
 
             url_score = variability_score
 
-            if baseline_stats is not None and url in baseline_stats:
-                bl_median, bl_mad = baseline_stats[url]
+            if baseline_stats is not None and app_name in baseline_stats:
+                bl_median, bl_mad = baseline_stats[app_name]
                 effective_mad = max(bl_mad, 0.001)
                 scenario_median = float(np.median(arr))
                 degradation = (scenario_median - bl_median) / effective_mad
@@ -230,16 +230,16 @@ class HealthCheckWatcher:
         if not url_scores:
             return 0.0
         score = float(np.mean(url_scores))
-        logger.debug("Response time score: %.3f (%d URLs)", score, len(url_scores))
+        logger.debug("Response time score: %.3f (%d applications)", score, len(url_scores))
         return score
 
 
 def compute_baseline_response_stats(
     health_check_results: Dict[str, List[HealthCheckResult]],
 ) -> Dict[str, Tuple[float, float]]:
-    """Compute per-URL (median, MAD) from a baseline run's health check results."""
+    """Compute per-application (median, MAD) from a baseline run's health check results."""
     stats: Dict[str, Tuple[float, float]] = {}
-    for url, results in health_check_results.items():
+    for app_name, results in health_check_results.items():
         response_times = [
             r.response_time for r in results if r.success and r.response_time >= 0
         ]
@@ -248,5 +248,5 @@ def compute_baseline_response_stats(
         arr = np.array(response_times, dtype=float)
         median = float(np.median(arr))
         mad = float(np.median(np.abs(arr - median)))
-        stats[url] = (median, mad)
+        stats[app_name] = (median, mad)
     return stats

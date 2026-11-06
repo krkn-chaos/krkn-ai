@@ -617,6 +617,58 @@ class TestClusterManager:
         assert by_name["good-node"].interfaces == ["eth0"]
         assert by_name["bad-node"].interfaces == []
 
+    def test_interface_budget_preserves_nodes_and_stops_queued_probes(
+        self, cluster_manager
+    ):
+        """An exhausted probe budget cannot start another remote debug command."""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        raw_nodes = []
+        for name in ("timed-out", "completed", "not-started"):
+            node = Mock()
+            node.metadata.name = name
+            node.metadata.labels = {"kubernetes.io/hostname": name}
+            node.spec.taints = None
+            node.spec.unschedulable = False
+            node.status.conditions = [Mock(type="Ready", status="True")]
+            node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+            raw_nodes.append(node)
+        cluster_manager.core_api.list_node.return_value.items = raw_nodes
+        cluster_manager.custom_obj_api.list_cluster_custom_object.return_value = {
+            "items": []
+        }
+        clock = [0.0]
+
+        def probe(command, **kwargs):
+            clock[0] += kwargs["timeout"]
+            if "node/timed-out" in command:
+                raise ShellCommandTimeoutError("probe deadline")
+            if "node/not-started" in command:
+                pytest.fail("A queued node was probed after the stage deadline")
+            return "eth0\nlo\n", 0
+
+        with (
+            patch("krkn_ai.cluster.cluster_manager.time.monotonic", lambda: clock[0]),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_WORKERS", 1),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_COMMAND_TIMEOUT", 1),
+            patch(
+                "krkn_ai.cluster.cluster_manager._NODE_INTERFACE_DISCOVERY_TIMEOUT", 2
+            ),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_CLEANUP_GRACE", 0),
+            patch("krkn_ai.cluster.cluster_manager.run_shell", side_effect=probe),
+            patch(
+                "krkn_ai.cluster.cluster_manager.concurrent.futures.as_completed",
+                side_effect=lambda futures: futures,
+            ),
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert {node.name: node.interfaces for node in nodes} == {
+            "timed-out": [],
+            "completed": ["eth0"],
+            "not-started": [],
+        }
+
 
 def _http_get(path, port, scheme="HTTP"):
     hg = Mock()
@@ -705,6 +757,76 @@ class TestRecommendHealthChecks:
     def _set(self, cluster_manager, services, pods):
         cluster_manager.core_api.list_namespaced_service.return_value.items = services
         cluster_manager.core_api.list_namespaced_pod.return_value.items = pods
+
+    @patch.object(ClusterManager, "_check_reachable", return_value=True)
+    def test_discovery_health_checks_share_snapshot_and_next_scan_refreshes(
+        self, _mock_reach, cluster_manager
+    ):
+        """Health URLs use the same raw inventory even when labels/pods are omitted."""
+        from types import SimpleNamespace
+
+        first = _svc("cart", selector={"app": "cart"}, ports=[_svc_port(80, 8080)])
+        second = _svc(
+            "cart", ip="5.6.7.8", selector={"app": "cart"}, ports=[_svc_port(80, 8080)]
+        )
+        for service in (first, second):
+            service.metadata.labels = {}
+            service.spec.ports[0].protocol = "TCP"
+        pod = _pod(
+            {"app": "cart"},
+            [_container(readiness=_probe(_http_get("/ready", 8080)))],
+        )
+        pod.metadata.name = "cart-0"
+        pod.metadata.owner_references = []
+        pod.spec.containers[0].name = "cart"
+        cluster_manager.krkn_k8s.list_namespaces.return_value = ["shop"]
+        cluster_manager.core_api.list_namespaced_pod.side_effect = [
+            SimpleNamespace(items=[pod]),
+            SimpleNamespace(items=[pod]),
+        ]
+        cluster_manager.core_api.list_namespaced_service.side_effect = [
+            SimpleNamespace(items=[first]),
+            SimpleNamespace(items=[second]),
+        ]
+        cluster_manager.core_api.list_namespaced_persistent_volume_claim.return_value.items = []
+        cluster_manager.core_api.list_node.return_value.items = []
+        cluster_manager.custom_obj_api.list_namespaced_custom_object.return_value = {
+            "items": []
+        }
+        cluster_manager.custom_obj_api.list_cluster_custom_object.return_value = {
+            "items": []
+        }
+
+        components = cluster_manager.discover_components(
+            namespace_pattern="shop", pod_label_pattern="env", skip_pod_name="cart-.*"
+        )
+        assert components.namespaces[0].pods == []
+        assert cluster_manager.recommend_health_checks(components) == [
+            {
+                "name": "cart",
+                "url": "http://1.2.3.4:80/ready",
+                "probe": True,
+                "active": True,
+            }
+        ]
+        refreshed = cluster_manager.discover_components(namespace_pattern="shop")
+        assert cluster_manager.recommend_health_checks(refreshed)[0]["url"] == (
+            "http://5.6.7.8:80/ready"
+        )
+
+    @patch.object(ClusterManager, "_check_reachable", return_value=True)
+    def test_empty_service_snapshot_is_not_replaced_during_recommendation(
+        self, _mock_reach, cluster_manager
+    ):
+        """A newly created service is discovered on the next scan, not mid-snapshot."""
+        cluster_manager.core_api.list_namespaced_service.return_value.items = []
+        cluster_manager.list_services(Namespace(name="shop"))
+        cluster_manager.core_api.list_namespaced_service.return_value.items = [
+            _svc("new-cart", ports=[_svc_port(80)])
+        ]
+        cluster_manager.core_api.list_namespaced_pod.return_value.items = []
+
+        assert cluster_manager.recommend_health_checks(self._components()) == []
 
     @patch.object(ClusterManager, "_check_reachable", return_value=True)
     def test_stitches_service_port_and_probe_path(self, _mock_reach, cluster_manager):

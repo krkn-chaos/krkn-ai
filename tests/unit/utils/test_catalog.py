@@ -1,5 +1,6 @@
 """Unit tests for the fitness catalog and its recommender."""
 
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -40,9 +41,11 @@ class _FakeProm:
         self._metrics = list(metrics)
         self._rule = query_rule or (lambda q: [{"value": [0, "1"]}])  # 1 series
         self._metrics_raises = metrics_raises
+        self.metric_list_calls = 0
         self.prom_cli = SimpleNamespace(all_metrics=self._all_metrics)
 
     def _all_metrics(self):
+        self.metric_list_calls += 1
         if self._metrics_raises:
             raise RuntimeError("prometheus down")
         return self._metrics
@@ -133,6 +136,44 @@ class TestRecommendFitnessQueries:
         assert all(r["enabled"] for r in results)
         # no history -> equal split, weights sum to ~1
         assert abs(sum(r["weight"] for r in results) - 1.0) < 0.01
+        assert prom.metric_list_calls == 1
+
+    def test_validation_is_bounded_and_output_order_is_deterministic(self):
+        active = 0
+        maximum_active = 0
+        calls = []
+        lock = Lock()
+        start_together = Barrier(8)
+        started = 0
+
+        def rule(query):
+            nonlocal active, maximum_active, started
+            with lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                calls.append(query)
+                started += 1
+                wait_for_initial_workers = started <= 8
+            try:
+                if wait_for_initial_workers:
+                    start_together.wait(timeout=2)
+            finally:
+                with lock:
+                    active -= 1
+            return [{"value": [0, "1"]}]
+
+        results = recommend_fitness_queries(
+            _components(["demo"]), _FakeProm(_all_required_metrics(), rule)
+        )
+        expected_names = [
+            f"{entry.key}:demo" if entry.scope is Scope.namespace else entry.key
+            for entry in BASE_CATALOG
+        ]
+        assert [result["name"] for result in results] == expected_names
+        assert len(calls) == len(results)
+        assert maximum_active == 8
+        assert all(result["enabled"] for result in results)
+        assert abs(sum(result["weight"] for result in results) - 1.0) < 0.01
 
     def test_missing_metric_is_gated_out(self):
         metrics = _all_required_metrics() - {
@@ -171,6 +212,19 @@ class TestRecommendFitnessQueries:
         api = next(r for r in results if r["name"] == "apiserver-errors")
         assert api["enabled"] is False
         assert "needs aggregation" in api["reason"]
+
+    def test_query_failure_reason_is_retained(self):
+        def rule(query):
+            if "apiserver" in query:
+                raise RuntimeError("unavailable")
+            return [{"value": [0, "1"]}]
+
+        results = recommend_fitness_queries(
+            _components(["demo"]), _FakeProm(_all_required_metrics(), rule)
+        )
+        api = next(r for r in results if r["name"] == "apiserver-errors")
+        assert api["enabled"] is False
+        assert api["reason"] == "query failed to run: unavailable"
 
     def test_namespace_scoping_expands_per_namespace(self):
         prom = _FakeProm(_all_required_metrics())

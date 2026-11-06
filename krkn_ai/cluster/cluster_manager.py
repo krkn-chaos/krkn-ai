@@ -1,12 +1,14 @@
 import re
 import ipaddress
 import concurrent.futures
+import shlex
+import time
 from collections import Counter
 from typing import Dict, List, Optional, Union
 
 import requests
 from krkn_lib.k8s.krkn_kubernetes import KrknKubernetes
-from kubernetes.client.models import V1PodSpec
+from kubernetes.client.models import V1Pod, V1PodSpec, V1Service
 from kubernetes.client.rest import ApiException
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
@@ -26,6 +28,12 @@ from krkn_ai.models.cluster_components import (
 from krkn_ai.models.cluster_components import VMI
 
 logger = get_logger(__name__)
+
+_NODE_INTERFACE_WORKERS = 4
+_NODE_INTERFACE_COMMAND_TIMEOUT = 30
+_NODE_INTERFACE_DISCOVERY_TIMEOUT = 60
+# run_shell can spend five seconds terminating and five draining output.
+_NODE_INTERFACE_CLEANUP_GRACE = 10
 
 # Network interface name prefixes that are valid targets for network chaos.
 # Covers classic and predictable NIC names, bonds, bridges, InfiniBand and
@@ -73,6 +81,8 @@ class ClusterManager:
         self.api_client = self.krkn_k8s.api_client
         self.core_api = self.krkn_k8s.cli
         self.custom_obj_api = self.krkn_k8s.custom_object_client
+        self._pod_snapshot: Dict[str, List[V1Pod]] = {}
+        self._service_snapshot: Dict[str, List[V1Service]] = {}
         logger.debug("ClusterManager initialized with kubeconfig: %s", kubeconfig)
 
     def discover_components(
@@ -99,6 +109,9 @@ class ClusterManager:
         Returns:
             ClusterComponents with discovered namespaces, pods, services, etc.
         """
+        # Snapshots belong to this discovery, never a previous cluster scan.
+        self._pod_snapshot.clear()
+        self._service_snapshot.clear()
         namespaces = self.list_namespaces(namespace_pattern)
 
         for i, namespace in enumerate(namespaces):
@@ -202,6 +215,7 @@ class ClusterManager:
         pods = self.core_api.list_namespaced_pod(
             namespace=namespace.name, field_selector="status.phase=Running"
         ).items
+        self._pod_snapshot[namespace.name] = pods
         pod_list = []
 
         for pod in pods:
@@ -236,6 +250,7 @@ class ClusterManager:
 
     def list_services(self, namespace: Namespace) -> List[Service]:
         services = self.core_api.list_namespaced_service(namespace=namespace.name).items
+        self._service_snapshot[namespace.name] = services
         service_list = []
 
         for svc in services:
@@ -272,12 +287,16 @@ class ClusterManager:
         try:
             recommendations: List[Dict[str, Union[str, bool]]] = []
             for namespace in cluster_components.get_active_components().namespaces:
-                services = self.core_api.list_namespaced_service(
-                    namespace=namespace.name
-                ).items
-                pods = self.core_api.list_namespaced_pod(
-                    namespace=namespace.name, field_selector="status.phase=Running"
-                ).items
+                services = self._service_snapshot.get(namespace.name)
+                if services is None:
+                    services = self.core_api.list_namespaced_service(
+                        namespace=namespace.name
+                    ).items
+                pods = self._pod_snapshot.get(namespace.name)
+                if pods is None:
+                    pods = self.core_api.list_namespaced_pod(
+                        namespace=namespace.name, field_selector="status.phase=Running"
+                    ).items
 
                 for svc in services:
                     if svc.spec.type != "LoadBalancer" or not svc.spec.ports:
@@ -603,10 +622,25 @@ class ClusterManager:
                     node_list.append(result)
 
         if node_list:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
+            deadline = time.monotonic() + _NODE_INTERFACE_DISCOVERY_TIMEOUT
+
+            def probe_interfaces(node):
+                remaining = deadline - time.monotonic() - _NODE_INTERFACE_CLEANUP_GRACE
+                if remaining <= 0:
+                    logger.warning(
+                        "Node interface discovery budget exhausted, skipping %s",
+                        node.name,
+                    )
+                    return []
+                return self.list_node_interfaces(
+                    node.name, timeout=min(_NODE_INTERFACE_COMMAND_TIMEOUT, remaining)
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=_NODE_INTERFACE_WORKERS
+            ) as executor:
                 future_to_node = {
-                    executor.submit(self.list_node_interfaces, node.name): node
-                    for node in node_list
+                    executor.submit(probe_interfaces, node): node for node in node_list
                 }
                 for future in concurrent.futures.as_completed(future_to_node):
                     node = future_to_node[future]
@@ -622,13 +656,16 @@ class ClusterManager:
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list
 
-    def list_node_interfaces(self, node: str) -> List[str]:
+    def list_node_interfaces(
+        self, node: str, *, timeout: float = _NODE_INTERFACE_COMMAND_TIMEOUT
+    ) -> List[str]:
         logger.debug("Listing node interfaces for node %s", node)
         try:
             log, code = run_shell(
-                f"oc debug -q node/{node} -- chroot /host ls /sys/class/net",
+                f"oc --kubeconfig {shlex.quote(self.kubeconfig)} debug -q "
+                f"{shlex.quote(f'node/{node}')} -- chroot /host ls /sys/class/net",
                 do_not_log=True,
-                timeout=180,
+                timeout=min(timeout, _NODE_INTERFACE_COMMAND_TIMEOUT),
             )
         except ShellCommandTimeoutError:
             logger.warning("Timed out listing interfaces for node %s, skipping", node)

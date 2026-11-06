@@ -29,6 +29,18 @@ class TestPrometheusUtils:
         mock_api.list_cluster_custom_object.side_effect = Exception("Not OpenShift")
         assert is_openshift("/tmp/test-kubeconfig") is False
 
+    @patch("krkn_ai.utils.prometheus.config.load_kube_config")
+    @patch("krkn_ai.utils.prometheus.client.CustomObjectsApi")
+    def test_is_openshift_passes_timeout_to_the_api(self, mock_api_class, _):
+        """A caller-supplied timeout bounds the clusterversions request."""
+        mock_api = mock_api_class.return_value
+        mock_api.list_cluster_custom_object.return_value = {"items": []}
+        assert is_openshift("/tmp/test-kubeconfig", timeout=5) is True
+        assert (
+            mock_api.list_cluster_custom_object.call_args.kwargs["_request_timeout"]
+            == 5
+        )
+
     @patch("krkn_ai.utils.prometheus.KrknPrometheus")
     def test_create_client_from_env_vars(self, mock_prom_class):
         """Should prioritize PROMETHEUS_URL and PROMETHEUS_TOKEN from environment."""

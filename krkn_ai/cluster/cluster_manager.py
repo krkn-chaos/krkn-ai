@@ -12,6 +12,7 @@ from kubernetes.client.models import V1Pod, V1PodSpec, V1Service
 from kubernetes.client.rest import ApiException
 from krkn_ai.utils import run_shell
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.prometheus import is_openshift
 from krkn_ai.models.custom_errors import ShellCommandTimeoutError
 from krkn_ai.cluster.pattern_matcher import PatternMatcher
 from krkn_ai.models.cluster_components import (
@@ -34,6 +35,10 @@ _NODE_INTERFACE_COMMAND_TIMEOUT = 30
 _NODE_INTERFACE_DISCOVERY_TIMEOUT = 60
 # run_shell can spend five seconds terminating and five draining output.
 _NODE_INTERFACE_CLEANUP_GRACE = 10
+# 'oc debug node/...' runs this image. OpenShift nodes pull it with the
+# cluster pull secret; other distributions usually cannot pull it at all.
+OPENSHIFT_DEBUG_IMAGE = "registry.redhat.io/rhel8/support-tools"
+_OPENSHIFT_CHECK_TIMEOUT = 10
 
 # Network interface name prefixes that are valid targets for network chaos.
 # Covers classic and predictable NIC names, bonds, bridges, InfiniBand and
@@ -624,18 +629,19 @@ class ClusterManager:
         if node_list:
             deadline = time.monotonic() + _NODE_INTERFACE_DISCOVERY_TIMEOUT
 
-            def probe_interfaces(node):
+            def probe_interfaces(node) -> Optional[List[str]]:
                 remaining = deadline - time.monotonic() - _NODE_INTERFACE_CLEANUP_GRACE
                 if remaining <= 0:
                     logger.warning(
                         "Node interface discovery budget exhausted, skipping %s",
                         node.name,
                     )
-                    return []
-                return self.list_node_interfaces(
+                    return None
+                return self._list_node_interfaces(
                     node.name, timeout=min(_NODE_INTERFACE_COMMAND_TIMEOUT, remaining)
                 )
 
+            failed_nodes = 0
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=_NODE_INTERFACE_WORKERS
             ) as executor:
@@ -645,13 +651,31 @@ class ClusterManager:
                 for future in concurrent.futures.as_completed(future_to_node):
                     node = future_to_node[future]
                     try:
-                        node.interfaces = future.result()
+                        interfaces = future.result()
                     except Exception as e:
                         logger.error(
                             "Failed to list node interfaces for node %s: %s",
                             node.name,
                             e,
                         )
+                        continue
+                    if interfaces is None:
+                        failed_nodes += 1
+                    node.interfaces = interfaces or []
+
+            # The debug pod did not run anywhere. Outside OpenShift that is
+            # almost always the image pull (#358), so say so once instead of
+            # leaving only per-node timeouts in the log.
+            if failed_nodes == len(node_list) and not is_openshift(
+                self.kubeconfig, timeout=_OPENSHIFT_CHECK_TIMEOUT
+            ):
+                logger.warning(
+                    "No node interfaces were found on any node. Outside OpenShift, "
+                    "'oc debug' uses '%s', which nodes cannot pull without Red Hat "
+                    "registry credentials, so network scenarios will have no node "
+                    "interfaces to target.",
+                    OPENSHIFT_DEBUG_IMAGE,
+                )
 
         logger.debug("Filtered %d nodes", len(node_list))
         return node_list
@@ -659,6 +683,12 @@ class ClusterManager:
     def list_node_interfaces(
         self, node: str, *, timeout: float = _NODE_INTERFACE_COMMAND_TIMEOUT
     ) -> List[str]:
+        return self._list_node_interfaces(node, timeout=timeout) or []
+
+    def _list_node_interfaces(
+        self, node: str, *, timeout: float
+    ) -> Optional[List[str]]:
+        """List targetable interfaces, or ``None`` when the debug pod did not run."""
         logger.debug("Listing node interfaces for node %s", node)
         try:
             log, code = run_shell(
@@ -669,10 +699,10 @@ class ClusterManager:
             )
         except ShellCommandTimeoutError:
             logger.warning("Timed out listing interfaces for node %s, skipping", node)
-            return []
+            return None
         if code != 0:
             logger.warning("Unable to find interfaces for node %s", node)
-            return []
+            return None
 
         interfaces_list = [x.strip() for x in log.splitlines()]
 

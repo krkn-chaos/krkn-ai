@@ -166,19 +166,42 @@ def merge_components(
 
 def _merge_fitness_items(raw: dict, fitness_queries: list = None) -> None:
     """Add newly recommended enabled fitness items, keeping the user's existing ones."""
-    if not fitness_queries:
-        return
-    ff = raw.setdefault("fitness_function", {})
+    ff = raw.get("fitness_function") or {}
     items = ff.get("items") or []
+    query = ff.get("query")
     seen = {item.get("query") for item in items}
-    for f in fitness_queries:
-        if f.get("enabled") and f["query"] not in seen:
-            items.append(
+    new_items = []
+    for f in fitness_queries or []:
+        if f.get("enabled") and f["query"] not in seen | {query}:
+            new_items.append(
                 {"query": f["query"], "type": f["type"], "weight": f["weight"]}
             )
             seen.add(f["query"])
-    if items:
-        ff["items"] = items
+    if not new_items:
+        # With nothing to add, scoring stays as it is: items next to a query may
+        # be left over from an earlier merge or inactive on purpose.
+        if query is not None and items:
+            logger.warning(
+                "fitness_function.query is set, so fitness_function.items are "
+                "not scored. Remove query to score them."
+            )
+        return
+    # query wins over items at run time, so it moves to items for them to count
+    if query is not None:
+        query_type = ff.pop("type", "point")
+        for item in items:
+            if item.get("query") == query:
+                item["type"] = query_type
+                break
+        else:
+            items.append({"query": query, "type": query_type, "weight": 1.0})
+        del ff["query"]
+        logger.warning(
+            "Moved fitness_function.query into fitness_function.items so that "
+            "all of them are scored."
+        )
+    ff["items"] = items + new_items
+    raw["fitness_function"] = ff
 
 
 def _build_merged_config(

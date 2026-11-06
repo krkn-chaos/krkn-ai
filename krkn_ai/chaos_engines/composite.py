@@ -41,8 +41,9 @@ def build_graph_command(
 
 
 def _expand_composite_json(
-    scenario: CompositeScenario, root: str = "$", depends_on: str = None
+    scenario: CompositeScenario, root: str = "root", depends_on: str = None
 ):
+    # krknctl puts these keys in container names, which only allow [a-zA-Z0-9_.-]
     result = {}
     scenario_a = scenario.scenario_a
     scenario_b = scenario.scenario_b

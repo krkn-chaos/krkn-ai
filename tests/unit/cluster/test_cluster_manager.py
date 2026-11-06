@@ -669,6 +669,147 @@ class TestClusterManager:
             "not-started": [],
         }
 
+    def _ready_nodes(self, cluster_manager, *names):
+        def make_node(name):
+            node = Mock()
+            node.metadata.name = name
+            node.metadata.labels = {"kubernetes.io/hostname": name}
+            node.spec.taints = None
+            node.spec.unschedulable = False
+            ready = Mock()
+            ready.type = "Ready"
+            ready.status = "True"
+            node.status.conditions = [ready]
+            node.status.allocatable = {"cpu": "2", "memory": "4Gi"}
+            return node
+
+        cluster_manager.core_api.list_node.return_value.items = [
+            make_node(name) for name in names
+        ]
+        cluster_manager.custom_obj_api.list_cluster_custom_object.side_effect = (
+            Exception("no metrics")
+        )
+
+    @staticmethod
+    def _image_warnings(mock_logger):
+        return [
+            call.args[0]
+            for call in mock_logger.warning.call_args_list
+            if call.args[0].startswith("No node interfaces were found on any node")
+        ]
+
+    def test_explains_missing_interfaces_outside_openshift(self, cluster_manager):
+        """Every node is still probed; the log then says why none answered (#358)"""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        self._ready_nodes(cluster_manager, "node-a", "node-b", "node-c")
+
+        with (
+            patch(
+                "krkn_ai.cluster.cluster_manager.run_shell",
+                side_effect=ShellCommandTimeoutError("ImagePullBackOff"),
+            ) as mock_shell,
+            patch(
+                "krkn_ai.cluster.cluster_manager.is_openshift", return_value=False
+            ) as mock_ocp,
+            patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger,
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert all(node.interfaces == [] for node in nodes)
+        assert mock_shell.call_count == 3
+        mock_ocp.assert_called_once_with(cluster_manager.kubeconfig, timeout=10)
+        warnings = self._image_warnings(mock_logger)
+        assert len(warnings) == 1
+        assert "login" not in warnings[0]
+        assert "registry.redhat.io/rhel8/support-tools" in (
+            mock_logger.warning.call_args.args
+        )
+
+    def test_failed_debug_commands_count_like_timeouts(self, cluster_manager):
+        """A non-zero oc debug exit is a failed probe too"""
+        self._ready_nodes(cluster_manager, "node-a", "node-b")
+
+        with (
+            patch("krkn_ai.cluster.cluster_manager.run_shell", return_value=("", 1)),
+            patch("krkn_ai.cluster.cluster_manager.is_openshift", return_value=False),
+            patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger,
+        ):
+            cluster_manager.list_nodes()
+
+        assert len(self._image_warnings(mock_logger)) == 1
+
+    def test_no_explanation_when_any_node_answers(self, cluster_manager):
+        """One working node proves the image can run, so nothing extra is logged"""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        self._ready_nodes(cluster_manager, "node-a", "node-b")
+
+        def fake_run_shell(cmd, **kwargs):
+            if "node/node-b" in cmd:
+                raise ShellCommandTimeoutError("slow")
+            return ("eth0\nlo\n", 0)
+
+        with (
+            patch(
+                "krkn_ai.cluster.cluster_manager.run_shell", side_effect=fake_run_shell
+            ),
+            patch("krkn_ai.cluster.cluster_manager.is_openshift") as mock_ocp,
+            patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger,
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        by_name = {node.name: node.interfaces for node in nodes}
+        assert by_name == {"node-a": ["eth0"], "node-b": []}
+        mock_ocp.assert_not_called()
+        assert self._image_warnings(mock_logger) == []
+
+    def test_no_explanation_on_openshift(self, cluster_manager):
+        """OpenShift can pull the image, so a total failure is something else"""
+        self._ready_nodes(cluster_manager, "node-a")
+
+        with (
+            patch("krkn_ai.cluster.cluster_manager.run_shell", return_value=("", 1)),
+            patch("krkn_ai.cluster.cluster_manager.is_openshift", return_value=True),
+            patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger,
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert nodes[0].interfaces == []
+        assert self._image_warnings(mock_logger) == []
+
+    def test_exhausted_budget_counts_as_a_failed_probe(self, cluster_manager):
+        """Nodes skipped by the budget did not run the debug pod either"""
+        from krkn_ai.models.custom_errors import ShellCommandTimeoutError
+
+        self._ready_nodes(cluster_manager, "timed-out", "not-started")
+        clock = [0.0]
+
+        def probe(command, **kwargs):
+            clock[0] += kwargs["timeout"]
+            raise ShellCommandTimeoutError("probe deadline")
+
+        with (
+            patch("krkn_ai.cluster.cluster_manager.time.monotonic", lambda: clock[0]),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_WORKERS", 1),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_COMMAND_TIMEOUT", 1),
+            patch(
+                "krkn_ai.cluster.cluster_manager._NODE_INTERFACE_DISCOVERY_TIMEOUT", 1
+            ),
+            patch("krkn_ai.cluster.cluster_manager._NODE_INTERFACE_CLEANUP_GRACE", 0),
+            patch("krkn_ai.cluster.cluster_manager.run_shell", side_effect=probe),
+            patch(
+                "krkn_ai.cluster.cluster_manager.concurrent.futures.as_completed",
+                side_effect=lambda futures: futures,
+            ),
+            patch("krkn_ai.cluster.cluster_manager.is_openshift", return_value=False),
+            patch("krkn_ai.cluster.cluster_manager.logger") as mock_logger,
+        ):
+            nodes = cluster_manager.list_nodes()
+
+        assert all(node.interfaces == [] for node in nodes)
+        assert len(self._image_warnings(mock_logger)) == 1
+
 
 def _http_get(path, port, scheme="HTTP"):
     hg = Mock()

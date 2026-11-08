@@ -324,3 +324,65 @@ class TestPatternMatcherEdgeCases:
         matcher = PatternMatcher.from_string("!kube-system")
         # Has implicit match_all, so not empty
         assert not matcher.is_empty()
+
+
+class TestPatternMatcherCommaInsideRegex:
+    """A comma inside a regex belongs to it and does not separate patterns"""
+
+    def test_quantifier_with_comma_stays_one_pattern(self):
+        matcher = PatternMatcher.from_string("app-[0-9]{1,3}")
+        assert len(matcher.include_patterns) == 1
+        assert matcher.matches("app-1")
+        assert matcher.matches("app-42")
+        assert not matcher.matches("app-1000")
+
+    def test_exclusion_with_quantifier_excludes(self):
+        matcher = PatternMatcher.from_string("*,!team-[a-z]{2,4}")
+        assert not matcher.matches("team-ab")
+        assert matcher.matches("team-abcde")
+        assert matcher.matches("default")
+
+    def test_skip_style_exclusion_without_wildcard(self):
+        matcher = PatternMatcher.from_string("debug-[0-9]{1,3}")
+        assert matcher.matches("debug-7")
+        assert not matcher.matches("debug-1234")
+
+    def test_quantifier_followed_by_separator(self):
+        matcher = PatternMatcher.from_string("app-[0-9]{1,3},default")
+        assert len(matcher.include_patterns) == 2
+        assert matcher.filter(["app-42", "app-1000", "default", "other"]) == {
+            "app-42",
+            "default",
+        }
+
+    def test_comma_in_character_class(self):
+        matcher = PatternMatcher.from_string("shop-[a,b]")
+        assert matcher.matches("shop-a")
+        assert matcher.matches("shop-,")
+        assert not matcher.matches("shop-c")
+
+    def test_comma_in_group(self):
+        matcher = PatternMatcher.from_string("(a,b)-.*")
+        assert len(matcher.include_patterns) == 1
+        assert matcher.matches("a,b-x")
+
+    def test_escaped_bracket_does_not_hide_separator(self):
+        matcher = PatternMatcher.from_string(r"a\{,b")
+        assert matcher.filter(["a{", "b", "a{,b"]) == {"a{", "b"}
+
+    def test_list_input_with_quantifier(self):
+        matcher = PatternMatcher.from_string(["app-[0-9]{1,3}", "!app-7"])
+        assert matcher.matches("app-42")
+        assert not matcher.matches("app-7")
+
+    def test_plain_comma_lists_split_as_before(self):
+        matcher = PatternMatcher.from_string("robot-shop, default ,,*,!kube-.*")
+        assert matcher.match_all
+        assert matcher.matches("robot-shop")
+        assert not matcher.matches("kube-system")
+
+    def test_validate_reports_invalid_regex_after_quantifier(self):
+        assert PatternMatcher.validate("app-[0-9]{1,3}") == []
+        errors = PatternMatcher.validate("app-[0-9]{1,3},bad[")
+        assert len(errors) == 1
+        assert "bad[" in errors[0]

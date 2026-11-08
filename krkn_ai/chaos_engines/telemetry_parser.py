@@ -24,6 +24,8 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _EXIT_STATUS_RE = re.compile(r'"exit_status"\s*:\s*(-?\d+)')
 _RUN_UUID_RE = re.compile(r'"run_uuid"\s*:\s*"([^"]+)"')
 _RESILIENCY_SCORE_RE = re.compile(r'"resiliency_score"\s*:\s*(\d+(?:\.\d+)?)')
+_TOTAL_SLOS_RE = re.compile(r'"total_slos"\s*:\s*(\d+)')
+_OVERALL_REPORT_RE = re.compile(r'"overall_resiliency_report"\s*:\s*\{')
 
 CHAOS_DATA_MARKER = "Chaos data:"
 
@@ -39,6 +41,20 @@ class TelemetryResult:
 def strip_ansi(text: str) -> str:
     """Remove ANSI escape sequences from text."""
     return _ANSI_ESCAPE_RE.sub("", text)
+
+
+def _measured_score(score: float, total_slos: Optional[int]) -> Optional[float]:
+    """
+    Return None when krkn evaluated no SLOs.
+
+    krkn always prints overall_resiliency_report; when resiliency is disabled
+    (e.g. no Prometheus URL) it keeps the default resiliency_score 0 with
+    total_slos 0, which is not a measurement. A missing total_slos keeps the
+    score, as before.
+    """
+    if total_slos == 0:
+        return None
+    return score
 
 
 def extract_telemetry_from_log(log: str, default_returncode: int) -> TelemetryResult:
@@ -120,7 +136,7 @@ def _try_json_extraction(
         if isinstance(report, dict):
             raw = report.get("resiliency_score")
             if raw is not None:
-                resiliency_score = float(raw)
+                resiliency_score = _measured_score(float(raw), report.get("total_slos"))
 
         logger.debug("Extracted exit_status: %s (json)", exit_status)
         logger.debug("Extracted run_uuid: %s (json)", run_uuid)
@@ -173,8 +189,7 @@ def _try_regex_extraction(text: str) -> Optional[TelemetryResult]:
     uuid_match = _RUN_UUID_RE.search(clean_text)
     run_uuid = uuid_match.group(1) if uuid_match else None
 
-    resiliency_match = _RESILIENCY_SCORE_RE.search(clean_text)
-    resiliency_score = float(resiliency_match.group(1)) if resiliency_match else None
+    resiliency_score = _regex_resiliency_score(clean_text)
 
     logger.debug("Extracted exit_status: %s (regex)", exit_status)
     logger.debug("Extracted run_uuid: %s (regex)", run_uuid)
@@ -184,3 +199,61 @@ def _try_regex_extraction(text: str) -> Optional[TelemetryResult]:
         run_uuid=run_uuid,
         resiliency_score=resiliency_score,
     )
+
+
+def _regex_resiliency_score(text: str) -> Optional[float]:
+    """
+    Read resiliency_score, pairing it with total_slos from the same report.
+
+    Both keys are read from the top level of overall_resiliency_report, so a
+    nested object's keys can't be mixed in. Without that report, the first
+    resiliency_score in the text is used and total_slos is treated as missing.
+    """
+    report_match = _OVERALL_REPORT_RE.search(text)
+    if report_match is None:
+        score_match = _RESILIENCY_SCORE_RE.search(text)
+        return float(score_match.group(1)) if score_match else None
+
+    top_level = _top_level_body(text, report_match.end())
+    score_match = _RESILIENCY_SCORE_RE.search(top_level)
+    if score_match is None:
+        return None
+    slos_match = _TOTAL_SLOS_RE.search(top_level)
+    total_slos = int(slos_match.group(1)) if slos_match else None
+    return _measured_score(float(score_match.group(1)), total_slos)
+
+
+def _top_level_body(text: str, start: int) -> str:
+    """
+    Text of the object opened just before `start`, without nested objects or
+    arrays. Reads to the end of the text if the object is never closed, since
+    this fallback runs on truncated logs.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    top_level = []
+    for char in text[start:]:
+        if in_string:
+            if depth == 0:
+                top_level.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            if depth == 0:
+                top_level.append(char)
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0:
+            top_level.append(char)
+    return "".join(top_level)

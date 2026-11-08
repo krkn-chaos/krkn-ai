@@ -1,10 +1,27 @@
 import glob
 import re
+from typing import Any
 
 from krkn_ai.models.app import CommandRunResult
+from krkn_ai.models.scenario.base import BaseScenario
 
 _INVALID_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _PLACEHOLDERS = ("%g", "%s", "%c")
+
+
+def serialize_scenario_parameters(
+    scenario: BaseScenario,
+) -> list[dict[str, Any]] | None:
+    parameters = getattr(scenario, "parameters", None)
+    if parameters is None:
+        return None
+    return [
+        {
+            "name": parameter.get_name(),
+            "value": parameter.model_dump(mode="json")["value"],
+        }
+        for parameter in parameters
+    ]
 
 
 def _sanitize_filename_component(value: str) -> str:

@@ -60,6 +60,15 @@ class GenerationsReporter:
                 # JSON mode turns enums (scenario.origin) and timestamps into plain
                 # values, so the YAML writer never emits Python-specific tags.
                 scenario_result = best_generations[i].model_dump(mode="json")
+                parameters = getattr(best_generations[i].scenario, "parameters", None)
+                if parameters is not None:
+                    scenario_result["scenario"]["parameters"] = [
+                        {
+                            "name": parameter.get_name(),
+                            "value": parameter.model_dump(mode="json")["value"],
+                        }
+                        for parameter in parameters
+                    ]
                 del scenario_result["log"]
                 results.append(scenario_result)
             if self.format == "json":

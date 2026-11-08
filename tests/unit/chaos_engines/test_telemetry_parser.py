@@ -280,8 +280,17 @@ Chaos data:
             ({"resiliency_score": 0, "passed_slos": 0, "total_slos": 3}, 0.0),
             # older reports without total_slos keep the score
             ({"resiliency_score": 0}, 0.0),
+            # a numeric string is read as a count
+            ({"resiliency_score": 0, "total_slos": "0"}, None),
+            ({"resiliency_score": 50, "total_slos": "3"}, 50.0),
         ],
-        ids=["total_slos_zero", "genuine_zero", "total_slos_missing"],
+        ids=[
+            "total_slos_zero",
+            "genuine_zero",
+            "total_slos_missing",
+            "total_slos_zero_string",
+            "total_slos_positive_string",
+        ],
     )
     def test_json_total_slos_decides_if_score_was_measured(self, report, expected):
         log = "Chaos data:" + json.dumps(

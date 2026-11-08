@@ -13,7 +13,7 @@ Fallback chain:
 import json
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from krkn_ai.utils.logger import get_logger
 
@@ -43,16 +43,20 @@ def strip_ansi(text: str) -> str:
     return _ANSI_ESCAPE_RE.sub("", text)
 
 
-def _measured_score(score: float, total_slos: Optional[int]) -> Optional[float]:
+def _measured_score(score: float, total_slos: Any) -> Optional[float]:
     """
     Return None when krkn evaluated no SLOs.
 
     krkn always prints overall_resiliency_report; when resiliency is disabled
     (e.g. no Prometheus URL) it keeps the default resiliency_score 0 with
-    total_slos 0, which is not a measurement. A missing total_slos keeps the
-    score, as before.
+    total_slos 0, which is not a measurement. A missing or non-numeric
+    total_slos keeps the score, as before.
     """
-    if total_slos == 0:
+    try:
+        slo_count = int(total_slos)
+    except (TypeError, ValueError):
+        return score
+    if slo_count == 0:
         return None
     return score
 

@@ -394,17 +394,18 @@ class TestMergeFitnessItems:
     def test_merged_config_loads_with_items_and_no_query(self, tmp_path):
         """Through save_discovery and the model, the way a run reads the file."""
         path = tmp_path / "krkn-ai.yaml"
-        kubeconfig = tmp_path / "kubeconfig"
-        kubeconfig.write_text("apiVersion: v1\n")
+        # The template writes this path in double quotes, so a Windows tmp_path
+        # would be read as YAML escapes. Same fixed path as test_fs.py.
+        kubeconfig = "/tmp/kubeconfig"
         components = ClusterComponents(namespaces=[Namespace(name="shop")])
-        save_discovery(str(path), "overwrite", components, str(kubeconfig))
+        save_discovery(str(path), "overwrite", components, kubeconfig)
         old_query = yaml.safe_load(path.read_text())["fitness_function"]["query"]
 
         save_discovery(
             str(path),
             "merge",
             components,
-            str(kubeconfig),
+            kubeconfig,
             fitness_queries=[
                 {"query": "new", "type": "point", "weight": 0.3, "enabled": True}
             ],

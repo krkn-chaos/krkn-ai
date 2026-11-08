@@ -12,7 +12,8 @@ from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
 from krkn_ai.models.scenario.base import ScenarioOrigin
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
-from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.scenario.scenario_pod import PodScenario
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Pod
 
 
 class TestGenerationsReporter:
@@ -167,3 +168,46 @@ class TestGenerationsReporter:
                 temp_output_dir, "reports", "graphs", "best_generation.png"
             )
             assert not os.path.exists(graph_path)
+
+    def test_save_best_generations_includes_scenario_parameters(self, temp_output_dir):
+        """best_scenarios.{yaml,json} includes scenario.parameters matching per-scenario result files"""
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(
+                    name="shop",
+                    pods=[Pod(name="cart-0", labels={"app": "cart"})],
+                )
+            ]
+        )
+        scenario = PodScenario(cluster_components=cluster)
+        now = datetime.datetime(2026, 11, 8, 12, 0, 0)
+        run_result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="test-cmd",
+            log="test-log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=25.0),
+        )
+        expected_params = [
+            {
+                "name": param.get_name(),
+                "value": param.model_dump(mode="json")["value"],
+            }
+            for param in scenario.parameters
+        ]
+
+        for fmt, loader in (("yaml", yaml.safe_load), ("json", json.load)):
+            reporter = GenerationsReporter(output_dir=temp_output_dir, format=fmt)
+            reporter.save_best_generations([run_result])
+            save_path = os.path.join(
+                temp_output_dir, "reports", f"best_scenarios.{fmt}"
+            )
+            with open(save_path, "r", encoding="utf-8") as f:
+                results = loader(f)
+
+            assert results[0]["scenario"]["name"] == "pod-scenarios"
+            assert results[0]["scenario"]["parameters"] == expected_params

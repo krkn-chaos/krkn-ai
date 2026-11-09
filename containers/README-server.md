@@ -2,6 +2,10 @@
 
 This image is used as part of krkn-operator stack to provide results management service.
 
+The image carries the same operator integration-contract label as the runner.
+See [compatibility maintenance](../docs/developer_guide.md#maintaining-operator-integration-compatibility)
+for its guarantees and when to increment it.
+
 ### Building the artifact service image
 
 The artifact service receives authenticated results from operator-managed runs

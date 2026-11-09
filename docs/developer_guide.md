@@ -182,6 +182,57 @@ Groups from both parents are combined, merging overlapping groups. A group is ex
 
 Grouped parameters are read from model fields, including inactive PVC/pod targets and network-mode fields omitted from runner arguments. Crossover snapshots these fields before exchanging complete parameter objects, preserving private pod-owner metadata and mutually exclusive targeting state. Ungrouped parameters cross over only when emitted by both parents.
 
+## Maintaining operator integration compatibility
+
+The runner and artifact-service images declare their operator integration
+contract in their final runtime stages:
+
+```dockerfile
+LABEL io.krkn.operator-contract.major="1"
+```
+
+This custom image-config label is independent of GitHub release versions and
+image tags. It is set in `containers/Containerfile.operator` and
+`containers/Containerfile.server`, so normal builds inherit it without workflow
+inputs or per-release edits. The full standalone Krkn-AI image does not declare
+this operator-specific contract.
+
+### Contract 1
+
+Contract 1 identifies the current runner environment, child `KrknScenarioRun`,
+and artifact upload/read formats, including the service's
+`POST /v1/configs/validate` and `DELETE /v1/runs/{uid}` endpoints.
+
+The operator's Helm and OLM release workflows select the newest stable release
+whose runner and service images both advertise the supported contract major.
+Unlabelled images, including releases predating this contract, are ineligible.
+The workflows inspect image metadata and package the inspected immutable image
+references. They do not start containers, create tokens, or call service or
+cluster APIs. Maintaining the label correctly is the compatibility guarantee.
+
+### When to change the label
+
+- Bug fixes, internal refactoring, algorithm improvements, and backward-compatible
+  optional API additions keep the current value. Do not increment it for every
+  application release or synchronize application version numbers across repos.
+- Removing or renaming required routes, changing required request/response
+  formats or status codes, or breaking runner/environment/artifact semantics
+  requires the next contract major in **both** runtime Containerfiles.
+- Coordinate that breaking change with the operator's supported contract major
+  before promotion. Older operators keep selecting the newest release supporting
+  their contract; never relabel or overwrite an older release to claim support.
+
+Publish both operator images under the same release tag before promoting the
+GitHub release to stable. No per-release compatibility matrix is maintained.
+Verify built metadata locally, for example:
+
+```bash
+podman image inspect quay.io/krkn-chaos/krkn-ai-operator:<tag> \
+  --format '{{ index .Config.Labels "io.krkn.operator-contract.major" }}'
+podman image inspect quay.io/krkn-chaos/krkn-ai-service:<tag> \
+  --format '{{ index .Config.Labels "io.krkn.operator-contract.major" }}'
+```
+
 ## Troubleshooting
 
 | Issue | Solution |

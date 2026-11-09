@@ -25,6 +25,10 @@ the existing `containers/entrypoint.sh`. It is intended for `MODE=run` with
 `RUNNER_TYPE=operator`; discovery mode and the local HUB/CLI runners belong
 to the full `Containerfile` image.
 
+Both operator images carry an integration-contract label independent of their
+release tags. See [compatibility maintenance](../docs/developer_guide.md#maintaining-operator-integration-compatibility)
+before changing the runner, service APIs, or release process.
+
 ### Manual operator execution
 
 Manual execution can run from the host or from any container that has access

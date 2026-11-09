@@ -573,3 +573,38 @@ class TestConfigFileWaitDurationValidation:
     def test_wait_duration_rejects_negative(self):
         with pytest.raises(ValidationError):
             self._make_config(wait_duration=-1)
+
+
+# ---------------------------------------------------------------------------
+# HealthCheckConfig application name uniqueness validation
+# ---------------------------------------------------------------------------
+
+
+class TestHealthCheckConfigValidation:
+    """Tests for HealthCheckConfig.applications unique names constraint."""
+
+    def test_unique_application_names_accepted(self):
+        apps = [
+            HealthCheckApplicationConfig(
+                name="app1", url="http://localhost:8080/health"
+            ),
+            HealthCheckApplicationConfig(
+                name="app2", url="http://localhost:8081/health"
+            ),
+        ]
+        config = HealthCheckConfig(applications=apps)
+        assert len(config.applications) == 2
+
+    def test_duplicate_application_names_rejected(self):
+        apps = [
+            HealthCheckApplicationConfig(
+                name="app1", url="http://localhost:8080/health"
+            ),
+            HealthCheckApplicationConfig(
+                name="app1", url="http://localhost:8081/health"
+            ),
+        ]
+        with pytest.raises(ValidationError) as exc_info:
+            HealthCheckConfig(applications=apps)
+        assert "Health check application names must be unique" in str(exc_info.value)
+        assert "app1" in str(exc_info.value)

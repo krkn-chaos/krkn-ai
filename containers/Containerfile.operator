@@ -28,7 +28,8 @@ LABEL org.opencontainers.image.title="Krkn-AI Operator Runner" \
       org.opencontainers.image.description="Krkn-AI Kubernetes operator runner" \
       org.opencontainers.image.source="https://github.com/krkn-chaos/krkn-ai" \
       org.opencontainers.image.vendor="krkn-chaos" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.krkn.operator-contract.major="1"
 
 WORKDIR /app
 

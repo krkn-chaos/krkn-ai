@@ -9,6 +9,7 @@ from krkn_ai.chaos_engines.health_check_watcher import HealthCheckWatcher
 from krkn_ai.models.app import (
     CommandRunResult,
     FitnessResult,
+    FitnessScoreResult,
     KrknRunnerType,
     auto_id,
 )
@@ -27,6 +28,11 @@ from krkn_ai.utils.mock import (
 from krkn_ai.utils.logger import get_logger, is_verbose
 from krkn_ai.utils.prometheus import create_prometheus_client
 from krkn_ai.utils.rng import rng
+from krkn_ai.chaos_engines.cancellation import (
+    CancellationRequested,
+    CANCELLATION_EVENT,
+    cancellation_requested,
+)
 from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
 from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
 
@@ -107,6 +113,17 @@ class KrknRunner:
     ) -> None:
         self._baseline_response_stats = stats
 
+    def start_cancellation_monitor(self) -> None:
+        if self.runner_type != KrknRunnerType.OPERATOR_RUNNER:
+            return
+        if self._operator_executor is None:
+            self._operator_executor = OperatorExecutor(self.config)
+        self._operator_executor.start_parent_monitor()
+
+    def stop_cancellation_monitor(self) -> None:
+        if self._operator_executor is not None:
+            self._operator_executor.stop_parent_monitor()
+
     def run(
         self,
         scenario: BaseScenario,
@@ -124,8 +141,16 @@ class KrknRunner:
 
         start_time = datetime.datetime.now()
         mono_start = time.monotonic()
+        if cancellation_requested():
+            raise CancellationRequested()
 
-        log, returncode, run_uuid, resiliency_score = None, None, None, None
+        log, returncode, run_uuid, resiliency_score, outcome = (
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         command = ""
         recovery_failed = False
 
@@ -134,7 +159,8 @@ class KrknRunner:
         )
 
         if is_mock_enabled(MockType.RUN):
-            time.sleep(rng.randint(1, 3))
+            if CANCELLATION_EVENT.wait(rng.randint(1, 3)):
+                raise CancellationRequested()
             log, returncode = "", 0
         else:
             assert self.runner_type is not None
@@ -144,7 +170,7 @@ class KrknRunner:
                     self._operator_executor = OperatorExecutor(self.config)
                 try:
                     health_check_watcher.run()
-                    log, executor_returncode = self._operator_executor.execute(
+                    log, executor_returncode, outcome = self._operator_executor.execute(
                         scenario, generation_id, scenario_id
                     )
                     telemetry = extract_telemetry_from_log(log, executor_returncode)
@@ -212,7 +238,7 @@ class KrknRunner:
         else:
             health_check_results = health_check_watcher.get_results()
 
-        if returncode not in (0, 2) and not recovery_failed:
+        if returncode not in (0, 2) and not recovery_failed and outcome != "cancelled":
             logger.warning(
                 "Krkn scenario failed with return code %d (misconfiguration). "
                 "Skipping fitness calculation to avoid data pollution.",
@@ -235,6 +261,13 @@ class KrknRunner:
                     fitness_type=self.config.fitness_function.type,
                 )
                 fitness_result.fitness_score = fitness_value
+                fitness_result.scores = [
+                    FitnessScoreResult(
+                        id=0,
+                        fitness_score=fitness_value,
+                        weighted_score=fitness_value,
+                    )
+                ]
             elif len(self.config.fitness_function.items) > 0:
                 fitness_result = (
                     self.fitness_calculator.calculate_fitness_score_for_items(
@@ -242,7 +275,10 @@ class KrknRunner:
                     )
                 )
 
-            if self.config.fitness_function.include_krkn_failure:
+            if (
+                self.config.fitness_function.include_krkn_failure
+                and outcome != "cancelled"
+            ):
                 if recovery_failed or returncode == 2:
                     fitness_result.krkn_failure_score = KRKN_HUB_FAILURE_SCORE
                 elif resiliency_score is not None:
@@ -307,6 +343,7 @@ class KrknRunner:
             fitness_result=fitness_result,
             health_check_results=health_check_results,
             run_uuid=run_uuid,
+            outcome=outcome,
             resiliency_score=resiliency_score,
         )
 

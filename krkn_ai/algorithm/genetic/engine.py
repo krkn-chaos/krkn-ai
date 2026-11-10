@@ -26,9 +26,17 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.weight_learning import learn_weights, save_learned_weights
-from krkn_ai.chaos_engines.fitness import normalize_generation_scores
+from krkn_ai.chaos_engines.fitness import (
+    normalize_generation_scores,
+    normalize_weights,
+)
 from krkn_ai.utils.console import print_generation_table, print_run_summary
 from krkn_ai.utils.atomic import atomic_write_text
+from krkn_ai.chaos_engines.cancellation import (
+    CancellationRequested,
+    cancellation_commit_guard,
+    cancellation_requested,
+)
 
 LEARNED_WEIGHTS_FILE = "learned_weights.json"
 
@@ -88,13 +96,23 @@ class GeneticAlgorithm(BaseEngine):
 
         logger.info("Starting genetic algorithm | run_uuid=%s", self.run_uuid)
 
-        # Baseline run establishes cluster health before chaos testing
-        self.run_baseline()
+        try:
+            self.run_baseline()
+        except CancellationRequested:
+            self.mark_cancelled(None)
+            return
+
+        if cancellation_requested():
+            self.mark_cancelled(None)
+            return
 
         # Initial population (Gen 0)
         self.population = self.create_population(self.algo_config.population_size)
 
         while True:
+            if cancellation_requested():
+                self.mark_cancelled(None)
+                break
             elapsed_time = time.time() - start_time
 
             # Check stopping criteria before evaluating next generation
@@ -118,6 +136,9 @@ class GeneticAlgorithm(BaseEngine):
                 len(self.population),
             )
             fitness_scores = []
+            if cancellation_requested():
+                self.mark_cancelled(cur_generation)
+                break
             for i, member in enumerate(self.population, start=1):
                 logger.info(
                     "Generation %d | scenario %d/%d evaluating: %s",
@@ -128,6 +149,9 @@ class GeneticAlgorithm(BaseEngine):
                 )
                 try:
                     result = self.calculate_fitness(member, cur_generation)
+                except CancellationRequested:
+                    self.mark_cancelled(cur_generation)
+                    break
                 except Exception:
                     logger.exception(
                         "Generation %d | scenario %d/%d failed",
@@ -146,27 +170,65 @@ class GeneticAlgorithm(BaseEngine):
                     result.scenario_id,
                     result.returncode,
                 )
+                if result.outcome == "cancelled" or cancellation_requested():
+                    self.mark_cancelled(cur_generation)
+                    break
 
+            if self.cancelled:
+                break
+
+            if cancellation_requested():
+                self.mark_cancelled(cur_generation)
+                break
+
+            raw_score_snapshots = []
             if len(self.config.fitness_function.items) > 0:
                 to_normalize = list(fitness_scores)
                 if cur_generation == 0 and self.baseline_result is not None:
                     to_normalize.append(self.baseline_result)
 
+                if cancellation_requested():
+                    self.mark_cancelled(cur_generation)
+                    break
+                raw_score_snapshots = [
+                    (result, result.fitness_result.model_copy(deep=True))
+                    for result in to_normalize
+                ]
                 normalize_generation_scores(
                     to_normalize,
                     self.config.fitness_function.items,
                     self.config.fitness_function.num_components,
                 )
+                if cancellation_requested():
+                    self._restore_unfinalized_scores(raw_score_snapshots)
+                    self.mark_cancelled(cur_generation)
+                    break
                 self.health_check_reporter.update_normalized_scores(to_normalize)
                 self.update_scenario_results(to_normalize)
+                if cancellation_requested():
+                    self._restore_unfinalized_scores(raw_score_snapshots)
+                    self.mark_cancelled(cur_generation)
+                    break
             else:
+                if cancellation_requested():
+                    self.mark_cancelled(cur_generation)
+                    break
                 self.update_scenario_results(fitness_scores)
-
+                if cancellation_requested():
+                    self.mark_cancelled(cur_generation)
+                    break
             fitness_scores = sorted(
                 fitness_scores,
                 key=lambda x: x.fitness_result.fitness_score,
                 reverse=True,
             )
+            with cancellation_commit_guard() as cancel_generation:
+                if cancel_generation:
+                    if raw_score_snapshots:
+                        self._restore_unfinalized_scores(raw_score_snapshots)
+                    self.mark_cancelled(cur_generation)
+                    break
+                self.complete_generation(cur_generation, fitness_scores)
             self.best_of_generation.append(fitness_scores[0])
             print_generation_table(cur_generation, fitness_scores)
 
@@ -174,7 +236,6 @@ class GeneticAlgorithm(BaseEngine):
 
             self.stopping.update_saturation_tracking()
             self.stopping.update_exploration_tracking()
-            self.complete_generation(cur_generation, fitness_scores)
             self.generation_results.append(fitness_scores)
             logger.info(
                 "Generation %d completed | generation_id=%d evaluated=%d "
@@ -189,6 +250,11 @@ class GeneticAlgorithm(BaseEngine):
             )
 
             cur_generation += 1
+            if cancellation_requested():
+                self.mark_cancelled(cur_generation)
+                break
+            if self.cancelled:
+                break
 
             elapsed_after_eval = time.time() - start_time
             if self._check_and_stop(cur_generation, elapsed_after_eval):
@@ -280,6 +346,7 @@ class GeneticAlgorithm(BaseEngine):
             baseline_result=self.baseline_result,
             start_time=self.start_time,
             end_time=self.end_time,
+            cancelled=self.cancelled,
             completed_generations=self.completed_generations,
             seed=self.seed,
             scenario_mutation_rate=self.current_scenario_mutation_rate,
@@ -397,11 +464,47 @@ class GeneticAlgorithm(BaseEngine):
         if scenario.origin is None:
             scenario.origin = origin
 
+    def _restore_unfinalized_scores(self, snapshots) -> None:
+        results = []
+        for result, fitness_result in snapshots:
+            result.fitness_result = fitness_result
+            results.append(result)
+        self.health_check_reporter.update_normalized_scores(results)
+        self.update_scenario_results(results)
+
     def calculate_fitness(self, scenario: BaseScenario, generation_id: int):
+        if cancellation_requested():
+            raise CancellationRequested()
         if scenario in self.seen_population:
             cached_result = self.seen_population[scenario]
             result = copy.deepcopy(cached_result)
             result.scenario_id = next(auto_id)
+            if result.fitness_result.scores and self.config.fitness_function.items:
+                item_weights = normalize_weights(
+                    item.weight for item in self.config.fitness_function.items
+                )
+                weights_by_id = {
+                    item.id: weight
+                    for item, weight in zip(
+                        self.config.fitness_function.items, item_weights
+                    )
+                }
+                for score in result.fitness_result.scores:
+                    score.normalized_score = None
+                    score.weighted_score = (
+                        weights_by_id.get(score.id, 0.0) * score.fitness_score
+                    )
+                raw_total = (
+                    sum(score.weighted_score for score in result.fitness_result.scores)
+                    + result.fitness_result.krkn_failure_score
+                    + result.fitness_result.health_check_failure_score
+                    + result.fitness_result.health_check_response_time_score
+                )
+                result.fitness_result.fitness_score = (
+                    raw_total / self.config.fitness_function.num_components * 100
+                    if self.config.fitness_function.num_components
+                    else 0.0
+                )
             result.generation_id = generation_id
             result.scenario = scenario
             logger.info(
@@ -413,6 +516,7 @@ class GeneticAlgorithm(BaseEngine):
                 cached_result.scenario_id,
                 scenario,
             )
+            self.save_scenario_result(result)
             return result
 
         self.stopping.record_new_scenario()

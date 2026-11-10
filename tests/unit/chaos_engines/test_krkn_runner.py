@@ -176,7 +176,7 @@ class TestKrknRunnerRun:
                 runner_type=KrknRunnerType.OPERATOR_RUNNER,
             )
             runner._operator_executor = Mock()
-            runner._operator_executor.execute.return_value = ("scenario log", 1)
+            runner._operator_executor.execute.return_value = ("scenario log", 1, None)
 
             result = runner.run(
                 DummyScenario(cluster_components=ClusterComponents()),
@@ -184,6 +184,46 @@ class TestKrknRunnerRun:
             )
 
         assert result.returncode == 1
+
+    def test_cancelled_operator_execution_still_collects_raw_fitness(
+        self, minimal_config, temp_output_dir
+    ):
+        minimal_config.health_checks = HealthCheckConfig()
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
+                return_value=TelemetryResult(exit_status=1),
+            ),
+        ):
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                minimal_config,
+                temp_output_dir,
+                KrknRunnerType.OPERATOR_RUNNER,
+            )
+            raw_fitness = Mock(return_value=4.0)
+            runner.fitness_calculator.calculate_fitness_value = raw_fitness
+            runner._operator_executor = Mock()
+            runner._operator_executor.execute.return_value = (
+                "partial scenario log",
+                1,
+                "cancelled",
+            )
+
+            result = runner.run(
+                DummyScenario(cluster_components=ClusterComponents()), 0
+            )
+
+        assert result.outcome == "cancelled"
+        assert result.returncode == 1
+        assert len(result.fitness_result.scores) == 1
+        assert result.fitness_result.scores[0].fitness_score == 4.0
+        assert result.fitness_result.scores[0].normalized_score is None
 
     @pytest.mark.parametrize("resiliency_score", [100, 20])
     @pytest.mark.parametrize("exit_status", [1, 2])
@@ -241,7 +281,7 @@ class TestKrknRunnerRun:
             runner = KrknRunner(minimal_config, temp_output_dir, runner_type)
             runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
             runner._operator_executor = Mock()
-            runner._operator_executor.execute.return_value = (log, exit_status)
+            runner._operator_executor.execute.return_value = (log, exit_status, None)
             result = runner.run(
                 DummyScenario(cluster_components=ClusterComponents()), 0
             )

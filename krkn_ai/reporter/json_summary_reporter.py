@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.models.config import ConfigFile, GeneticAlgorithmConfig
 from krkn_ai.utils.logger import get_logger
-from krkn_ai.constants import STATUS_COMPLETED
+from krkn_ai.constants import STATUS_CANCELLED, STATUS_COMPLETED
 
 from krkn_ai.utils.atomic import atomic_write_text
 
@@ -38,6 +38,7 @@ class JSONSummaryReporter:
         completed_generations: int = 0,
         seed: Optional[int] = None,
         scenario_mutation_rate: Optional[float] = None,
+        cancelled: bool = False,
     ):
         self.run_uuid = run_uuid
         self.config = config
@@ -54,7 +55,7 @@ class JSONSummaryReporter:
             if scenario_mutation_rate is None
             else scenario_mutation_rate
         )
-        self.status = STATUS_COMPLETED
+        self.status = STATUS_CANCELLED if cancelled else STATUS_COMPLETED
 
     def generate_summary(self) -> Dict[str, Any]:
         """

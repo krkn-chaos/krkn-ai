@@ -1,20 +1,67 @@
 #!/bin/bash
 set -e
+child_pid=
+termination_signal=
+
+forward_signal() {
+    local signal_name="$1"
+    termination_signal="$signal_name"
+    if [ -n "$child_pid" ]; then
+        kill -"$signal_name" "$child_pid" 2>/dev/null || true
+    fi
+}
+
+run_command() {
+    "$@" &
+    child_pid=$!
+    if [ -n "$termination_signal" ]; then
+        kill -"$termination_signal" "$child_pid" 2>/dev/null || true
+    fi
+    local command_status=0
+    while true; do
+        if wait "$child_pid"; then
+            command_status=0
+        else
+            command_status=$?
+        fi
+        if ! kill -0 "$child_pid" 2>/dev/null; then
+            break
+        fi
+    done
+    child_pid=
+    return "$command_status"
+}
+
 write_completion_marker() {
     local exit_code=$?
     trap - EXIT
     if [ -n "${KRKNAI_RUN_UID:-}" ] && [ -n "${OUTPUT_DIR:-}" ]; then
         local run_output_dir="$OUTPUT_DIR/$KRKNAI_RUN_UID"
         if mkdir -p "$run_output_dir"; then
-            printf '{"exitCode":%d}\n' "$exit_code" > "$run_output_dir/.krkn-ai-complete" || true
+            local outcome="failed"
+            if [ -f "$run_output_dir/results.json" ]; then
+                outcome="$(python -c 'import json,sys; status=json.load(open(sys.argv[1])).get("status"); print("succeeded" if status in ("completed", "succeeded") else "cancelled" if status == "cancelled" else "failed")' "$run_output_dir/results.json" 2>/dev/null)" || outcome="failed"
+            fi
+            if [ "$exit_code" -ne 0 ] && [ "$outcome" != "cancelled" ]; then
+                outcome="failed"
+            fi
+            local marker="$run_output_dir/.krkn-ai-complete"
+            local temporary_marker="$marker.$$"
+            if printf '{"exitCode":%d,"outcome":"%s"}\n' "$exit_code" "$outcome" > "$temporary_marker"; then
+                mv -f "$temporary_marker" "$marker"
+            else
+                rm -f "$temporary_marker"
+            fi
         fi
     fi
     exit "$exit_code"
 }
 
 # The uploader sidecar waits for this marker before committing artifacts.
-# Record both successful and failed operator runs without masking the run's exit code.
+# Record the run outcome atomically without masking the runner's exit code.
 trap write_completion_marker EXIT
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
 
 # Activate the uv virtual environment
 source /app/.venv/bin/activate
@@ -90,7 +137,7 @@ case "$MODE_LOWER" in
         fi
 
         echo "Executing: ${CMD[*]}"
-        "${CMD[@]}"
+        run_command "${CMD[@]}"
         ;;
 
     run)
@@ -139,7 +186,7 @@ case "$MODE_LOWER" in
         fi
 
         echo "Executing: ${CMD[*]}"
-        "${CMD[@]}"
+        run_command "${CMD[@]}"
         ;;
 
     *)

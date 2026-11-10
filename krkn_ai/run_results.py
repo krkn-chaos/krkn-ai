@@ -119,6 +119,12 @@ def parse_run_artifacts(
             if match is None:
                 continue
             value = _decode_document(path, content)
+            outcome = value.get("outcome")
+            if outcome is not None and (
+                not isinstance(outcome, str)
+                or outcome not in {"succeeded", "failed", "cancelled"}
+            ):
+                raise _bad_artifact()
             key = _scenario_key(value.get("generation_id"), value.get("scenario_id"))
             path_generation = int(match.group(1))
             if (
@@ -170,13 +176,32 @@ def scenario_type(scenario: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _cancelled_generation(artifacts: ParsedRunArtifacts, terminal: bool) -> int | None:
+    if not terminal:
+        return None
+    progress = artifacts.progress or {}
+    if progress.get("status") != "cancelled":
+        return None
+    generation = progress.get("cancelledGeneration")
+    if generation is None:
+        return None
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 0
+    ):
+        raise _bad_artifact()
+    return generation
+
+
 def completed_generation_count(artifacts: ParsedRunArtifacts, terminal: bool) -> int:
     count = None
-    if terminal and artifacts.final_results is not None:
-        summary = artifacts.final_results.get("summary") or {}
-        if not isinstance(summary, dict):
-            raise _bad_artifact()
-        count = summary.get("generations_completed")
+    if terminal and (artifacts.progress or {}).get("status") != "cancelled":
+        if artifacts.final_results is not None:
+            summary = artifacts.final_results.get("summary") or {}
+            if not isinstance(summary, dict):
+                raise _bad_artifact()
+            count = summary.get("generations_completed")
     if count is None:
         count = (artifacts.progress or {}).get("completedGenerations")
     if count is None:
@@ -200,7 +225,11 @@ def _fitness_is_final(
     generation = scenario.value["generation_id"]
     if completed_count is None:
         completed_count = completed_generation_count(artifacts, terminal)
-    return generation < completed_count and _generation_is_final(artifacts, generation)
+    return (
+        generation != _cancelled_generation(artifacts, terminal)
+        and generation < completed_count
+        and _generation_is_final(artifacts, generation)
+    )
 
 
 def fitness_state(
@@ -211,6 +240,11 @@ def fitness_state(
 ) -> str:
     if _fitness_is_final(artifacts, key, terminal, completed_count):
         return "final"
+    if (
+        _cancelled_generation(artifacts, terminal)
+        == artifacts.scenarios[key].value["generation_id"]
+    ):
+        return "cancelled"
     return "unfinalized" if terminal else "provisional"
 
 
@@ -228,6 +262,19 @@ def _optional_string(value: Any) -> str | None:
     if not isinstance(value, str):
         raise _bad_artifact()
     return value
+
+
+def _scenario_outcome(value: dict[str, Any]) -> str:
+    outcome = value.get("outcome")
+    if outcome is None:
+        return "succeeded" if value.get("returncode") in (0, 2) else "failed"
+    if not isinstance(outcome, str) or outcome not in {
+        "succeeded",
+        "failed",
+        "cancelled",
+    }:
+        raise _bad_artifact()
+    return outcome
 
 
 def _completed_fitness(artifacts: ParsedRunArtifacts, terminal: bool):
@@ -281,7 +328,7 @@ def scenario_index_row(
         isinstance(duration, bool) or not isinstance(duration, (int, float))
     ):
         raise _bad_artifact()
-    outcome = "succeeded" if value.get("returncode") in (0, 2) else "failed"
+    outcome = _scenario_outcome(value)
     completed_count = completed_generation_count(artifacts, terminal)
     finalized = _fitness_is_final(artifacts, artifact.key, terminal, completed_count)
     return {
@@ -394,6 +441,7 @@ def scenario_detail(
         "origin": scenario.get("origin"),
         "parentIds": parents,
         "durationSeconds": value.get("duration_seconds"),
+        "outcome": _scenario_outcome(value),
         "returnCode": value.get("returncode"),
         "fitnessResult": {
             "fitnessScore": (

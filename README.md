@@ -98,7 +98,7 @@ By default `discover` won't overwrite an existing output file. Control this with
 krkn_ai discover -k ./tmp/kubeconfig.yaml -o ./tmp/krkn-ai.yaml --save-strategy merge
 ```
 
-`merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components. Note: comments inside `cluster_components` are not preserved after a merge.
+`merge` preserves manual edits (e.g. `disabled: true`) and adds newly discovered components. Note: comments inside `cluster_components` are not preserved after a merge. If `fitness_function.query` is set and merge adds recommended fitness queries, the query moves into `fitness_function.items` so that all of them are scored, including any items that were already there.
 
 Besides `cluster_components`, `discover` also works out which scenarios your cluster can run, builds health check URLs from LoadBalancer services, and recommends fitness queries validated against your Prometheus. Scenarios and health checks are only regenerated on a fresh write or `overwrite`.
 

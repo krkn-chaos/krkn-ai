@@ -11,6 +11,7 @@ Fallback chain:
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -24,6 +25,12 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 _EXIT_STATUS_RE = re.compile(r'"exit_status"\s*:\s*(-?\d+)')
 _RUN_UUID_RE = re.compile(r'"run_uuid"\s*:\s*"([^"]+)"')
 _RESILIENCY_SCORE_RE = re.compile(r'"resiliency_score"\s*:\s*(\d+(?:\.\d+)?)')
+# krknctl's own lines; not anchored, since parallel nodes share its stdout
+_GRAPH_NODE_FAILURE_RE = re.compile(
+    r"scenario \S+ at step \d+ with exit status (\d+), check log file (\S+)\.\s*$",
+    re.MULTILINE,
+)
+_GRAPH_NODE_LOG_RE = re.compile(r"Failed to parse resiliency report from (\S+):")
 
 CHAOS_DATA_MARKER = "Chaos data:"
 
@@ -71,6 +78,72 @@ def extract_telemetry_from_log(log: str, default_returncode: int) -> TelemetryRe
 
     logger.warning("No exit_status found in telemetry data")
     return TelemetryResult(exit_status=default_returncode)
+
+
+def extract_graph_telemetry(
+    log: str, default_returncode: int, log_dir: str = "."
+) -> TelemetryResult:
+    """
+    Work out a composite run's result from `krknctl graph run` output.
+
+    Without --exit-on-error krknctl exits 0 when a node fails and only prints
+    "scenario <id> at step <n> with exit status <k>, check log file <file>."
+    A node that could not start at all (image rejected, container not created)
+    prints no such line and leaves its log, in the working directory, empty.
+
+    Each node is read like a single scenario: its log's telemetry decides its
+    status. For the whole graph, a node that failed for any reason other than
+    unrecovered targets makes the run unusable, which outranks a recovery
+    failure, which outranks exit status 2.
+
+    Node logs are read from log_dir, the directory krknctl ran in. Only the
+    file name of a logged path is used, so a log path can't leave log_dir.
+    """
+    if default_returncode != 0:
+        # krknctl exits 0 when nodes fail, so a nonzero exit is its own
+        # failure or a cancelled run, and no node result may make it scorable
+        return TelemetryResult(exit_status=default_returncode)
+    clean_log = strip_ansi(log)
+    failed_logs = {
+        os.path.basename(name): int(status)
+        for status, name in _GRAPH_NODE_FAILURE_RE.findall(clean_log)
+    }
+    nodes = [
+        _read_failed_node(os.path.join(log_dir, name), status)
+        for name, status in failed_logs.items()
+    ]
+    for name in _GRAPH_NODE_LOG_RE.findall(clean_log):
+        name = os.path.basename(name)
+        if name not in failed_logs and _node_log_is_empty(os.path.join(log_dir, name)):
+            logger.warning("Graph node with log %s did not run", name)
+            nodes.append(TelemetryResult(exit_status=1))
+
+    failed = [node for node in nodes if node.exit_status != 0]
+    if not failed:
+        return TelemetryResult(exit_status=default_returncode)
+    for node in failed:
+        if node.exit_status != 2 and not node.recovery_failed:
+            return TelemetryResult(exit_status=node.exit_status)
+    for node in failed:
+        if node.recovery_failed:
+            return TelemetryResult(exit_status=node.exit_status, recovery_failed=True)
+    return TelemetryResult(exit_status=2)
+
+
+def _read_failed_node(log_name: str, status: int) -> TelemetryResult:
+    try:
+        with open(log_name, "r", encoding="utf-8", errors="replace") as f:
+            return extract_telemetry_from_log(f.read(), status)
+    except (OSError, ValueError) as e:
+        logger.warning("Could not read node log %s: %s", log_name, e)
+        return TelemetryResult(exit_status=status)
+
+
+def _node_log_is_empty(log_name: str) -> bool:
+    try:
+        return os.path.getsize(log_name) == 0
+    except OSError:
+        return False
 
 
 def _try_json_extraction(

@@ -23,6 +23,11 @@ class TestRunShell:
         with pytest.raises(ShellCommandTimeoutError):
             run_shell("sleep 10", timeout=5)
 
+    def test_runs_the_command_in_the_given_directory(self, tmp_path):
+        logs, returncode = run_shell("pwd", cwd=str(tmp_path))
+        assert returncode == 0
+        assert os.path.realpath(logs.strip()) == os.path.realpath(str(tmp_path))
+
     @patch("krkn_ai.utils.shutil.which")
     def test_command_not_found_returns_empty_string_and_127(self, mock_which):
         """Test that run_shell returns 127 when command is not in PATH"""

@@ -245,6 +245,45 @@ class TestExtractGraphTelemetry:
         assert result.exit_status == 1
         assert result.recovery_failed is False
 
+    def test_node_log_is_read_from_the_given_log_dir(self, tmp_path, monkeypatch):
+        """The runner points krknctl at a per-run directory; node logs are read
+        from there, not from the process working directory (#160)."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        (run_dir / "krknctl-b-123.log").write_text(_node_log(1, [{"pod_name": "x"}]))
+        result = extract_graph_telemetry(
+            _graph_failure("b", 1), 0, log_dir=str(run_dir)
+        )
+        assert result.exit_status == 1
+        assert result.recovery_failed is True
+
+    def test_node_that_never_ran_is_found_in_the_given_log_dir(
+        self, tmp_path, monkeypatch
+    ):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+        (run_dir / "krknctl-bad-2.log").write_text("")
+        log = (
+            "Failed to parse resiliency report from krknctl-bad-2.log: "
+            "resiliency report marker not found in logs\n"
+        )
+        assert extract_graph_telemetry(log, 0, log_dir=str(run_dir)).exit_status == 1
+
+    def test_node_log_path_cannot_leave_the_given_log_dir(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (tmp_path / "outside.log").write_text(_node_log(1, [{"pod_name": "x"}]))
+        log = (
+            "scenario evil at step 1 with exit status 1, "
+            "check log file ../outside.log.\n"
+        )
+        result = extract_graph_telemetry(log, 0, log_dir=str(run_dir))
+        assert result.recovery_failed is False
+
     def test_node_log_path_cannot_leave_the_working_directory(
         self, tmp_path, monkeypatch
     ):

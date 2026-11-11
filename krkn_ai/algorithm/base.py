@@ -18,7 +18,11 @@ from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.elastic_client import ElasticSearchClient
 from krkn_ai.utils.atomic import atomic_write_bytes, atomic_write_text
 from krkn_ai.utils.logger import get_logger
-from krkn_ai.utils.output import format_duration, format_result_filename
+from krkn_ai.utils.output import (
+    format_duration,
+    format_result_filename,
+    serialize_scenario_parameters,
+)
 from krkn_ai.utils.rng import rng
 from krkn_ai.chaos_engines.health_check_watcher import compute_baseline_response_stats
 from krkn_ai.chaos_engines.cancellation import (
@@ -232,15 +236,9 @@ class BaseEngine(ABC):
         if result.get("outcome") is None:
             result.pop("outcome", None)
         result["scenario"]["name"] = fitness_result.scenario.name
-        parameters = getattr(fitness_result.scenario, "parameters", None)
+        parameters = serialize_scenario_parameters(fitness_result.scenario)
         if parameters is not None:
-            result["scenario"]["parameters"] = [
-                {
-                    "name": parameter.get_name(),
-                    "value": parameter.model_dump(mode="json")["value"],
-                }
-                for parameter in parameters
-            ]
+            result["scenario"]["parameters"] = parameters
         generation_id = result["generation_id"]
         scenario_id = str(result["scenario_id"])
         result["job_id"] = fitness_result.scenario_id

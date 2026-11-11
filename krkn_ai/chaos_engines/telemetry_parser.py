@@ -80,7 +80,9 @@ def extract_telemetry_from_log(log: str, default_returncode: int) -> TelemetryRe
     return TelemetryResult(exit_status=default_returncode)
 
 
-def extract_graph_telemetry(log: str, default_returncode: int) -> TelemetryResult:
+def extract_graph_telemetry(
+    log: str, default_returncode: int, log_dir: str = "."
+) -> TelemetryResult:
     """
     Work out a composite run's result from `krknctl graph run` output.
 
@@ -93,6 +95,9 @@ def extract_graph_telemetry(log: str, default_returncode: int) -> TelemetryResul
     status. For the whole graph, a node that failed for any reason other than
     unrecovered targets makes the run unusable, which outranks a recovery
     failure, which outranks exit status 2.
+
+    Node logs are read from log_dir, the directory krknctl ran in. Only the
+    file name of a logged path is used, so a log path can't leave log_dir.
     """
     if default_returncode != 0:
         # krknctl exits 0 when nodes fail, so a nonzero exit is its own
@@ -103,10 +108,13 @@ def extract_graph_telemetry(log: str, default_returncode: int) -> TelemetryResul
         os.path.basename(name): int(status)
         for status, name in _GRAPH_NODE_FAILURE_RE.findall(clean_log)
     }
-    nodes = [_read_failed_node(name, status) for name, status in failed_logs.items()]
+    nodes = [
+        _read_failed_node(os.path.join(log_dir, name), status)
+        for name, status in failed_logs.items()
+    ]
     for name in _GRAPH_NODE_LOG_RE.findall(clean_log):
         name = os.path.basename(name)
-        if name not in failed_logs and _node_log_is_empty(name):
+        if name not in failed_logs and _node_log_is_empty(os.path.join(log_dir, name)):
             logger.warning("Graph node with log %s did not run", name)
             nodes.append(TelemetryResult(exit_status=1))
 

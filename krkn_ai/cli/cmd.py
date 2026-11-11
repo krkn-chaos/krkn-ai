@@ -2,6 +2,8 @@ import os
 import sys
 import uuid
 import json
+import tempfile
+import yaml
 from contextlib import nullcontext
 from kubernetes.client.rest import ApiException
 from urllib3.exceptions import MaxRetryError
@@ -13,7 +15,7 @@ from krkn_ai.utils.logger import init_logger, get_logger
 
 from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import KrknRunnerType
-from krkn_ai.models.config import AlgorithmType
+from krkn_ai.models.config import AlgorithmType, ConfigFile, GeneticAlgorithmConfig
 from krkn_ai.dashboard.manager import DashboardManager
 from krkn_ai.models.custom_errors import (
     FitnessFunctionCalculationError,
@@ -23,6 +25,7 @@ from krkn_ai.models.custom_errors import (
 )
 from krkn_ai.utils.fs import read_config_from_file, save_discovery
 from krkn_ai.utils.prometheus import create_prometheus_client
+from krkn_ai.utils.mock import enable_dry_run
 from krkn_ai.utils.catalog import recommend_fitness_queries
 from krkn_ai.utils.ga_sizing import recommend_genetic_params
 from krkn_ai.utils.weight_learning import load_learned_weights
@@ -100,6 +103,15 @@ def main():
     default=None,
     help="Run UUID used for the output directory name.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help=(
+        "Validate the config and simulate the whole run with the cluster, "
+        "Prometheus and chaos execution mocked. No scenario is executed and "
+        "nothing is written to the output directory."
+    ),
+)
 @click.pass_context
 def run(
     ctx,
@@ -115,13 +127,25 @@ def run(
     port: int = 8501,
     allow_dangerous_scenarios: bool = False,
     run_uuid: uuid.UUID = None,
+    dry_run: bool = False,
 ):
+    if dry_run:
+        enable_dry_run()
+
     run_uuid_str = str(run_uuid) if run_uuid is not None else str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid_str)
-    init_logger(new_output_path, verbose >= 2)
+    # A dry run logs to the console only, so --output stays untouched.
+    init_logger(None if dry_run else new_output_path, verbose >= 2)
     logger = get_logger(__name__)
 
-    logger.info("Krkn-AI run UUID: %s", run_uuid_str)
+    if dry_run:
+        logger.info(
+            "Dry run: cluster, Prometheus and chaos execution are mocked. "
+            "No scenario is executed and nothing is written to '%s'.",
+            output,
+        )
+    else:
+        logger.info("Krkn-AI run UUID: %s", run_uuid_str)
 
     if config == "" or config is None:
         logger.error("Config file invalid.")
@@ -129,16 +153,16 @@ def run(
     if not os.path.exists(config):
         logger.error("Config file not found.")
         sys.exit(1)
+    if kubeconfig and not os.path.exists(kubeconfig):
+        # read_config_from_file() keeps the config's own path when the
+        # override is missing; say so instead of switching files silently.
+        logger.warning(
+            "Kubeconfig '%s' not found, using 'kubeconfig_file_path' from the config file.",
+            kubeconfig,
+        )
 
-    try:
-        parsed_config = read_config_from_file(config, param, kubeconfig)
-        logger.info("Initialized config: %s", config)
-    except KeyError as err:
-        logger.error("Unable to parse config file due to missing key: %s", err)
-        sys.exit(1)
-    except (ValueError, ValidationError) as err:
-        logger.error("Unable to parse config file: %s", err)
-        sys.exit(1)
+    parsed_config = _load_config_or_exit(config, param, kubeconfig, logger)
+    logger.info("Initialized config: %s", config)
 
     # Override seed from CLI if provided
     if seed is not None:
@@ -158,66 +182,160 @@ def run(
         elif runner_type.lower() == "operator":
             enum_runner_type = KrknRunnerType.OPERATOR_RUNNER
 
-    dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
+    if dry_run:
+        _apply_dry_run_overrides(parsed_config, monitoring, logger)
+        monitoring = False
 
-    with dashboard:
-        if (
-            monitoring
-            and isinstance(dashboard, DashboardManager)
-            and not dashboard.is_running
-        ):
-            logger.warning(
-                "Dashboard did not start. Continuing run without monitoring."
-            )
+    # Mock results go to a scratch directory that is removed afterwards.
+    output_scope = (
+        tempfile.TemporaryDirectory(prefix="krkn-ai-dry-run-")
+        if dry_run
+        else nullcontext(new_output_path)
+    )
+    with output_scope as run_output_path:
+        dashboard = (
+            DashboardManager(run_output_path, port) if monitoring else nullcontext()
+        )
 
-        run_success = False
-        try:
-            os.makedirs(new_output_path, exist_ok=True)
-            with open(os.path.join(new_output_path, "results.json"), "w") as f:
-                json.dump({"status": STATUS_STARTED}, f)
-
-            # Dispatch to the selected algorithm engine
-            if parsed_config.algorithm == AlgorithmType.genetic:
-                engine = GeneticAlgorithm(
-                    run_uuid=run_uuid_str,
-                    config=parsed_config,
-                    output_dir=new_output_path,
-                    format=format,
-                    runner_type=enum_runner_type,
+        with dashboard:
+            if (
+                monitoring
+                and isinstance(dashboard, DashboardManager)
+                and not dashboard.is_running
+            ):
+                logger.warning(
+                    "Dashboard did not start. Continuing run without monitoring."
                 )
-            else:
-                logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
+
+            run_success = False
+            try:
+                os.makedirs(run_output_path, exist_ok=True)
+                with open(os.path.join(run_output_path, "results.json"), "w") as f:
+                    json.dump({"status": STATUS_STARTED}, f)
+
+                # Dispatch to the selected algorithm engine
+                if parsed_config.algorithm == AlgorithmType.genetic:
+                    engine = GeneticAlgorithm(
+                        run_uuid=run_uuid_str,
+                        config=parsed_config,
+                        output_dir=run_output_path,
+                        format=format,
+                        runner_type=enum_runner_type,
+                    )
+                else:
+                    logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
+                    sys.exit(1)
+
+                engine.simulate()
+
+                engine.save()
+                run_success = True
+                if dry_run:
+                    _log_dry_run_summary(config, parsed_config, engine, logger)
+            except (
+                MissingScenarioError,
+                PrometheusConnectionError,
+                UniqueScenariosError,
+            ) as e:
+                logger.error("%s", e)
                 sys.exit(1)
+            except FitnessFunctionCalculationError as e:
+                logger.error("Unable to calculate fitness function score: %s", e)
+                sys.exit(1)
+            except Exception as e:
+                logger.exception("Something went wrong: %s", e)
+                sys.exit(1)
+            finally:
+                if not run_success:
+                    try:
+                        with open(
+                            os.path.join(run_output_path, "results.json"), "w"
+                        ) as f:
+                            json.dump({"status": STATUS_FAILED}, f)
+                    except Exception as e:
+                        logger.exception("Failed to write results.json: %s", e)
+                if not dry_run:
+                    logger.info(
+                        "Check run.log file in '%s' for more details.",
+                        run_output_path,
+                    )
+                    logger.info(
+                        "To inspect results interactively, run:\n\n  krkn_ai monitor -o %s\n",
+                        run_output_path,
+                    )
 
-            engine.simulate()
 
-            engine.save()
-            run_success = True
-        except (
-            MissingScenarioError,
-            PrometheusConnectionError,
-            UniqueScenariosError,
-        ) as e:
-            logger.error("%s", e)
-            sys.exit(1)
-        except FitnessFunctionCalculationError as e:
-            logger.error("Unable to calculate fitness function score: %s", e)
-            sys.exit(1)
-        except Exception as e:
-            logger.exception("Something went wrong: %s", e)
-            sys.exit(1)
-        finally:
-            if not run_success:
-                try:
-                    with open(os.path.join(new_output_path, "results.json"), "w") as f:
-                        json.dump({"status": STATUS_FAILED}, f)
-                except Exception as e:
-                    logger.exception("Failed to write results.json: %s", e)
-            logger.info("Check run.log file in '%s' for more details.", new_output_path)
-            logger.info(
-                "To inspect results interactively, run:\n\n  krkn_ai monitor -o %s\n",
-                new_output_path,
-            )
+def _format_validation_error(error: ValidationError) -> str:
+    """Render a pydantic ValidationError as one line per failing field."""
+    lines = []
+    for error_detail in error.errors():
+        field_path = (
+            ".".join(str(part) for part in error_detail.get("loc", ())) or "<root>"
+        )
+        lines.append(f"  {field_path}: {error_detail.get('msg')}")
+    return "\n".join(lines)
+
+
+def _load_config_or_exit(
+    config: str, param: tuple[str, ...], kubeconfig: str, logger
+) -> ConfigFile:
+    """Parse the config file, logging one actionable error per failure class."""
+    try:
+        return read_config_from_file(config, param, kubeconfig)
+    except yaml.YAMLError as err:
+        logger.error("Config file is not valid YAML: %s", err)
+    except OSError as err:
+        logger.error("Unable to read config file: %s", err)
+    except KeyError as err:
+        logger.error("Unable to parse config file due to missing key: %s", err)
+    except ValidationError as err:
+        logger.error(
+            "Unable to parse config file, %d validation error(s):\n%s",
+            err.error_count(),
+            _format_validation_error(err),
+        )
+    except ValueError as err:
+        logger.error("Unable to parse config file: %s", err)
+    sys.exit(1)
+
+
+def _apply_dry_run_overrides(parsed_config: ConfigFile, monitoring: bool, logger):
+    """Drop the parts of a run that leave the process or need real time."""
+    if monitoring:
+        logger.info("Dry run: the monitoring dashboard is not started.")
+    if parsed_config.elastic is not None:
+        parsed_config.elastic = None
+        logger.info("Dry run: Elasticsearch indexing is disabled.")
+    genetic = parsed_config.genetic
+    if genetic.duration is not None:
+        # Mock scenarios finish instantly, so a wall-clock limit would spin
+        # through thousands of generations; stop on a generation count instead.
+        genetic.duration = None
+        if genetic.generations is None:
+            genetic.generations = GeneticAlgorithmConfig.model_fields[
+                "generations"
+            ].default
+        logger.info(
+            "Dry run: ignoring 'duration' and simulating %d generations instead.",
+            genetic.generations,
+        )
+
+
+def _log_dry_run_summary(
+    config_path: str, parsed_config: ConfigFile, engine: GeneticAlgorithm, logger
+):
+    valid_scenarios = ", ".join(name for name, _ in engine.valid_scenarios)
+    logger.info(
+        "Dry run complete: config '%s' is valid.\n"
+        "  Scenarios: %s\n"
+        "  Simulated %d generation(s) with population size %d (%d unique scenarios).\n"
+        "  No chaos was executed and the mock results were discarded.",
+        config_path,
+        valid_scenarios,
+        engine.completed_generations,
+        parsed_config.genetic.population_size,
+        len(engine.seen_population),
+    )
 
 
 @main.command(help="Monitor results from previous completed runs")

@@ -10,7 +10,7 @@ from krkn_ai.models.custom_errors import PrometheusConnectionError
 logger = get_logger(__name__)
 
 
-def is_openshift(kubeconfig: str) -> bool:
+def is_openshift(kubeconfig: str, timeout: Optional[float] = None) -> bool:
     """
     Checks if the targeted cluster is an OpenShift cluster.
 
@@ -18,17 +18,25 @@ def is_openshift(kubeconfig: str) -> bool:
 
     Args:
         kubeconfig: Path to the Kubernetes configuration file.
+        timeout: Optional request timeout in seconds. Omit it to use the
+            Kubernetes client's default. With a timeout the client makes a
+            single attempt, so the timeout bounds the whole call instead of
+            each of the client's default retries.
 
     Returns:
         True if the cluster is OpenShift, False otherwise.
     """
     try:
         config.load_kube_config(config_file=kubeconfig)
-        api = client.CustomObjectsApi()
+        configuration = client.Configuration.get_default_copy()
+        if timeout is not None:
+            configuration.retries = 0
+        api = client.CustomObjectsApi(client.ApiClient(configuration))
         api.list_cluster_custom_object(
             group="config.openshift.io",
             version="v1",
             plural="clusterversions",
+            _request_timeout=timeout,
         )
         return True
     except Exception:

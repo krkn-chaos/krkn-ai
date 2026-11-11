@@ -271,6 +271,84 @@ Chaos data:
         result = extract_telemetry_from_log(log, -1)
         assert result.resiliency_score == 72.5
 
+    @pytest.mark.parametrize(
+        "report, expected",
+        [
+            # krkn's default report when resiliency is disabled: not measured
+            ({"scenarios": {}, "resiliency_score": 0, "total_slos": 0}, None),
+            # SLOs were evaluated and all failed: a genuine zero
+            ({"resiliency_score": 0, "passed_slos": 0, "total_slos": 3}, 0.0),
+            # older reports without total_slos keep the score
+            ({"resiliency_score": 0}, 0.0),
+            # a numeric string is read as a count
+            ({"resiliency_score": 0, "total_slos": "0"}, None),
+            ({"resiliency_score": 50, "total_slos": "3"}, 50.0),
+        ],
+        ids=[
+            "total_slos_zero",
+            "genuine_zero",
+            "total_slos_missing",
+            "total_slos_zero_string",
+            "total_slos_positive_string",
+        ],
+    )
+    def test_json_total_slos_decides_if_score_was_measured(self, report, expected):
+        log = "Chaos data:" + json.dumps(
+            {
+                "telemetry": {
+                    "run_uuid": "r4",
+                    "scenarios": [{"exit_status": 0}],
+                    "overall_resiliency_report": report,
+                }
+            }
+        )
+        result = extract_telemetry_from_log(log, -1)
+        assert result.resiliency_score == expected
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            (
+                '"exit_status": 0, "overall_resiliency_report": {"scenarios": {}, '
+                '"resiliency_score": 0, "passed_slos": 0, "total_slos": 0}',
+                None,
+            ),
+            (
+                '"exit_status": 0, "overall_resiliency_report": {"resiliency_score": 0, '
+                '"passed_slos": 0, "total_slos": 3}',
+                0.0,
+            ),
+            (
+                '"exit_status": 0, "overall_resiliency_report": {"resiliency_score": 0}',
+                0.0,
+            ),
+        ],
+        ids=["total_slos_zero", "genuine_zero", "total_slos_missing"],
+    )
+    def test_regex_total_slos_decides_if_score_was_measured(self, text, expected):
+        assert _try_regex_extraction(text).resiliency_score == expected
+
+    def test_regex_reads_total_slos_from_the_overall_report_only(self):
+        """A nested or later object's total_slos must not decide the score."""
+        text = (
+            '"exit_status": 0, "overall_resiliency_report": {"scenarios": '
+            '{"pod": {"resiliency_score": 0, "total_slos": 0}}, '
+            '"resiliency_score": 80, "passed_slos": 4, "total_slos": 5}, '
+            '"resiliency_report": {"resiliency_score": 0, "total_slos": 0}'
+        )
+        assert _try_regex_extraction(text).resiliency_score == 80.0
+
+    def test_truncated_default_report_is_not_a_score(self):
+        """The regex fallback also handles krkn's default report in a cut-off log."""
+        log = (
+            'Chaos data:\n{"telemetry": {"run_uuid": "r5", "scenarios": '
+            '[{"exit_status": 0}], "overall_resiliency_report": {"scenarios": {}, '
+            '"resiliency_score": 0, "passed_slos": 0, "total_slos": 0'
+        )
+        result = extract_telemetry_from_log(log, -1)
+        assert result.exit_status == 0
+        assert result.resiliency_score is None
+
 
 @pytest.mark.parametrize(
     "snapshot, errors, expected",

@@ -17,6 +17,44 @@ from krkn_ai.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_OPENING = {"(": ")", "{": "}"}
+
+
+def _split_patterns(pattern_string: str) -> List[str]:
+    """
+    Split a pattern string on the commas that separate patterns.
+
+    A comma inside a regex, such as a ``{1,3}`` quantifier or a ``[a,b]``
+    character class, belongs to that regex and does not start a new pattern.
+    """
+    parts: List[str] = []
+    current: List[str] = []
+    closers: List[str] = []
+    in_class = False
+    escaped = False
+    for char in pattern_string:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif in_class:
+            # Inside [...] only an unescaped ] is special.
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+        elif char in _OPENING:
+            closers.append(_OPENING[char])
+        elif closers and char == closers[-1]:
+            closers.pop()
+        elif char == "," and not closers:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current))
+    return [part.strip() for part in parts if part.strip()]
+
+
 class PatternValidationError(ValueError):
     """Raised when a pattern string contains invalid regex."""
 
@@ -85,7 +123,7 @@ class PatternMatcher:
         exclude: List[re.Pattern] = []
 
         # Split by comma and process each part
-        parts = [p.strip() for p in stripped.split(",") if p.strip()]
+        parts = _split_patterns(stripped)
 
         for part in parts:
             if part == "*":
@@ -225,7 +263,7 @@ class PatternMatcher:
         if not pattern_string or pattern_string.strip() in ("", "*"):
             return errors
 
-        parts = [p.strip() for p in pattern_string.split(",") if p.strip()]
+        parts = _split_patterns(pattern_string)
         for part in parts:
             if part == "*":
                 continue

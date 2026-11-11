@@ -1,4 +1,5 @@
 import datetime
+import os
 import time
 from typing import Dict, Optional, Tuple
 
@@ -188,10 +189,20 @@ class KrknRunner:
                 finally:
                     health_check_watcher.stop()
             else:
+                graph_log_dir = None
                 if isinstance(scenario, CompositeScenario):
                     command = build_graph_command(
                         scenario, self.config.kubeconfig_file_path, self.output_dir
                     )
+                    # krknctl writes each node's log to its working directory
+                    graph_log_dir = os.path.abspath(
+                        os.path.join(
+                            self.output_dir,
+                            "graph_logs",
+                            f"{generation_id}_{scenario_id}",
+                        )
+                    )
+                    os.makedirs(graph_log_dir, exist_ok=True)
                 elif isinstance(scenario, Scenario):
                     command = build_scenario_command(
                         scenario, self.config, self.runner_type
@@ -206,10 +217,14 @@ class KrknRunner:
                         inject_es_config(command, self.config, self.runner_type, True),
                         do_not_log=not is_verbose(),
                         cancellation_event=CANCELLATION_EVENT,
+                        cwd=graph_log_dir,
                     )
 
-                    if isinstance(scenario, CompositeScenario):
-                        telemetry = extract_graph_telemetry(log, returncode)
+                    if graph_log_dir is not None:
+                        log += f"\nGraph node logs: {graph_log_dir}\n"
+                        telemetry = extract_graph_telemetry(
+                            log, returncode, log_dir=graph_log_dir
+                        )
                         returncode = telemetry.exit_status
                         recovery_failed = telemetry.recovery_failed
                     else:

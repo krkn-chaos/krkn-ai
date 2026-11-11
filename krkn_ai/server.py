@@ -34,7 +34,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
-from krkn_ai.models.config import ConfigFile
 from krkn_ai.run_results import (
     completed_generation_count,
     parse_run_artifacts,
@@ -42,6 +41,7 @@ from krkn_ai.run_results import (
     scenario_index_row,
     _completed_fitness,
 )
+from krkn_ai.utils.fs import parse_config
 
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
@@ -1427,7 +1427,7 @@ def create_app(
             )
         config_data["kubeconfig_file_path"] = "/input/kubeconfig"
         try:
-            config = ConfigFile.model_validate(config_data)
+            config = parse_config(config_data)
         except ValidationError as exc:
             errors = [
                 {
@@ -1438,6 +1438,11 @@ def create_app(
             ]
             return JSONResponse(
                 {"errors": errors}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+            )
+        except ValueError:
+            return JSONResponse(
+                {"errors": [{"path": "parameters", "message": "Invalid value"}]},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
         if config.genetic.composition_rate > 0:
             return JSONResponse(

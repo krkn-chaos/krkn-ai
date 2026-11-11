@@ -51,6 +51,15 @@ def read_config_from_file(
     if kubeconfig is not None and kubeconfig != "" and os.path.exists(kubeconfig):
         config["kubeconfig_file_path"] = kubeconfig
 
+    return parse_config(config, param)
+
+
+def parse_config(
+    config: dict,
+    param: Union[Sequence[str], None] = None,
+) -> ConfigFile:
+    """Resolve runtime parameters and validate an already-loaded configuration."""
+
     # param refers to Key-value passed with -p flag during krkn-ai test run.
     # Parameters from the config file apply even when no -p is passed.
     existing = config.get("parameters")

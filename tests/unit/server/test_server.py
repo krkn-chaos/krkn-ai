@@ -30,6 +30,7 @@ from krkn_ai.server import (
     create_app,
     upload_results,
 )
+from krkn_ai.utils.fs import read_config_from_file
 
 TOKEN_HEADERS = {"Authorization": "Bearer service-token"}
 
@@ -700,6 +701,71 @@ def test_final_best_scenarios_restore_parameters_by_generation_and_id(
             "queryType": None,
         }
     ]
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_config_validation_resolves_parameters_like_runtime(
+    tmp_path: Path, minimal_config, structured: bool
+):
+    host = (
+        "http://a7c68e62d11434c329c4dd481dd565b3-1779572757"
+        ".us-east-1.elb.amazonaws.com:8080"
+    )
+    config = minimal_config.model_dump(mode="json")
+    config.pop("parameters")
+    config["health_checks"] = {
+        "applications": [{"name": "cart", "url": "$HOST/cart/health"}]
+    }
+    # YAML's escaped line continuation must not change the host value.
+    scalar = f'"{host[:70]}\\\n      {host[70:]}"'
+    parameter_yaml = (
+        f"  HOST:\n    value: {scalar}\n    is_private: true\n"
+        if structured
+        else f"  HOST: {scalar}\n"
+    )
+    source = yaml.safe_dump(config) + "parameters:\n" + parameter_yaml
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(source, encoding="utf-8")
+    runtime_config = read_config_from_file(str(config_file))
+    assert (
+        str(runtime_config.health_checks.applications[0].url) == f"{host}/cart/health"
+    )
+    assert runtime_config.parameters["HOST"].is_private is structured
+
+    client = TestClient(create_app(tmp_path / "artifacts", "service-token"))
+    response = client.post(
+        "/v1/configs/validate",
+        headers=TOKEN_HEADERS,
+        json={"configYaml": source},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"valid": True}
+
+
+@pytest.mark.parametrize(
+    ("parameters", "error_path"),
+    [
+        ({}, "health_checks.applications.0.url"),
+        ({"HOST": "not-a-url"}, "health_checks.applications.0.url"),
+        ({"HOST": None}, "parameters"),
+    ],
+)
+def test_config_validation_rejects_unusable_url_parameters(
+    tmp_path: Path, minimal_config, parameters: dict, error_path: str
+):
+    config = minimal_config.model_dump(mode="json")
+    config["parameters"] = parameters
+    config["health_checks"] = {
+        "applications": [{"name": "cart", "url": "$HOST/cart/health"}]
+    }
+    client = TestClient(create_app(tmp_path, "service-token"))
+    response = client.post(
+        "/v1/configs/validate",
+        headers=TOKEN_HEADERS,
+        json={"configYaml": yaml.safe_dump(config)},
+    )
+    assert response.status_code == 422
+    assert {error["path"] for error in response.json()["errors"]} == {error_path}
 
 
 def test_typed_partial_results_validation_and_manifest_consistency(

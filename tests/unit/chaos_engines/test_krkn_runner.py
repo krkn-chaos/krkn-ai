@@ -359,24 +359,21 @@ class TestKrknRunnerRun:
         """A node that exits 1 with unrecovered targets in its own log is a real
         chaos result, as it is for a single scenario."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "b-1.log").write_text(
-            "Chaos data:"
-            + json.dumps(
-                {
-                    "telemetry": {
-                        "scenarios": [
-                            {
-                                "exit_status": 1,
-                                "affected_pods": {
-                                    "unrecovered": [{"pod_name": "shipping"}],
-                                    "error": None,
-                                },
-                            }
-                        ],
-                        "error_logs": [],
-                    }
+        node_log = "Chaos data:" + json.dumps(
+            {
+                "telemetry": {
+                    "scenarios": [
+                        {
+                            "exit_status": 1,
+                            "affected_pods": {
+                                "unrecovered": [{"pod_name": "shipping"}],
+                                "error": None,
+                            },
+                        }
+                    ],
+                    "error_logs": [],
                 }
-            )
+            }
         )
         minimal_config.fitness_function = FitnessFunction(
             query="up",
@@ -391,6 +388,13 @@ class TestKrknRunnerRun:
             dependency=CompositeDependency.NONE,
         )
         log = "scenario b at step 1 with exit status 1, check log file b-1.log.\n"
+
+        def fake_run_shell(command, **kwargs):
+            # krknctl writes the node log into the directory it runs in
+            with open(os.path.join(kwargs["cwd"], "b-1.log"), "w") as f:
+                f.write(node_log)
+            return log, 0
+
         with (
             patch(
                 "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
@@ -399,7 +403,7 @@ class TestKrknRunnerRun:
             patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
             patch(
                 "krkn_ai.chaos_engines.krkn_runner.run_shell",
-                return_value=(log, 0),
+                side_effect=fake_run_shell,
             ),
         ):
             watcher.return_value.get_results.return_value = {}
@@ -412,6 +416,83 @@ class TestKrknRunnerRun:
         assert result.returncode == 1
         assert result.fitness_result.krkn_failure_score == KRKN_HUB_FAILURE_SCORE
         assert result.fitness_result.fitness_score == KRKN_HUB_FAILURE_SCORE / 2 * 100
+
+    def test_composite_node_logs_go_to_a_directory_per_run(
+        self, minimal_config, temp_output_dir, monkeypatch, tmp_path
+    ):
+        """krknctl writes each node's log to its working directory, so each
+        graph run gets its own directory under the output dir, its node logs
+        are read from there, and the saved log says where they are (#160)."""
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        minimal_config.fitness_function = FitnessFunction(
+            query="up",
+            include_krkn_failure=True,
+            include_health_check_failure=False,
+            include_health_check_response_time=False,
+        )
+        minimal_config.health_checks = HealthCheckConfig()
+        composite = CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+        node_log = "Chaos data:" + json.dumps(
+            {
+                "telemetry": {
+                    "scenarios": [
+                        {
+                            "exit_status": 1,
+                            "affected_pods": {
+                                "unrecovered": [{"pod_name": "shipping"}],
+                                "error": None,
+                            },
+                        }
+                    ],
+                    "error_logs": [],
+                }
+            }
+        )
+        calls = []
+
+        def fake_run_shell(command, **kwargs):
+            calls.append(kwargs)
+            with open(os.path.join(kwargs["cwd"], "b-1.log"), "w") as f:
+                f.write(node_log)
+            return (
+                "scenario b at step 1 with exit status 1, check log file b-1.log.\n",
+                0,
+            )
+
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.run_shell",
+                side_effect=fake_run_shell,
+            ),
+        ):
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                minimal_config, temp_output_dir, KrknRunnerType.CLI_RUNNER
+            )
+            runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
+            result = runner.run(composite, 3, scenario_id=7)
+
+        run_dir = calls[0]["cwd"]
+        assert os.path.isabs(run_dir)
+        assert os.path.realpath(run_dir) == os.path.realpath(
+            os.path.join(temp_output_dir, "graph_logs", "3_7")
+        )
+        assert os.path.isfile(os.path.join(run_dir, "b-1.log"))
+        assert not os.listdir(elsewhere)
+        assert result.returncode == 1
+        assert result.fitness_result.krkn_failure_score == KRKN_HUB_FAILURE_SCORE
+        assert run_dir in result.log
 
     def test_run_raises_for_unsupported_scenario_type(
         self, minimal_config, temp_output_dir
@@ -473,6 +554,60 @@ class TestKrknRunnerCommandGeneration:
             assert "dummy-scenario" in command
             assert "--net=host" in command
             assert "/tmp/kubeconfig" in command
+
+    def test_graph_command_uses_absolute_paths(self, monkeypatch, tmp_path):
+        """krknctl runs in the graph log directory, so relative paths from the
+        CLI (-k ./tmp/kubeconfig.yaml, -o ./tmp/results) must be made absolute."""
+        import shlex
+        from krkn_ai.chaos_engines.composite import build_graph_command
+
+        monkeypatch.chdir(tmp_path)
+        composite = CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+        args = shlex.split(
+            build_graph_command(composite, "./tmp/kubeconfig.yaml", "./tmp/results")
+        )
+        graph_file = args[3]
+        kubeconfig = args[args.index("--kubeconfig") + 1]
+        assert os.path.isabs(graph_file) and os.path.isfile(graph_file)
+        assert kubeconfig == str(tmp_path / "tmp" / "kubeconfig.yaml")
+
+    def test_graph_command_paths_survive_spaces_and_home(self, monkeypatch, tmp_path):
+        import shlex
+        from krkn_ai.chaos_engines.composite import build_graph_command
+
+        work = tmp_path / "a b"
+        work.mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.setenv("HOME", str(tmp_path / "home dir"))
+        composite = CompositeScenario(
+            scenario_a=DummyScenario(cluster_components=ClusterComponents()),
+            scenario_b=DummyScenario(cluster_components=ClusterComponents()),
+            dependency=CompositeDependency.NONE,
+        )
+        args = shlex.split(build_graph_command(composite, "~/.kube/config", "./out"))
+        assert len(args) == 6
+        assert os.path.isfile(args[3])
+        assert args[5] == str(tmp_path / "home dir" / ".kube" / "config")
+
+    @patch("krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False)
+    @patch("krkn_ai.chaos_engines.krkn_runner.run_shell", return_value=("", 0))
+    def test_single_scenario_runs_in_the_process_directory(
+        self, mock_run_shell, mock_env, minimal_config, temp_output_dir
+    ):
+        minimal_config.health_checks = HealthCheckConfig()
+        with patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"):
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.CLI_RUNNER,
+            )
+            runner.run(DummyScenario(cluster_components=ClusterComponents()), 0)
+        assert mock_run_shell.call_args.kwargs["cwd"] is None
+        assert not os.path.exists(os.path.join(temp_output_dir, "graph_logs"))
 
     def test_graph_command_creates_json_file(self, minimal_config, temp_output_dir):
         """Test graph_command creates JSON file for composite scenario"""

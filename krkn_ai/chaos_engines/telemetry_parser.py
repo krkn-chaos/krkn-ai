@@ -94,6 +94,10 @@ def extract_graph_telemetry(log: str, default_returncode: int) -> TelemetryResul
     unrecovered targets makes the run unusable, which outranks a recovery
     failure, which outranks exit status 2.
     """
+    if default_returncode != 0:
+        # krknctl exits 0 when nodes fail, so a nonzero exit is its own
+        # failure or a cancelled run, and no node result may make it scorable
+        return TelemetryResult(exit_status=default_returncode)
     clean_log = strip_ansi(log)
     failed_logs = {
         os.path.basename(name): int(status)

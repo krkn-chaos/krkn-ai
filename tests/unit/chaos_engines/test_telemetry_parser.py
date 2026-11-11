@@ -49,6 +49,20 @@ class TestExtractGraphTelemetry:
         log = "Error: failed to validate scenario: pod-scenarios\n"
         assert extract_graph_telemetry(log, 1).exit_status == 1
 
+    @pytest.mark.parametrize("returncode", [1, -15])
+    def test_krknctl_failure_is_not_hidden_by_a_scorable_node(
+        self, returncode, tmp_path, monkeypatch
+    ):
+        """krknctl exits 0 when nodes fail, so a nonzero exit (its own error,
+        or the run being cancelled) is the graph's result even when a node
+        printed exit status 2 or a recovery failure."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "krknctl-b-123.log").write_text(_node_log(1, [{"pod_name": "x"}]))
+        log = _graph_failure("alerts", 2) + _graph_failure("b", 1)
+        result = extract_graph_telemetry(log, returncode)
+        assert result.exit_status == returncode
+        assert result.recovery_failed is False
+
     def test_failed_node_sets_exit_status_when_krknctl_exits_zero(self):
         result = extract_graph_telemetry(_graph_failure("bad-node", 1), 0)
         assert result.exit_status == 1

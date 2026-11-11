@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import errno
 import fcntl
 import hashlib
 import hmac
@@ -17,8 +18,11 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from itertools import chain
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, BinaryIO, Iterator, Literal
+
 from urllib.parse import quote
 
 import requests
@@ -31,7 +35,6 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
-from krkn_ai.models.config import ConfigFile
 from krkn_ai.run_results import (
     completed_generation_count,
     parse_run_artifacts,
@@ -39,11 +42,12 @@ from krkn_ai.run_results import (
     scenario_index_row,
     _completed_fitness,
 )
+from krkn_ai.utils.fs import parse_config
 
 
 DEFAULT_ARTIFACT_ROOT = "/var/lib/krkn-ai"
 MANIFEST_NAME = "manifest.json"
-RESULT_VIEW_FORMAT_VERSION = 1
+RESULT_VIEW_FORMAT_VERSION = 2
 COMPLETE_MARKER = ".krkn-ai-complete"
 DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 DEFAULT_MAX_RUN_BYTES = 1024 * 1024 * 1024
@@ -79,7 +83,7 @@ class ManifestFile(BaseModel):
 
 class CommitRequest(BaseModel):
     files: list[ManifestFile]
-    status: Literal["in_progress", "succeeded", "failed"] = "succeeded"
+    status: Literal["in_progress", "succeeded", "failed", "cancelled"] = "succeeded"
 
 
 def _safe_uid(uid: str) -> str:
@@ -237,10 +241,58 @@ class ArtifactStore:
             if staged_file.name.startswith(prefix):
                 staged_file.unlink()
 
-    def _open_artifact(self, uid: str, path: str) -> tuple[BinaryIO, int, BinaryIO]:
+    def _manifest_for_checksum(
+        self, uid: str, path: str, checksum: str
+    ) -> dict[str, Any]:
+        if re.fullmatch(r"[0-9a-f]{64}", checksum) is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid SHA-256 checksum"
+            )
+        current = self.manifest(uid)
+        relative_path = _safe_path(path)
+        try:
+            entry = self._manifest_entry(current, relative_path)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            entry = None
+        if entry is not None and hmac.compare_digest(entry["sha256"], checksum):
+            return current
+
+        index_dir = self.run_dir(uid) / ".revision-index"
+        if index_dir.exists():
+            for index_path in index_dir.iterdir():
+                revision = index_path.stem
+                if (
+                    not index_path.is_file()
+                    or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+                ):
+                    continue
+                try:
+                    index = json.loads(index_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(index, dict) or index.get("committed") is not True:
+                    continue
+                for previous in index.get("files", []):
+                    if (
+                        isinstance(previous, dict)
+                        and previous.get("path") == str(relative_path)
+                        and previous.get("sha256") == checksum
+                    ):
+                        return {"_revision": revision, "files": [previous]}
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "artifact version not found")
+
+    def _open_artifact(
+        self, uid: str, path: str, checksum: str | None = None
+    ) -> tuple[BinaryIO, int, BinaryIO]:
         with self.uid_lock(uid):
             self.ensure_not_deleted(uid)
-            manifest = self.manifest(uid)
+            manifest = (
+                self._manifest_for_checksum(uid, path, checksum)
+                if checksum is not None
+                else self.manifest(uid)
+            )
             lease = self._open_lock_file(uid, streaming=True)
             try:
                 fcntl.flock(lease.fileno(), fcntl.LOCK_SH)
@@ -267,20 +319,79 @@ class ArtifactStore:
     def run_dir(self, uid: str) -> Path:
         return self.root / "runs" / _safe_uid(uid)
 
+    def _revision_dir(self, uid: str, revision: str) -> Path:
+        return self.run_dir(uid) / ".revisions" / revision
+
+    def _revision_index_path(self, uid: str, revision: str) -> Path:
+        return self.run_dir(uid) / ".revision-index" / f"{revision}.json"
+
     def _manifest_path(self, uid: str) -> Path:
         return self.run_dir(uid) / MANIFEST_NAME
 
-    @staticmethod
-    def _run_size(run_dir: Path) -> int:
-        if not run_dir.exists():
-            return 0
-        return sum(
-            file.stat().st_size
-            for file in run_dir.rglob("*")
-            if file.is_file()
-            and file.name != MANIFEST_NAME
-            and not file.name.startswith(".upload-")
+    def _staged_path(
+        self, uid: str, relative_path: PurePosixPath, checksum: str
+    ) -> Path:
+        uid_hash = hashlib.sha256(_safe_uid(uid).encode()).hexdigest()
+        path_hash = hashlib.sha256(str(relative_path).encode()).hexdigest()
+        return self.root / ".upload-staging" / f"{uid_hash}-{path_hash}-{checksum}"
+
+    def _published_file_path(
+        self, uid: str, manifest: dict[str, Any], relative_path: PurePosixPath
+    ) -> Path:
+        revision = manifest.get("_revision")
+        if revision is None:
+            return self.run_dir(uid) / relative_path
+        if (
+            not isinstance(revision, str)
+            or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+        ):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
+        return self._revision_dir(uid, revision) / relative_path
+
+    def _effective_run_size(self, uid: str) -> int:
+        run_dir = self.run_dir(uid)
+        uid_hash = hashlib.sha256(_safe_uid(uid).encode()).hexdigest()
+        paths = chain(
+            (
+                path
+                for path in run_dir.rglob("*")
+                if path != self._manifest_path(uid)
+                and path.relative_to(run_dir).parts[0] != ".revision-index"
+            ),
+            (self.root / ".upload-staging").glob(f"{uid_hash}-*-*"),
         )
+        seen: set[tuple[int, int]] = set()
+        total = 0
+        for path in paths:
+            if not path.is_file():
+                continue
+            metadata = path.stat()
+            identity = (metadata.st_dev, metadata.st_ino)
+            if identity not in seen:
+                seen.add(identity)
+                total += metadata.st_size
+        return total
+
+    def _link_artifact(self, uid: str, source: Path, destination: Path) -> None:
+        try:
+            os.link(source, destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            if (
+                self._effective_run_size(uid) + source.stat().st_size
+                > self.max_run_bytes
+            ):
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
+                )
+            with source.open("rb") as source_file, destination.open("wb") as target:
+                shutil.copyfileobj(source_file, target)
+                target.flush()
+                os.fsync(target.fileno())
 
     def _begin_upload(self, uid: str) -> tuple[int, str]:
         with self.uid_lock(uid):
@@ -294,20 +405,39 @@ class ArtifactStore:
             )
 
     def _publish_upload(
-        self, uid: str, relative_path: PurePosixPath, temporary_name: str, size: int
+        self,
+        uid: str,
+        relative_path: PurePosixPath,
+        checksum: str,
+        temporary_name: str,
+        size: int,
     ) -> None:
         with self.uid_lock(uid):
             self.ensure_not_deleted(uid)
-            run_dir = self.run_dir(uid)
-            destination = run_dir / relative_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            existing_size = destination.stat().st_size if destination.is_file() else 0
-            if self._run_size(run_dir) - existing_size + size > self.max_run_bytes:
+            try:
+                manifest = self.manifest(uid)
+            except HTTPException as exc:
+                if exc.status_code != status.HTTP_404_NOT_FOUND:
+                    raise
+                manifest = None
+            if manifest and manifest.get("status") in {
+                "succeeded",
+                "failed",
+                "cancelled",
+            }:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "run artifacts are already committed"
+                )
+            destination = self._staged_path(uid, relative_path, checksum)
+            if destination.exists():
+                return
+            if self._effective_run_size(uid) + size > self.max_run_bytes:
                 raise HTTPException(
                     status.HTTP_413_CONTENT_TOO_LARGE,
                     "artifact upload exceeds configured storage limit",
                 )
             os.replace(temporary_name, destination)
+            self._fsync_directory(destination.parent)
 
     async def upload(
         self, uid: str, path: str, stream: Any, expected_sha256: str
@@ -346,12 +476,140 @@ class ArtifactStore:
                     status.HTTP_422_UNPROCESSABLE_CONTENT, "checksum mismatch"
                 )
             await run_in_threadpool(
-                self._publish_upload, safe_uid, relative_path, temporary_name, size
+                self._publish_upload,
+                safe_uid,
+                relative_path,
+                expected_sha256,
+                temporary_name,
+                size,
             )
             return size
         finally:
             if os.path.exists(temporary_name):
                 os.unlink(temporary_name)
+
+    @staticmethod
+    def _revision_id(files: list[dict[str, Any]]) -> str:
+        encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        descriptor = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def _write_json_atomic(
+        self, path: Path, value: dict[str, Any], prefix: str
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=prefix, dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "w") as temporary:
+                json.dump(value, temporary, sort_keys=True, separators=(",", ":"))
+                temporary.write("\n")
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, path)
+            self._fsync_directory(path.parent)
+        finally:
+            if os.path.exists(temporary_name):
+                os.unlink(temporary_name)
+
+    def _write_revision_index(
+        self, uid: str, revision: str, files: list[dict[str, Any]], committed: bool
+    ) -> None:
+        self._write_json_atomic(
+            self._revision_index_path(uid, revision),
+            {"files": files, "committed": committed},
+            ".revision-index-",
+        )
+
+    def _revision_source(
+        self,
+        uid: str,
+        relative_path: PurePosixPath,
+        checksum: str,
+        size: int,
+        current_manifest: dict[str, Any] | None,
+    ) -> Path | None:
+        if current_manifest is not None:
+            for entry in current_manifest["files"]:
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("path") == str(relative_path)
+                    and entry.get("sha256") == checksum
+                    and entry.get("size") == size
+                ):
+                    source = self._published_file_path(
+                        uid, current_manifest, relative_path
+                    )
+                    if source.is_file():
+                        return source
+        index_dir = self.run_dir(uid) / ".revision-index"
+        if not index_dir.exists():
+            return None
+        for index_path in index_dir.iterdir():
+            revision = index_path.stem
+            if (
+                not index_path.is_file()
+                or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+            ):
+                continue
+            try:
+                index = json.loads(index_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                not isinstance(index, dict)
+                or index.get("committed") is not True
+                or not isinstance(index.get("files"), list)
+            ):
+                continue
+            if any(
+                isinstance(entry, dict)
+                and entry.get("path") == str(relative_path)
+                and entry.get("sha256") == checksum
+                and entry.get("size") == size
+                for entry in index["files"]
+            ):
+                source = self._revision_dir(uid, revision) / relative_path
+                if source.is_file():
+                    return source
+        return None
+
+    def _materialize_legacy_revision(self, uid: str, manifest: dict[str, Any]) -> str:
+        revision = self._revision_id(manifest["files"])
+        revision_dir = self._revision_dir(uid, revision)
+        revision_dir.parent.mkdir(parents=True, exist_ok=True)
+        if not revision_dir.exists():
+            temporary_dir = Path(
+                tempfile.mkdtemp(prefix=".revision-", dir=revision_dir.parent)
+            )
+            try:
+                for entry in manifest["files"]:
+                    relative_path = _safe_path(entry["path"])
+                    source = self.run_dir(uid) / relative_path
+                    actual_checksum, actual_size = _sha256(source)
+                    if (
+                        actual_checksum != entry["sha256"]
+                        or actual_size != entry["size"]
+                    ):
+                        raise HTTPException(
+                            status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+                        )
+                    destination = temporary_dir / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    self._link_artifact(uid, source, destination)
+                os.replace(temporary_dir, revision_dir)
+                self._fsync_directory(revision_dir.parent)
+            finally:
+                if temporary_dir.exists():
+                    shutil.rmtree(temporary_dir)
+        self._write_revision_index(uid, revision, manifest["files"], True)
+        return revision
 
     def commit(self, uid: str, request: CommitRequest) -> dict[str, Any]:
         safe_uid = _safe_uid(uid)
@@ -360,64 +618,153 @@ class ArtifactStore:
             return self._commit_locked(safe_uid, request)
 
     def _commit_locked(self, uid: str, request: CommitRequest) -> dict[str, Any]:
-        run_dir = self.run_dir(uid)
+        manifest_path = self._manifest_path(uid)
+        try:
+            existing = self.manifest(uid)
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            existing = None
+
         files: list[dict[str, Any]] = []
         seen: set[str] = set()
-        for entry in request.files:
-            relative_path = _safe_path(entry.path)
+        for requested_file in request.files:
+            relative_path = _safe_path(requested_file.path)
             normalized = str(relative_path)
             if normalized in seen:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT, "duplicate manifest path"
                 )
             seen.add(normalized)
-            file_path = run_dir / relative_path
-            if not file_path.is_file():
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"artifact {normalized} has not been uploaded",
-                )
-            actual_sha256, actual_size = _sha256(file_path)
-            if actual_size != entry.size or not hmac.compare_digest(
-                actual_sha256, entry.sha256
-            ):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    f"artifact {normalized} does not match manifest",
-                )
             files.append(
-                {"path": normalized, "sha256": entry.sha256, "size": entry.size}
+                {
+                    "path": normalized,
+                    "sha256": requested_file.sha256,
+                    "size": requested_file.size,
+                }
             )
-        manifest = {
-            "status": request.status,
-            "files": sorted(files, key=lambda entry: entry["path"]),
-        }
-        manifest_path = self._manifest_path(uid)
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = (
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
-        ).encode()
-        with self._commit_lock:
-            if manifest_path.exists():
-                existing = json.loads(manifest_path.read_text())
-                if existing.get("status", "succeeded") in {"succeeded", "failed"}:
-                    if manifest_path.read_bytes() == encoded:
-                        return manifest
-                    raise HTTPException(
-                        status.HTTP_409_CONFLICT, "run artifacts are already committed"
-                    )
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=".manifest-", dir=manifest_path.parent
+        files.sort(key=lambda entry: entry["path"])
+        total_size = sum(entry["size"] for entry in files)
+        if total_size > self.max_run_bytes:
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE,
+                "artifact upload exceeds configured storage limit",
+            )
+
+        if existing is not None:
+            existing_status = existing.get("status", "succeeded")
+            same_snapshot = (
+                existing_status == request.status and existing.get("files") == files
+            )
+            if existing_status in {"succeeded", "failed", "cancelled"}:
+                if same_snapshot:
+                    return existing
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "run artifacts are already committed"
+                )
+            if same_snapshot:
+                self._clear_upload_staging(uid)
+                return existing
+
+        revision = self._revision_id(files)
+        revision_dir = self._revision_dir(uid, revision)
+        revision_dir.parent.mkdir(parents=True, exist_ok=True)
+        created_revision = not revision_dir.exists()
+        if created_revision:
+            temporary_dir = Path(
+                tempfile.mkdtemp(prefix=".revision-", dir=revision_dir.parent)
             )
             try:
-                with os.fdopen(descriptor, "wb") as temporary:
-                    temporary.write(encoded)
-                    temporary.flush()
-                    os.fsync(temporary.fileno())
-                os.replace(temporary_name, manifest_path)
+                for entry in files:
+                    relative_path = _safe_path(entry["path"])
+                    staged = self._staged_path(uid, relative_path, entry["sha256"])
+                    source = (
+                        staged
+                        if staged.is_file()
+                        else self._revision_source(
+                            uid,
+                            relative_path,
+                            entry["sha256"],
+                            entry["size"],
+                            existing,
+                        )
+                    )
+                    if source is None:
+                        raise HTTPException(
+                            status.HTTP_409_CONFLICT,
+                            f"artifact {entry['path']} has not been uploaded",
+                        )
+                    actual_sha256, actual_size = _sha256(source)
+                    if actual_size != entry["size"] or not hmac.compare_digest(
+                        actual_sha256, entry["sha256"]
+                    ):
+                        raise HTTPException(
+                            status.HTTP_409_CONFLICT,
+                            f"artifact {entry['path']} does not match manifest",
+                        )
+                    destination = temporary_dir / relative_path
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    self._link_artifact(uid, source, destination)
+                os.replace(temporary_dir, revision_dir)
+                self._fsync_directory(revision_dir.parent)
             finally:
-                if os.path.exists(temporary_name):
-                    os.unlink(temporary_name)
+                if temporary_dir.exists():
+                    shutil.rmtree(temporary_dir)
+        for entry in files:
+            file_path = revision_dir / _safe_path(entry["path"])
+            actual_sha256, actual_size = _sha256(file_path)
+            if actual_size != entry["size"] or not hmac.compare_digest(
+                actual_sha256, entry["sha256"]
+            ):
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
+                )
+
+        try:
+            if self._effective_run_size(uid) > self.max_run_bytes:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
+                )
+            if request.status == "in_progress":
+                selected_files = {}
+                for entry in files:
+                    path = entry["path"]
+                    if path in {"progress.json", "results.json"} or re.fullmatch(
+                        r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)", path
+                    ):
+                        selected_files[path] = (
+                            (revision_dir / _safe_path(path)).read_bytes(),
+                            entry["sha256"],
+                        )
+                parse_run_artifacts(selected_files)
+        except HTTPException:
+            if created_revision:
+                shutil.rmtree(revision_dir)
+            raise
+
+        if existing is not None and existing.get("_revision") is None:
+            self._materialize_legacy_revision(uid, existing)
+        if existing is not None and isinstance(existing.get("_revision"), str):
+            previous_revision = existing["_revision"]
+            if re.fullmatch(r"[0-9a-f]{64}", previous_revision):
+                self._write_revision_index(
+                    uid, previous_revision, existing["files"], True
+                )
+        index_path = self._revision_index_path(uid, revision)
+        if not index_path.exists():
+            self._write_revision_index(uid, revision, files, False)
+
+        committed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        manifest = {
+            "status": request.status,
+            "files": files,
+            "_revision": revision,
+            "committedAt": committed_at,
+        }
+        self._write_json_atomic(manifest_path, manifest, ".manifest-")
+        self._write_revision_index(uid, revision, files, True)
+        self._clear_upload_staging(uid)
         return manifest
 
     def manifest(self, uid: str) -> dict[str, Any]:
@@ -478,7 +825,7 @@ class ArtifactStore:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
             )
-        candidate = self.run_dir(uid) / relative_path
+        candidate = self._published_file_path(uid, manifest, relative_path)
         try:
             with candidate.open("rb") as source:
                 content = source.read()
@@ -519,7 +866,7 @@ class ArtifactStore:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
             )
-        candidate = self.run_dir(uid) / relative_path
+        candidate = self._published_file_path(uid, manifest, relative_path)
         try:
             source = candidate.open("rb")
         except OSError as exc:
@@ -609,7 +956,12 @@ def create_app(
             for path in paths
         ]
         encoded = json.dumps(
-            [RESULT_VIEW_FORMAT_VERSION, manifest.get("status"), entries],
+            [
+                RESULT_VIEW_FORMAT_VERSION,
+                manifest.get("status"),
+                manifest.get("committedAt"),
+                entries,
+            ],
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -856,7 +1208,11 @@ def create_app(
                     cleanup_projection_views(uid, view_path)
                     raise
 
-                terminal = manifest.get("status") in {"succeeded", "failed"}
+                terminal = manifest.get("status") in {
+                    "succeeded",
+                    "failed",
+                    "cancelled",
+                }
                 details = {}
                 detail_record = None
                 for key, artifact in artifacts.scenarios.items():
@@ -899,6 +1255,10 @@ def create_app(
     def not_available_summary() -> dict[str, Any]:
         return {
             "artifactStatus": "not_available",
+            "cancelledGeneration": None,
+            "resultsFinalized": False,
+            "resultsCompleteness": "none",
+            "lastCommittedAt": None,
             "completedGenerations": None,
             "currentGeneration": None,
             "completedScenarios": None,
@@ -914,30 +1274,99 @@ def create_app(
         if manifest is None:
             return not_available_summary()
         run_status = manifest.get("status")
-        if run_status not in {"in_progress", "succeeded", "failed"}:
+        if run_status not in {"in_progress", "succeeded", "failed", "cancelled"}:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
             )
-        terminal = run_status in {"succeeded", "failed"}
+        terminal = run_status in {"succeeded", "failed", "cancelled"}
         final = artifacts.final_results if terminal else None
         progress = artifacts.progress or {}
         if final is not None:
             summary = final.get("summary") or {}
             config = final.get("config") or {}
-            completed_scenarios = progress.get(
-                "completedScenarios", summary.get("total_scenarios_executed")
-            )
+            completed_scenarios = progress.get("completedScenarios")
+            if completed_scenarios is None:
+                completed_scenarios = summary.get("total_scenarios_executed")
+                if completed_scenarios is None and artifacts.scenarios:
+                    completed_scenarios = sum(
+                        artifact.value.get("outcome") != "cancelled"
+                        for artifact in artifacts.scenarios.values()
+                    )
+                elif isinstance(completed_scenarios, int) and not isinstance(
+                    completed_scenarios, bool
+                ):
+                    completed_scenarios = max(
+                        0,
+                        completed_scenarios
+                        - sum(
+                            artifact.value.get("outcome") == "cancelled"
+                            for artifact in artifacts.scenarios.values()
+                        ),
+                    )
             configured_generations = config.get("generations")
             population_size = config.get("population_size")
         else:
             completed_scenarios = progress.get("completedScenarios")
+            if completed_scenarios is None and artifacts.scenarios:
+                completed_scenarios = sum(
+                    artifact.value.get("outcome") != "cancelled"
+                    for artifact in artifacts.scenarios.values()
+                )
             configured_generations = progress.get("configuredGenerations")
             population_size = progress.get("populationSize")
+
+        cancelled_generation = None
+        current_generation = progress.get("currentGeneration")
+        if run_status == "cancelled":
+            cancelled_generation = progress.get("cancelledGeneration")
+            if cancelled_generation is not None and (
+                isinstance(cancelled_generation, bool)
+                or not isinstance(cancelled_generation, int)
+                or cancelled_generation < 0
+            ):
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY, "invalid committed artifact"
+                )
+            if current_generation is None:
+                current_generation = cancelled_generation
+        else:
+            current_generation = None if terminal else current_generation
+
+        committed_at = manifest.get("committedAt")
+        if committed_at is not None and not isinstance(committed_at, str):
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "invalid committed manifest"
+            )
+        result_paths = {
+            entry.get("path")
+            for entry in manifest["files"]
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        }
+        has_results = any(
+            path in {"progress.json", "results.json"}
+            or (
+                isinstance(path, str)
+                and re.fullmatch(
+                    r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)",
+                    path,
+                )
+            )
+            for path in result_paths
+        )
+        completeness = (
+            "none"
+            if not has_results
+            else "complete"
+            if run_status == "succeeded" and "results.json" in result_paths
+            else "partial"
+        )
         values = {
+            "cancelledGeneration": cancelled_generation,
+            "resultsFinalized": terminal,
+            "resultsCompleteness": completeness,
+            "lastCommittedAt": committed_at,
             "completedGenerations": completed_generation_count(artifacts, terminal),
-            "currentGeneration": (
-                None if terminal else progress.get("currentGeneration")
-            ),
+            "currentGeneration": current_generation,
             "completedScenarios": completed_scenarios,
             "configuredGenerations": configured_generations,
             "populationSize": population_size,
@@ -948,6 +1377,7 @@ def create_app(
             "completedScenarios",
             "configuredGenerations",
             "populationSize",
+            "cancelledGeneration",
         ):
             value = values[field]
             if value is not None and (
@@ -1004,7 +1434,7 @@ def create_app(
             )
         config_data["kubeconfig_file_path"] = "/input/kubeconfig"
         try:
-            config = ConfigFile.model_validate(config_data)
+            config = parse_config(config_data)
         except ValidationError as exc:
             errors = [
                 {
@@ -1015,6 +1445,11 @@ def create_app(
             ]
             return JSONResponse(
                 {"errors": errors}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+            )
+        except ValueError:
+            return JSONResponse(
+                {"errors": [{"path": "parameters", "message": "Invalid value"}]},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
         if config.genetic.composition_rate > 0:
             return JSONResponse(
@@ -1138,18 +1573,28 @@ def create_app(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
             }:
                 raise
-        return manifest
+        result = {"status": manifest.get("status"), "files": manifest["files"]}
+        if isinstance(manifest.get("committedAt"), str):
+            result["committedAt"] = manifest["committedAt"]
+        return result
 
     @app.get("/v1/runs/{uid}/results", dependencies=[Depends(authenticate)])
     def results(uid: str) -> dict[str, Any]:
         safe_uid = _safe_uid(uid)
         with store.uid_lock(safe_uid):
             store.ensure_not_deleted(safe_uid)
-            return store.manifest(safe_uid)
+            manifest = store.manifest(safe_uid)
+            result = {
+                "status": manifest.get("status"),
+                "files": manifest["files"],
+            }
+            if isinstance(manifest.get("committedAt"), str):
+                result["committedAt"] = manifest["committedAt"]
+            return result
 
     @app.get("/v1/runs/{uid}/files/{path:path}", dependencies=[Depends(authenticate)])
-    def artifact(uid: str, path: str) -> StreamingResponse:
-        source, size, lease = store._open_artifact(_safe_uid(uid), path)
+    def artifact(uid: str, path: str, sha256: str | None = None) -> StreamingResponse:
+        source, size, lease = store._open_artifact(_safe_uid(uid), path, sha256)
         return _ArtifactResponse(source, size, lease)
 
     return app
@@ -1243,7 +1688,7 @@ def _commit_files(
     uid: str,
     headers: dict[str, str],
     files: list[dict[str, Any]],
-    run_status: Literal["in_progress", "succeeded", "failed"],
+    run_status: Literal["in_progress", "succeeded", "failed", "cancelled"],
 ) -> None:
     _request_with_retry(
         "POST",
@@ -1253,13 +1698,52 @@ def _commit_files(
     )
 
 
-def _final_status(marker: Path) -> Literal["succeeded", "failed"]:
+def _final_status(marker: Path) -> Literal["succeeded", "failed", "cancelled"]:
     try:
-        return (
-            "succeeded" if json.loads(marker.read_text())["exitCode"] == 0 else "failed"
-        )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        value = json.loads(marker.read_text())
+        outcome = value.get("outcome")
+        if outcome in {"succeeded", "failed", "cancelled"}:
+            return outcome
+        if outcome is not None:
+            return "failed"
+        return "succeeded" if value["exitCode"] == 0 else "failed"
+    except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return "failed"
+
+
+def _upload_checkpoint(
+    output: Path,
+    uid: str,
+    service_url: str,
+    headers: dict[str, str],
+    state: dict[str, dict[str, Any]],
+    marker: Path,
+) -> None:
+    while not marker.exists():
+        files = _upload_files(output, uid, service_url, headers, state)
+        try:
+            _commit_files(service_url, uid, headers, files, "in_progress")
+            return
+        except requests.HTTPError as exc:
+            response = exc.response
+            if marker.exists():
+                return
+            if response is None:
+                raise
+            try:
+                detail = response.json().get("detail")
+            except (AttributeError, ValueError):
+                detail = None
+            if (
+                response.status_code == status.HTTP_502_BAD_GATEWAY
+                and detail == "invalid committed artifact"
+            ):
+                return
+            if (
+                response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE
+                or detail != "artifact_updating"
+            ):
+                raise
 
 
 def upload_results() -> None:
@@ -1275,8 +1759,7 @@ def upload_results() -> None:
     state = _load_state()
     try:
         while not marker.exists():
-            files = _upload_files(output, uid, service_url, headers, state)
-            _commit_files(service_url, uid, headers, files, "in_progress")
+            _upload_checkpoint(output, uid, service_url, headers, state, marker)
             for _ in range(interval):
                 if marker.exists():
                     break

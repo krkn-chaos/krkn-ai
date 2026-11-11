@@ -51,6 +51,9 @@ class CommandRunResult(BaseModel):
         None  # Unique identifier generated from krkn engine during scenario execution
     )
     resiliency_score: Optional[float] = None
+    outcome: Optional[str] = (
+        None  # Explicit interrupted scenario outcome, when applicable.
+    )
 
 
 class KrknRunnerType(str, Enum):

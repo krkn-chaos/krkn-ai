@@ -174,6 +174,12 @@ uv run krkn_ai run -vv \
 
 Results will be saved to the `./results` directory, including logs and generation reports.
 
+Operator-managed cancelled runs retain their uploaded checkpoint. The result API
+reports the interrupted generation and marks its cohort fitness as cancelled:
+raw measurements remain available, while normalized and final totals stay unset.
+`resultsFinalized` describes uploader settlement independently from the run's
+execution outcome; a cancelled snapshot is finalized but has partial results.
+
 ## Scenario Parameter Dependencies
 
 Declare coupled parameter types on a scenario class using `crossover_parameter_groups`, for example `((NamespaceParameter, PodLabelParameter),)`. Each group receives one crossover decision; ungrouped parameters remain independent.
@@ -199,9 +205,18 @@ this operator-specific contract.
 
 ### Contract 1
 
-Contract 1 identifies the current runner environment, child `KrknScenarioRun`,
-and artifact upload/read formats, including the service's
-`POST /v1/configs/validate` and `DELETE /v1/runs/{uid}` endpoints.
+Contract 1 includes durable operator/child cancellation, explicit cancelled
+completion markers and manifests, and retained partial-generation results.
+The integration remains at major 1 while it is unreleased. Build and deploy the
+matching operator, runner, uploader, and console changes together; the runner and
+uploader agree on the explicit `outcome: "cancelled"` completion marker.
+
+Configuration validation and explicit artifact deletion remain available through
+`POST /v1/configs/validate` and `DELETE /v1/runs/{uid}`. Cancellation does not call
+the deletion endpoint. Completed generations keep finalized scores; an
+interrupted generation retains raw measurements but exposes cancelled, null
+normalized/final scores. Artifact readers preserve the last committed immutable
+checkpoint while the next checkpoint uploads.
 
 The operator's Helm and OLM release workflows select the newest stable release
 whose runner and service images both advertise the supported contract major.

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 
 import pytest
@@ -24,11 +25,13 @@ from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.run_results import parse_run_artifacts
 from krkn_ai.server import (
     ArtifactStore,
+    CommitRequest,
     _request_with_retry,
     _upload_files,
     create_app,
     upload_results,
 )
+from krkn_ai.utils.fs import read_config_from_file
 
 TOKEN_HEADERS = {"Authorization": "Bearer service-token"}
 
@@ -145,6 +148,24 @@ def test_invalid_fitness_finality_is_rejected(
     assert error.value.status_code == expected_status
 
 
+def test_invalid_scenario_outcome_is_rejected_during_snapshot_validation():
+    result_path = "json/generation_0/scenario-7.json"
+    result = json.dumps(
+        {
+            "generation_id": 0,
+            "scenario_id": 7,
+            "scenario": {"name": "pod_scenarios"},
+            "outcome": "interrupted",
+            "fitness_result": {},
+        }
+    ).encode()
+    checksum = hashlib.sha256(result).hexdigest()
+
+    with pytest.raises(HTTPException) as error:
+        parse_run_artifacts({result_path: (result, checksum)})
+    assert error.value.status_code == 502
+
+
 def test_discovery_renders_runner_kubeconfig(tmp_path: Path):
     client = TestClient(create_app(tmp_path, "service-token"))
     with patch(
@@ -210,10 +231,9 @@ def test_artifacts_become_visible_with_in_progress_manifest(tmp_path: Path):
         ).status_code
         == 200
     )
-    assert (
-        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
-        == in_progress
-    )
+    committed = client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
+    assert {key: committed[key] for key in in_progress} == in_progress
+    assert isinstance(committed["committedAt"], str)
     assert (
         client.get(
             "/v1/runs/run-1/files/nested/result.txt", headers=TOKEN_HEADERS
@@ -248,10 +268,9 @@ def test_artifacts_become_visible_with_in_progress_manifest(tmp_path: Path):
         ).status_code
         == 200
     )
-    assert (
-        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
-        == updated_in_progress
-    )
+    committed = client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
+    assert {key: committed[key] for key in updated_in_progress} == updated_in_progress
+    assert isinstance(committed["committedAt"], str)
     completed = {**updated_in_progress, "status": "succeeded"}
     assert (
         client.post(
@@ -259,9 +278,9 @@ def test_artifacts_become_visible_with_in_progress_manifest(tmp_path: Path):
         ).status_code
         == 200
     )
-    assert (
-        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json() == completed
-    )
+    committed = client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()
+    assert {key: committed[key] for key in completed} == completed
+    assert isinstance(committed["committedAt"], str)
 
 
 def test_checksum_and_path_traversal_are_rejected(tmp_path: Path):
@@ -371,6 +390,199 @@ def test_artifact_upload_enforces_file_and_run_limits(tmp_path: Path):
     assert response.status_code == 413
 
 
+def test_run_limit_counts_retained_revisions_without_double_counting_links(tmp_path):
+    client = TestClient(
+        create_app(tmp_path, "service-token", max_artifact_bytes=8, max_run_bytes=24)
+    )
+
+    def upload(path, content):
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+        response = client.put(
+            f"/v1/runs/retained/files/{path}",
+            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": entry["sha256"]},
+            content=content,
+        )
+        return entry, response
+
+    stable, response = upload("config.txt", b"constant")
+    assert response.status_code == 201
+    first, response = upload("run.log", b"firstlog")
+    assert response.status_code == 201
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": [stable, first]},
+        ).status_code
+        == 200
+    )
+
+    second, response = upload("run.log", b"next-log")
+    assert response.status_code == 201
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": [stable, second]},
+        ).status_code
+        == 200
+    )
+    _, response = upload("run.log", b"last-log")
+    assert response.status_code == 413
+    assert (
+        client.get("/v1/runs/retained/files/run.log", headers=TOKEN_HEADERS).content
+        == b"next-log"
+    )
+    assert (
+        client.get(
+            "/v1/runs/retained/files/run.log",
+            headers=TOKEN_HEADERS,
+            params={"sha256": first["sha256"]},
+        ).content
+        == b"firstlog"
+    )
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "failed", "files": [stable, second]},
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.parametrize("run_status", ["failed", "cancelled"])
+@pytest.mark.parametrize(
+    ("payload", "error_status"),
+    [
+        (b'{"generation_id":', 502),
+        (
+            b'{"generation_id":0,"scenario_id":1,"scenario":{},"fitness_result":{}}',
+            503,
+        ),
+    ],
+)
+def test_terminal_commit_retains_inconsistent_artifacts(
+    tmp_path, run_status, payload, error_status
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    progress = b'{"resultChecksums":{},"fitnessFinalByScenario":{}}'
+    entries = []
+    for path, content in [
+        ("progress.json", progress),
+        ("json/generation_0/scenario.json", payload),
+    ]:
+        checksum = hashlib.sha256(content).hexdigest()
+        assert (
+            client.put(
+                f"/v1/runs/interrupted/files/{path}",
+                headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+                content=content,
+            ).status_code
+            == 201
+        )
+        entries.append({"path": path, "sha256": checksum, "size": len(content)})
+        if path == "progress.json":
+            assert (
+                client.post(
+                    "/v1/runs/interrupted/commit",
+                    headers=TOKEN_HEADERS,
+                    json={"status": "in_progress", "files": entries},
+                ).status_code
+                == 200
+            )
+    assert (
+        client.post(
+            "/v1/runs/interrupted/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": entries},
+        ).status_code
+        == error_status
+    )
+    assert (
+        client.get("/v1/runs/interrupted/results", headers=TOKEN_HEADERS).json()[
+            "status"
+        ]
+        == "in_progress"
+    )
+
+    response = client.post(
+        "/v1/runs/interrupted/commit",
+        headers=TOKEN_HEADERS,
+        json={"status": run_status, "files": entries},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == run_status
+    assert (
+        client.get(
+            "/v1/runs/interrupted/files/json/generation_0/scenario.json",
+            headers=TOKEN_HEADERS,
+        ).content
+        == payload
+    )
+    assert (
+        client.get("/v1/runs/interrupted/summary", headers=TOKEN_HEADERS).status_code
+        == error_status
+    )
+
+
+def test_uploader_finalizes_after_malformed_checkpoint(tmp_path, monkeypatch):
+    client = TestClient(create_app(tmp_path / "service", "service-token"))
+    output = tmp_path / "output"
+    run_output = output / "run-1"
+    scenario = run_output / "json" / "generation_0" / "scenario.json"
+    scenario.parent.mkdir(parents=True)
+    scenario.write_bytes(b'{"generation_id":')
+    marker = run_output / ".krkn-ai-complete"
+
+    def request(method, url, **kwargs):
+        body = kwargs.get("data")
+        reply = client.request(
+            method,
+            urlsplit(url).path,
+            headers=kwargs.get("headers"),
+            json=kwargs.get("json"),
+            content=body.read() if body is not None else None,
+        )
+        response = Response()
+        response.status_code = reply.status_code
+        response._content = reply.content
+        response.url = url
+        return response
+
+    monkeypatch.setenv("KRKNAI_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("KRKNAI_RUN_UID", "run-1")
+    monkeypatch.setenv("KRKNAI_SERVICE_URL", "http://service")
+    monkeypatch.setenv("KRKNAI_SERVICE_TOKEN", "service-token")
+    monkeypatch.setenv("KRKNAI_UPLOAD_INTERVAL_SECONDS", "1")
+    monkeypatch.setattr(server_module.requests, "request", request)
+    monkeypatch.setattr(server_module, "MAX_REQUEST_ATTEMPTS", 1)
+    monkeypatch.setattr(
+        server_module.time,
+        "sleep",
+        lambda _: marker.write_text('{"exitCode":1,"outcome":"failed"}'),
+    )
+
+    upload_results()
+
+    assert (
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()["status"]
+        == "failed"
+    )
+    assert (
+        client.get(
+            "/v1/runs/run-1/files/json/generation_0/scenario.json",
+            headers=TOKEN_HEADERS,
+        ).content
+        == scenario.read_bytes()
+    )
+
+
 def test_uploader_retries_and_commits_after_failure_marker(tmp_path: Path, monkeypatch):
     output = tmp_path / "output"
     state = tmp_path / "state"
@@ -454,6 +666,87 @@ def test_uploader_checkpoints_then_finalizes_on_completion(tmp_path: Path, monke
         "in_progress",
         "succeeded",
     ]
+
+
+def test_uploader_rescans_checkpoint_after_temporary_validation_mismatch(
+    tmp_path: Path, monkeypatch
+):
+    output = tmp_path / "output"
+    state = tmp_path / "state"
+    run_output = output / "run-1"
+    run_output.mkdir(parents=True)
+    marker = run_output / ".krkn-ai-complete"
+    progress = run_output / "progress.json"
+    scenario = run_output / "scenario.json"
+    old_progress = b'{"resultChecksums":{"0:1":"old"}}'
+    old_scenario = b'{"generation_id":0,"scenario_id":1}'
+    new_progress = b'{"resultChecksums":{"0:1":"new"}}'
+    new_scenario = b'{"generation_id":0,"scenario_id":1,"outcome":"cancelled"}'
+    progress.write_bytes(old_progress)
+    scenario.write_bytes(old_scenario)
+    calls = []
+    mismatch_sent = False
+
+    class MockResponse:
+        def __init__(self, status_code=200, body=None):
+            self.status_code = status_code
+            self.body = body or {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.body
+
+    def request(method, url, **kwargs):
+        nonlocal mismatch_sent
+        body = kwargs.get("data")
+        uploaded = body.read() if body is not None else None
+        calls.append((method, kwargs.get("json"), uploaded))
+        if (
+            method == "POST"
+            and kwargs["json"]["status"] == "in_progress"
+            and not mismatch_sent
+        ):
+            mismatch_sent = True
+            progress.write_bytes(new_progress)
+            scenario.write_bytes(new_scenario)
+            raise HTTPError(response=MockResponse(503, {"detail": "artifact_updating"}))
+        return MockResponse()
+
+    def finish_run(_seconds: int) -> None:
+        marker.write_text('{"exitCode":143,"outcome":"cancelled"}\n')
+
+    monkeypatch.setenv("KRKNAI_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(state))
+    monkeypatch.setenv("KRKNAI_RUN_UID", "run-1")
+    monkeypatch.setenv("KRKNAI_SERVICE_URL", "http://service")
+    monkeypatch.setenv("KRKNAI_SERVICE_TOKEN", "token")
+    monkeypatch.setenv("KRKNAI_UPLOAD_INTERVAL_SECONDS", "1")
+    monkeypatch.setattr("krkn_ai.server.requests.request", request)
+    monkeypatch.setattr("krkn_ai.server.time.sleep", finish_run)
+    monkeypatch.setattr("krkn_ai.server.MAX_REQUEST_ATTEMPTS", 1)
+
+    upload_results()
+
+    commits = [payload for method, payload, _body in calls if method == "POST"]
+    assert [payload["status"] for payload in commits] == [
+        "in_progress",
+        "in_progress",
+        "cancelled",
+    ]
+    expected_new = {
+        "progress.json": hashlib.sha256(new_progress).hexdigest(),
+        "scenario.json": hashlib.sha256(new_scenario).hexdigest(),
+    }
+    assert {
+        entry["path"]: entry["sha256"] for entry in commits[1]["files"]
+    } == expected_new
+    assert {
+        entry["path"]: entry["sha256"] for entry in commits[2]["files"]
+    } == expected_new
+    uploaded = {body for method, _payload, body in calls if method == "PUT"}
+    assert uploaded == {old_progress, old_scenario, new_progress, new_scenario}
 
 
 def test_uploader_hashes_the_exact_opened_snapshot(tmp_path: Path, monkeypatch):
@@ -604,22 +897,82 @@ def test_final_best_scenarios_restore_parameters_by_generation_and_id(
     ]
 
 
+@pytest.mark.parametrize("structured", [False, True])
+def test_config_validation_resolves_parameters_like_runtime(
+    tmp_path: Path, minimal_config, structured: bool
+):
+    host = (
+        "http://a7c68e62d11434c329c4dd481dd565b3-1779572757"
+        ".us-east-1.elb.amazonaws.com:8080"
+    )
+    config = minimal_config.model_dump(mode="json")
+    config.pop("parameters")
+    config["health_checks"] = {
+        "applications": [{"name": "cart", "url": "$HOST/cart/health"}]
+    }
+    # YAML's escaped line continuation must not change the host value.
+    scalar = f'"{host[:70]}\\\n      {host[70:]}"'
+    parameter_yaml = (
+        f"  HOST:\n    value: {scalar}\n    is_private: true\n"
+        if structured
+        else f"  HOST: {scalar}\n"
+    )
+    source = yaml.safe_dump(config) + "parameters:\n" + parameter_yaml
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(source, encoding="utf-8")
+    runtime_config = read_config_from_file(str(config_file))
+    assert (
+        str(runtime_config.health_checks.applications[0].url) == f"{host}/cart/health"
+    )
+    assert runtime_config.parameters["HOST"].is_private is structured
+
+    client = TestClient(create_app(tmp_path / "artifacts", "service-token"))
+    response = client.post(
+        "/v1/configs/validate",
+        headers=TOKEN_HEADERS,
+        json={"configYaml": source},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"valid": True}
+
+
+@pytest.mark.parametrize(
+    ("parameters", "error_path"),
+    [
+        ({}, "health_checks.applications.0.url"),
+        ({"HOST": "not-a-url"}, "health_checks.applications.0.url"),
+        ({"HOST": None}, "parameters"),
+    ],
+)
+def test_config_validation_rejects_unusable_url_parameters(
+    tmp_path: Path, minimal_config, parameters: dict, error_path: str
+):
+    config = minimal_config.model_dump(mode="json")
+    config["parameters"] = parameters
+    config["health_checks"] = {
+        "applications": [{"name": "cart", "url": "$HOST/cart/health"}]
+    }
+    client = TestClient(create_app(tmp_path, "service-token"))
+    response = client.post(
+        "/v1/configs/validate",
+        headers=TOKEN_HEADERS,
+        json={"configYaml": yaml.safe_dump(config)},
+    )
+    assert response.status_code == 422
+    assert {error["path"] for error in response.json()["errors"]} == {error_path}
+
+
 def test_typed_partial_results_validation_and_manifest_consistency(
-    tmp_path: Path, minimal_config, monkeypatch
+    tmp_path: Path, minimal_config
 ):
     client = TestClient(create_app(tmp_path, "service-token"))
-    original_parse = server_module.parse_run_artifacts
-    parse_calls = 0
-
-    def count_parses(files):
-        nonlocal parse_calls
-        parse_calls += 1
-        return original_parse(files)
-
-    monkeypatch.setattr(server_module, "parse_run_artifacts", count_parses)
     auth = TOKEN_HEADERS
     assert client.get("/v1/runs/run-1/summary", headers=auth).json() == {
         "artifactStatus": "not_available",
+        "cancelledGeneration": None,
+        "resultsFinalized": False,
+        "resultsCompleteness": "none",
+        "lastCommittedAt": None,
         "completedGenerations": None,
         "currentGeneration": None,
         "completedScenarios": None,
@@ -773,9 +1126,9 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             json={"status": run_status, "files": manifest_files},
         )
         assert response.status_code == 200
+        return client.get("/v1/runs/run-1/results", headers=auth).json()["committedAt"]
 
-    commit(files)
-    assert parse_calls == 1
+    committed_at = commit(files)
     projection_path = tmp_path / ".result-views/run-1/projection.json"
     assert projection_path.is_file()
     assert (
@@ -787,7 +1140,6 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     assert (
         restarted.get("/v1/runs/run-1/scenarios/0/9", headers=auth).status_code == 200
     )
-    assert parse_calls == 1
     cached_view = json.loads(projection_path.read_text())
     body_reference = cached_view["details"]["0:9"]
     body_path = (
@@ -799,15 +1151,17 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     body_path.write_text("corrupt cached detail")
     assert restarted.get("/v1/runs/run-1/summary", headers=auth).status_code == 200
     assert restarted.get("/v1/runs/run-1/scenarios", headers=auth).status_code == 200
-    assert parse_calls == 1
     repaired = restarted.get("/v1/runs/run-1/scenarios/0/9", headers=auth)
     assert repaired.status_code == 200
     assert repaired.json()["fitnessState"] == "provisional"
-    assert parse_calls == 2
     summary = client.get("/v1/runs/run-1/summary", headers=auth)
     assert summary.status_code == 200
     assert summary.json() == {
         "artifactStatus": "in_progress",
+        "cancelledGeneration": None,
+        "resultsFinalized": False,
+        "resultsCompleteness": "partial",
+        "lastCommittedAt": committed_at,
         "completedGenerations": 0,
         "currentGeneration": 0,
         "completedScenarios": 1,
@@ -875,6 +1229,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         5.0,
     ]
 
+    previous_scenario_bytes = files["yaml/generation_0/custom-result-name.yaml"]
     files["yaml/generation_0/custom-result-name.yaml"] = yaml.safe_dump(
         result_doc(
             9,
@@ -883,7 +1238,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             "2025-01-01T00:00:10+00:00",
         )
     ).encode()
-    # A native rewrite before the next manifest commit is never exposed.
+    # A staged replacement stays private until the next complete manifest commit.
     changed_checksum = hashlib.sha256(
         files["yaml/generation_0/custom-result-name.yaml"]
     ).hexdigest()
@@ -895,16 +1250,19 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         ).status_code
         == 201
     )
-    assert client.get("/v1/runs/run-1/summary", headers=auth).status_code == 503
+    assert client.get("/v1/runs/run-1/summary", headers=auth).status_code == 200
+    assert client.get("/v1/runs/run-1/scenarios", headers=auth).status_code == 200
+    assert (
+        client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).json()["fitnessState"]
+        == "provisional"
+    )
     assert (
         client.get(
             "/v1/runs/run-1/files/yaml/generation_0/custom-result-name.yaml",
             headers=auth,
-        ).status_code
-        == 503
+        ).content
+        == previous_scenario_bytes
     )
-    assert client.get("/v1/runs/run-1/scenarios", headers=auth).status_code == 503
-    assert client.get("/v1/runs/run-1/scenarios/0/9", headers=auth).status_code == 503
 
     files["progress.json"] = json.dumps(
         progress(21.0, 75.0, finalized=True, completed=1, best=75.0)
@@ -921,8 +1279,7 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     files["progress.json"] = json.dumps(
         progress(21.0, 75.0, finalized=True, completed=1, best=75.0)
     ).encode()
-    commit(files)
-    assert parse_calls == 3
+    committed_at = commit(files)
     complete_index = client.get("/v1/runs/run-1/scenarios", headers=auth)
     assert complete_index.status_code == 200
     assert len(complete_index.json()["scenarios"]) == 2
@@ -976,9 +1333,13 @@ def test_typed_partial_results_validation_and_manifest_consistency(
             "fitness_progression": [{"generation": 0, "best": 75.0, "average": 75.0}],
         }
     ).encode()
-    commit(files, "succeeded")
+    committed_at = commit(files, "succeeded")
     assert client.get("/v1/runs/run-1/summary", headers=auth).json() == {
         "artifactStatus": "succeeded",
+        "cancelledGeneration": None,
+        "resultsFinalized": True,
+        "resultsCompleteness": "complete",
+        "lastCommittedAt": committed_at,
         "completedGenerations": 1,
         "currentGeneration": None,
         "completedScenarios": 1,
@@ -989,11 +1350,9 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         "baselineFitness": 21.0,
         "fitnessProgression": [{"generation": 0, "best": 75.0, "average": 75.0}],
     }
-    assert parse_calls == 4
     final_index = client.get("/v1/runs/run-1/scenarios", headers=auth)
     assert final_index.status_code == 200
     assert len(final_index.json()["scenarios"]) == 2
-    assert parse_calls == 4
     assert {path.name for path in projection_path.parent.iterdir()} == {
         "projection.json",
         "views",
@@ -1166,9 +1525,16 @@ def test_failed_later_generation_preserves_only_completed_fitness(tmp_path: Path
         ).status_code
         == 200
     )
+    committed_at = client.get("/v1/runs/run-failed/results", headers=auth).json()[
+        "committedAt"
+    ]
     in_progress = client.get("/v1/runs/run-failed/summary", headers=auth).json()
     assert in_progress == {
         "artifactStatus": "in_progress",
+        "cancelledGeneration": None,
+        "resultsFinalized": False,
+        "resultsCompleteness": "partial",
+        "lastCommittedAt": committed_at,
         "completedGenerations": 1,
         "currentGeneration": 1,
         "completedScenarios": 3,
@@ -1196,10 +1562,16 @@ def test_failed_later_generation_preserves_only_completed_fitness(tmp_path: Path
         ).status_code
         == 200
     )
-
+    committed_at = client.get("/v1/runs/run-failed/results", headers=auth).json()[
+        "committedAt"
+    ]
     summary = client.get("/v1/runs/run-failed/summary", headers=auth).json()
     assert summary == {
         "artifactStatus": "failed",
+        "cancelledGeneration": None,
+        "resultsFinalized": True,
+        "resultsCompleteness": "partial",
+        "lastCommittedAt": committed_at,
         "completedGenerations": 1,
         "currentGeneration": None,
         "completedScenarios": 3,
@@ -1233,7 +1605,349 @@ def test_failed_later_generation_preserves_only_completed_fitness(tmp_path: Path
     assert detail["fitnessState"] == "unfinalized"
 
 
-def test_corrupt_committed_yaml_is_reported_as_bad_gateway(tmp_path: Path):
+def test_cancelled_generation_keeps_raw_scores_and_finalizes_prior_fitness(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    auth = TOKEN_HEADERS
+    documents = {}
+    checksums = {}
+    scenarios = [
+        (0, 7, 80.0, "succeeded", 0, True),
+        (0, 8, 10.0, "succeeded", 0, True),
+        (1, 9, 999.0, "succeeded", 0, True),
+        (1, 10, 888.0, "cancelled", -15, False),
+    ]
+    for generation, scenario_id, fitness, outcome, returncode, finalized in scenarios:
+        path = f"json/generation_{generation}/scenario-{scenario_id}.json"
+        content = json.dumps(
+            {
+                "generation_id": generation,
+                "scenario_id": scenario_id,
+                "scenario": {"name": "pod_scenarios"},
+                "outcome": outcome,
+                "returncode": returncode,
+                "duration_seconds": 1.0,
+                "fitness_result": {
+                    "fitness_score": fitness,
+                    "scores": [
+                        {
+                            "id": 1,
+                            "fitness_score": fitness / 2,
+                            "normalized_score": 0.99,
+                            "query": "up",
+                            "query_type": "point",
+                        }
+                    ],
+                },
+            }
+        ).encode()
+        documents[path] = content
+        key = f"{generation}:{scenario_id}"
+        checksums[key] = hashlib.sha256(content).hexdigest()
+
+    documents["progress.json"] = json.dumps(
+        {
+            "status": "cancelled",
+            "cancelledGeneration": 1,
+            "completedGenerations": 1,
+            "currentGeneration": 1,
+            "completedScenarios": 3,
+            "configuredGenerations": 3,
+            "populationSize": 2,
+            "fitnessFinalByScenario": {
+                f"{generation}:{scenario_id}": finalized
+                for generation, scenario_id, _fitness, _outcome, _rc, finalized in scenarios
+            },
+            "resultChecksums": checksums,
+        }
+    ).encode()
+    documents["results.json"] = json.dumps(
+        {
+            "config": {"generations": 3, "population_size": 2},
+            "summary": {
+                "generations_completed": 2,
+                "total_scenarios_executed": 4,
+                "best_fitness_score": 999.0,
+                "average_fitness_score": 999.0,
+            },
+        }
+    ).encode()
+
+    manifest_files = []
+    for path, content in documents.items():
+        checksum = hashlib.sha256(content).hexdigest()
+        assert (
+            client.put(
+                f"/v1/runs/cancelled/files/{path}",
+                headers={**auth, "X-Checksum-Sha256": checksum},
+                content=content,
+            ).status_code
+            == 201
+        )
+        manifest_files.append({"path": path, "sha256": checksum, "size": len(content)})
+    assert (
+        client.post(
+            "/v1/runs/cancelled/commit",
+            headers=auth,
+            json={"status": "cancelled", "files": manifest_files},
+        ).status_code
+        == 200
+    )
+    committed_at = client.get("/v1/runs/cancelled/results", headers=auth).json()[
+        "committedAt"
+    ]
+    summary = client.get("/v1/runs/cancelled/summary", headers=auth).json()
+    assert summary == {
+        "artifactStatus": "cancelled",
+        "cancelledGeneration": 1,
+        "resultsFinalized": True,
+        "resultsCompleteness": "partial",
+        "lastCommittedAt": committed_at,
+        "completedGenerations": 1,
+        "currentGeneration": 1,
+        "completedScenarios": 3,
+        "configuredGenerations": 3,
+        "populationSize": 2,
+        "bestFitness": 80.0,
+        "averageFitness": 45.0,
+        "baselineFitness": None,
+        "fitnessProgression": [{"generation": 0, "best": 80.0, "average": 45.0}],
+    }
+    rows = {
+        (row["generation"], row["scenarioId"]): row
+        for row in client.get("/v1/runs/cancelled/scenarios", headers=auth).json()[
+            "scenarios"
+        ]
+    }
+    assert rows[(0, "7")]["fitnessScore"] == 80.0
+    assert rows[(0, "7")]["fitnessState"] == "final"
+    assert rows[(1, "9")]["outcome"] == "succeeded"
+    assert rows[(1, "9")]["fitnessScore"] is None
+    assert rows[(1, "9")]["fitnessState"] == "cancelled"
+    assert rows[(1, "10")]["outcome"] == "cancelled"
+    assert rows[(1, "10")]["fitnessScore"] is None
+    assert rows[(1, "10")]["fitnessState"] == "cancelled"
+
+    detail = client.get("/v1/runs/cancelled/scenarios/1/9", headers=auth).json()
+    assert detail["outcome"] == "succeeded"
+    assert detail["fitnessResult"]["fitnessScore"] is None
+    assert detail["fitnessResult"]["scores"] == [
+        {
+            "id": 1,
+            "rawScore": 499.5,
+            "normalizedScore": None,
+            "query": "up",
+            "queryType": "point",
+        }
+    ]
+    assert detail["fitnessState"] == "cancelled"
+
+
+def test_cancelled_summary_fallback_excludes_interrupted_scenarios(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    documents = {}
+    checksums = {}
+    for generation, scenario_id, outcome in (
+        (0, 1, "succeeded"),
+        (1, 2, "cancelled"),
+    ):
+        path = f"json/generation_{generation}/scenario-{scenario_id}.json"
+        content = json.dumps(
+            {
+                "generation_id": generation,
+                "scenario_id": scenario_id,
+                "scenario": {"name": "pod_scenarios"},
+                "outcome": outcome,
+                "returncode": 0 if outcome == "succeeded" else -15,
+                "fitness_result": {"fitness_score": 10.0},
+            }
+        ).encode()
+        documents[path] = content
+        checksums[f"{generation}:{scenario_id}"] = hashlib.sha256(content).hexdigest()
+    documents["progress.json"] = json.dumps(
+        {
+            "status": "cancelled",
+            "cancelledGeneration": 1,
+            "completedGenerations": 1,
+            "fitnessFinalByScenario": {"0:1": True, "1:2": False},
+            "resultChecksums": checksums,
+        }
+    ).encode()
+    documents["results.json"] = json.dumps(
+        {
+            "config": {"generations": 2, "population_size": 1},
+            "summary": {
+                "generations_completed": 1,
+                "total_scenarios_executed": 2,
+            },
+        }
+    ).encode()
+
+    entries = []
+    for path, content in documents.items():
+        checksum = hashlib.sha256(content).hexdigest()
+        response = client.put(
+            f"/v1/runs/cancelled-fallback/files/{path}",
+            headers={**TOKEN_HEADERS, "X-Checksum-Sha256": checksum},
+            content=content,
+        )
+        assert response.status_code == 201
+        entries.append({"path": path, "sha256": checksum, "size": len(content)})
+    response = client.post(
+        "/v1/runs/cancelled-fallback/commit",
+        headers=TOKEN_HEADERS,
+        json={"status": "cancelled", "files": entries},
+    )
+    assert response.status_code == 200
+    summary = client.get(
+        "/v1/runs/cancelled-fallback/summary", headers=TOKEN_HEADERS
+    ).json()
+    assert summary["completedScenarios"] == 1
+
+
+def test_committed_revisions_stay_readable_and_failed_validation_is_not_published(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    auth = TOKEN_HEADERS
+    path = "reports/result.txt"
+    first = b"first complete snapshot"
+    second = b"second complete snapshot"
+
+    def entry(content: bytes) -> dict[str, object]:
+        return {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+
+    assert (
+        client.put(
+            f"/v1/runs/revisions/files/{path}",
+            headers={
+                **auth,
+                "X-Checksum-Sha256": hashlib.sha256(first).hexdigest(),
+            },
+            content=first,
+        ).status_code
+        == 201
+    )
+    first_entry = entry(first)
+    assert (
+        client.post(
+            "/v1/runs/revisions/commit",
+            headers=auth,
+            json={"status": "in_progress", "files": [first_entry]},
+        ).status_code
+        == 200
+    )
+    first_manifest = client.get("/v1/runs/revisions/results", headers=auth).json()
+    assert first_manifest["files"] == [first_entry]
+    assert isinstance(first_manifest["committedAt"], str)
+
+    second_entry = entry(second)
+    assert (
+        client.put(
+            f"/v1/runs/revisions/files/{path}",
+            headers={
+                **auth,
+                "X-Checksum-Sha256": hashlib.sha256(second).hexdigest(),
+            },
+            content=second,
+        ).status_code
+        == 201
+    )
+    assert client.get(f"/v1/runs/revisions/files/{path}", headers=auth).content == first
+    broken_path = "yaml/generation_0/broken.yaml"
+    broken = b"generation_id: ["
+    broken_entry = {
+        "path": broken_path,
+        "sha256": hashlib.sha256(broken).hexdigest(),
+        "size": len(broken),
+    }
+    assert (
+        client.put(
+            f"/v1/runs/revisions/files/{broken_path}",
+            headers={**auth, "X-Checksum-Sha256": broken_entry["sha256"]},
+            content=broken,
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/v1/runs/revisions/commit",
+            headers=auth,
+            json={"status": "in_progress", "files": [second_entry, broken_entry]},
+        ).status_code
+        == 502
+    )
+    assert (
+        client.get("/v1/runs/revisions/results", headers=auth).json() == first_manifest
+    )
+    assert client.get(f"/v1/runs/revisions/files/{path}", headers=auth).content == first
+    assert (
+        client.get(f"/v1/runs/revisions/files/{broken_path}", headers=auth).status_code
+        == 404
+    )
+
+    assert (
+        client.post(
+            "/v1/runs/revisions/commit",
+            headers=auth,
+            json={"status": "in_progress", "files": [second_entry]},
+        ).status_code
+        == 200
+    )
+    second_manifest = client.get("/v1/runs/revisions/results", headers=auth).json()
+    assert second_manifest["files"] == [second_entry]
+    assert (
+        client.get(
+            f"/v1/runs/revisions/files/{path}",
+            params={"sha256": first_entry["sha256"]},
+            headers=auth,
+        ).content
+        == first
+    )
+    assert (
+        client.get(
+            f"/v1/runs/revisions/files/{path}",
+            params={"sha256": second_entry["sha256"]},
+            headers=auth,
+        ).content
+        == second
+    )
+
+    assert (
+        client.post(
+            "/v1/runs/revisions/commit",
+            headers=auth,
+            json={"status": "succeeded", "files": [second_entry]},
+        ).status_code
+        == 200
+    )
+    third = b"late terminal overwrite"
+    assert (
+        client.put(
+            f"/v1/runs/revisions/files/{path}",
+            headers={
+                **auth,
+                "X-Checksum-Sha256": hashlib.sha256(third).hexdigest(),
+            },
+            content=third,
+        ).status_code
+        == 409
+    )
+    assert (
+        client.get(f"/v1/runs/revisions/files/{path}", headers=auth).content == second
+    )
+
+
+def test_invalid_yaml_checkpoint_is_rejected_before_publication(
+    tmp_path: Path,
+):
     client = TestClient(create_app(tmp_path, "service-token"))
     payload = b"generation_id: ["
     checksum = hashlib.sha256(payload).hexdigest()
@@ -1245,26 +1959,28 @@ def test_corrupt_committed_yaml_is_reported_as_bad_gateway(tmp_path: Path):
         ).status_code
         == 201
     )
-    assert (
-        client.post(
-            "/v1/runs/run-1/commit",
-            headers=TOKEN_HEADERS,
-            json={
-                "status": "in_progress",
-                "files": [
-                    {
-                        "path": "yaml/generation_0/custom.yaml",
-                        "sha256": checksum,
-                        "size": len(payload),
-                    }
-                ],
-            },
-        ).status_code
-        == 200
+    response = client.post(
+        "/v1/runs/run-1/commit",
+        headers=TOKEN_HEADERS,
+        json={
+            "status": "in_progress",
+            "files": [
+                {
+                    "path": "yaml/generation_0/custom.yaml",
+                    "sha256": checksum,
+                    "size": len(payload),
+                }
+            ],
+        },
     )
-    response = client.get("/v1/runs/run-1/summary", headers=TOKEN_HEADERS)
     assert response.status_code == 502
     assert response.json()["detail"] == "invalid committed artifact"
+    assert (
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).status_code == 404
+    )
+    summary = client.get("/v1/runs/run-1/summary", headers=TOKEN_HEADERS)
+    assert summary.status_code == 200
+    assert summary.json()["artifactStatus"] == "not_available"
 
 
 def test_cached_offspring_keep_distinct_artifacts_and_consistent_api_counts(
@@ -1568,29 +2284,30 @@ def test_streaming_upload_started_before_delete_cannot_recreate_run(
     assert not (tmp_path / "runs" / "streamed").exists()
 
 
-def test_delete_waits_for_inflight_projection_before_removing_cache(
+def test_delete_waits_for_inflight_commit_validation_before_tombstoning(
     tmp_path: Path, monkeypatch
 ):
     client = TestClient(create_app(tmp_path, "service-token"))
+    store = ArtifactStore(tmp_path)
     payload = b'{"completedGenerations":0}'
     checksum = hashlib.sha256(payload).hexdigest()
     assert (
         client.put(
             "/v1/runs/projected/files/progress.json",
-            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+            headers={**TOKEN_HEADERS, "X-Checksum-Sha256": checksum},
             content=payload,
         ).status_code
         == 201
     )
-    projection_started = threading.Event()
-    resume_projection = threading.Event()
+    commit_validation_started = threading.Event()
+    resume_commit_validation = threading.Event()
     delete_lock_attempted = threading.Event()
     result = {}
     errors = {}
 
     def blocked_parser(files):
-        projection_started.set()
-        assert resume_projection.wait(5)
+        commit_validation_started.set()
+        assert resume_commit_validation.wait(5)
         return SimpleNamespace(
             progress={"completedGenerations": 0},
             final_results=None,
@@ -1599,25 +2316,15 @@ def test_delete_waits_for_inflight_projection_before_removing_cache(
         )
 
     monkeypatch.setattr(server_module, "parse_run_artifacts", blocked_parser)
-    _track_delete_lock_attempt(monkeypatch, delete_lock_attempted, "projection-delete")
+    _track_delete_lock_attempt(monkeypatch, delete_lock_attempted, "commit-delete")
+    request = CommitRequest(
+        status="in_progress",
+        files=[{"path": "progress.json", "sha256": checksum, "size": len(payload)}],
+    )
 
     def commit():
         try:
-            with TestClient(create_app(tmp_path, "service-token")) as commit_client:
-                result["commit"] = commit_client.post(
-                    "/v1/runs/projected/commit",
-                    headers=TOKEN_HEADERS,
-                    json={
-                        "status": "in_progress",
-                        "files": [
-                            {
-                                "path": "progress.json",
-                                "sha256": checksum,
-                                "size": len(payload),
-                            }
-                        ],
-                    },
-                )
+            result["commit"] = store.commit("projected", request)
         except Exception as error:
             errors["commit"] = error
 
@@ -1631,25 +2338,23 @@ def test_delete_waits_for_inflight_projection_before_removing_cache(
             errors["delete"] = error
 
     commit_thread = threading.Thread(target=commit, daemon=True)
-    delete_thread = threading.Thread(
-        target=delete, daemon=True, name="projection-delete"
-    )
+    delete_thread = threading.Thread(target=delete, daemon=True, name="commit-delete")
     threads = []
     try:
         commit_thread.start()
         threads.append(commit_thread)
-        assert projection_started.wait(5)
+        assert commit_validation_started.wait(5)
         delete_thread.start()
         threads.append(delete_thread)
         assert delete_lock_attempted.wait(5)
     finally:
-        resume_projection.set()
+        resume_commit_validation.set()
         for thread in threads:
             thread.join(5)
 
     assert all(not thread.is_alive() for thread in threads)
     assert not errors
-    assert result["commit"].status_code == 200
+    assert result["commit"]["status"] == "in_progress"
     assert result["delete"].status_code == 204
     assert not (tmp_path / "runs" / "projected").exists()
     assert not (tmp_path / ".result-views" / "projected").exists()
@@ -1768,7 +2473,9 @@ def test_delete_waits_for_stream_descriptor_to_close(
             )
             assert deleting.status_code == 409
             assert not opened[-1].closed
-            assert (tmp_path / "runs" / "raw-read" / "result.txt").exists()
+            assert any(
+                (tmp_path / "runs" / "raw-read" / ".revisions").glob("*/result.txt")
+            )
             assert (tmp_path / ".result-views" / "raw-read").exists()
             assert (
                 client.get(
@@ -1876,7 +2583,12 @@ def test_contended_upload_does_not_block_other_runs(
             )
             futures.append(other)
             assert other.result(timeout=5) == 1
-            assert (tmp_path / "runs" / "other" / "result.txt").read_bytes() == b"x"
+            assert any(
+                staged.read_bytes() == b"x"
+                for staged in (tmp_path / ".upload-staging").glob(
+                    f"{hashlib.sha256(b'other').hexdigest()}-*"
+                )
+            )
             assert not busy.done()
     finally:
         resume.set()
@@ -1888,4 +2600,9 @@ def test_contended_upload_does_not_block_other_runs(
                 loop.call_soon_threadsafe(stopped.set)
             thread.join(5)
     assert not thread.is_alive()
-    assert (tmp_path / "runs" / "busy" / "result.txt").read_bytes() == b"x"
+    assert any(
+        staged.read_bytes() == b"x"
+        for staged in (tmp_path / ".upload-staging").glob(
+            f"{hashlib.sha256(b'busy').hexdigest()}-*"
+        )
+    )

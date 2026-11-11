@@ -81,6 +81,18 @@ class TestJSONSummaryReporter:
         assert summary["fitness_progression"][1]["average"] == 50.0
         assert summary["fitness_progression"][1]["best"] == 60.0
 
+    def test_cancelled_run_summary_uses_cancelled_status(self, minimal_config):
+        reporter = JSONSummaryReporter(
+            run_uuid="cancelled-run",
+            config=minimal_config,
+            algo_config=minimal_config.genetic,
+            seen_population={},
+            generation_results=[],
+            cancelled=True,
+        )
+
+        assert reporter.generate_summary()["status"] == "cancelled"
+
     def test_best_scenarios_ranking(self, minimal_config):
         """Test ranking logic and top 10 truncation"""
         now = datetime.datetime.now(datetime.timezone.utc)

@@ -6,6 +6,7 @@ import datetime
 import pytest
 from unittest.mock import Mock, patch
 
+from krkn_ai.chaos_engines.cancellation import CANCELLATION_EVENT
 from krkn_ai.chaos_engines.fitness import (
     FitnessCalculator,
     normalize_generation_scores,
@@ -375,6 +376,48 @@ class TestCalculateFitnessValueRetries:
         )
         assert score == 5.0
         assert mock_prom_client.process_prom_query_in_range.call_count == 4
+
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)
+    def test_retries_with_backoff_when_cancellation_is_already_set(
+        self, mock_env, mock_prom_client
+    ):
+        fitness_function = FitnessFunction(
+            query="sum(kube_pod_container_status_restarts_total)",
+            type=FitnessFunctionType.point,
+        )
+        calc = FitnessCalculator(mock_prom_client, fitness_function)
+        available = {"value": False}
+
+        def calculate_point(*_args):
+            if not available["value"]:
+                raise RuntimeError("Prometheus data not available yet")
+            return 5.0
+
+        calc.calculate_point_fitness = Mock(side_effect=calculate_point)
+        delays = []
+
+        def release_data(delay):
+            delays.append(delay)
+            available["value"] = True
+
+        CANCELLATION_EVENT.set()
+        try:
+            with patch(
+                "krkn_ai.chaos_engines.fitness.time.sleep",
+                side_effect=release_data,
+            ):
+                score = calc.calculate_fitness_value(
+                    datetime.datetime(2024, 1, 1, 12, 0, 0),
+                    datetime.datetime(2024, 1, 1, 12, 5, 0),
+                    "sum(kube_pod_container_status_restarts_total)",
+                    FitnessFunctionType.point,
+                )
+        finally:
+            CANCELLATION_EVENT.clear()
+
+        assert score == 5.0
+        assert delays == [10]
+        assert calc.calculate_point_fitness.call_count == 2
 
     @patch("krkn_ai.chaos_engines.fitness.time.sleep")
     @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)

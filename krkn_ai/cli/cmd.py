@@ -5,7 +5,7 @@ import json
 from contextlib import nullcontext
 from kubernetes.client.rest import ApiException
 from urllib3.exceptions import MaxRetryError
-from krkn_ai.constants import STATUS_STARTED, STATUS_FAILED
+from krkn_ai.constants import STATUS_CANCELLED, STATUS_STARTED, STATUS_FAILED
 
 import click
 from pydantic import ValidationError
@@ -29,6 +29,11 @@ from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
+from krkn_ai.chaos_engines.cancellation import (
+    cancellation_requested,
+    handle_cancellation_signals,
+)
+from krkn_ai.utils.atomic import atomic_write_text
 
 
 class DiscoveryError(RuntimeError):
@@ -160,7 +165,7 @@ def run(
 
     dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
 
-    with dashboard:
+    with handle_cancellation_signals(), dashboard:
         if (
             monitoring
             and isinstance(dashboard, DashboardManager)
@@ -171,6 +176,7 @@ def run(
             )
 
         run_success = False
+        engine = None
         try:
             os.makedirs(new_output_path, exist_ok=True)
             with open(os.path.join(new_output_path, "results.json"), "w") as f:
@@ -189,9 +195,18 @@ def run(
                 logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
                 sys.exit(1)
 
-            engine.simulate()
+            engine.start_cancellation_monitor()
+            try:
+                engine.simulate()
+                if cancellation_requested() and not engine.cancelled:
+                    engine.mark_cancelled(engine.current_generation)
 
-            engine.save()
+                engine.save()
+            finally:
+                engine.stop_cancellation_monitor()
+            if cancellation_requested() and not engine.cancelled:
+                engine.mark_cancelled(engine.current_generation)
+                engine.save()
             run_success = True
         except (
             MissingScenarioError,
@@ -209,8 +224,27 @@ def run(
         finally:
             if not run_success:
                 try:
-                    with open(os.path.join(new_output_path, "results.json"), "w") as f:
-                        json.dump({"status": STATUS_FAILED}, f)
+                    results_path = os.path.join(new_output_path, "results.json")
+                    cancelled = engine is not None and engine.cancelled
+                    if (
+                        cancellation_requested()
+                        and engine is not None
+                        and not cancelled
+                    ):
+                        engine.mark_cancelled(engine.current_generation)
+                        cancelled = True
+                    status = STATUS_CANCELLED if cancelled else STATUS_FAILED
+                    if cancelled:
+                        try:
+                            with open(results_path, encoding="utf-8") as result_file:
+                                summary = json.load(result_file)
+                        except (OSError, json.JSONDecodeError):
+                            summary = {}
+                        summary["status"] = status
+                        atomic_write_text(results_path, json.dumps(summary))
+                    else:
+                        with open(results_path, "w") as f:
+                            json.dump({"status": status}, f)
                 except Exception as e:
                     logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)

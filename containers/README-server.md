@@ -37,3 +37,24 @@ In Kubernetes, the operator chart mounts either
 `aiService.storage.existingClaim` or its retained chart-created PVC at
 `/var/lib/krkn-ai`. Keep this service private to the operator namespace; its
 token is required for every discovery and artifact route.
+
+### Checkpoints and cancellation
+
+Uploads are staged separately from the published snapshot. Checkpoints validate
+checksums and cross-file result references before publishing an immutable revision.
+Invalid checkpoints leave the last committed snapshot readable. Terminal commits
+still verify checksums but retain inconsistent or malformed results from interrupted
+runs; typed result reads report the validation error while raw files remain
+downloadable. Terminal `succeeded`, `failed`, and `cancelled` snapshots cannot be
+overwritten; deleting the run removes retained artifacts.
+
+`KRKNAI_MAX_RUN_BYTES` counts retained artifact versions and staged uploads,
+counting shared hardlinks once. Historical checksum-pinned files remain available
+until the run is deleted.
+
+`GET /v1/runs/{uid}/results` returns the logical file paths and checksums plus
+`committedAt`. Archive readers can pin each file to that snapshot with
+`GET /v1/runs/{uid}/files/{path}?sha256=<manifest checksum>`; an unqualified file
+read continues to return the latest committed version. Cancellation is finalized
+from the runner's explicit completion-marker `outcome`, not inferred from its
+numeric exit code.

@@ -9,8 +9,9 @@ from typing import Dict, Optional
 import yaml
 
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
-from krkn_ai.models.app import CommandRunResult, KrknRunnerType
+from krkn_ai.constants import STATUS_CANCELLED
 from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.scenario.base import BaseScenario
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
@@ -20,6 +21,10 @@ from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.output import format_duration, format_result_filename
 from krkn_ai.utils.rng import rng
 from krkn_ai.chaos_engines.health_check_watcher import compute_baseline_response_stats
+from krkn_ai.chaos_engines.cancellation import (
+    CancellationRequested,
+    cancellation_requested,
+)
 
 
 logger = get_logger(__name__)
@@ -73,6 +78,8 @@ class BaseEngine(ABC):
         self._progress_checksums: dict[str, str] = {}
         self._fitness_finality: dict[str, bool] = {}
         self._score_query_metadata: dict[str, dict[str, dict[str, str | None]]] = {}
+        self.cancelled_generation: Optional[int] = None
+        self.cancelled = False
 
         self.save_config()
         if self.elastic_client is not None:
@@ -82,6 +89,8 @@ class BaseEngine(ABC):
     def optimize(self): ...
 
     def run_baseline(self):
+        if cancellation_requested():
+            raise CancellationRequested()
         if not self.config.baseline.enable:
             logger.info("Baseline is disabled, skipping baseline scenario")
             return
@@ -119,6 +128,8 @@ class BaseEngine(ABC):
     def evaluate_scenario(
         self, scenario: BaseScenario, generation_id: int
     ) -> CommandRunResult:
+        if cancellation_requested():
+            raise CancellationRequested()
         scenario_result = self.krkn_client.run(scenario, generation_id)
         self.seen_population[scenario] = scenario_result
 
@@ -129,6 +140,12 @@ class BaseEngine(ABC):
             self.elastic_client.index_run_result(scenario_result, self.run_uuid)
 
         return scenario_result
+
+    def start_cancellation_monitor(self) -> None:
+        self.krkn_client.start_cancellation_monitor()
+
+    def stop_cancellation_monitor(self) -> None:
+        self.krkn_client.stop_cancellation_monitor()
 
     def save_config(self):
         logger.info("Saving config file to config.yaml")
@@ -152,6 +169,13 @@ class BaseEngine(ABC):
         log_save_path = os.path.join(dir_path, log_filename)
         atomic_write_text(log_save_path, command_result.log)
         return log_save_path
+
+    def mark_cancelled(self, generation: Optional[int]) -> None:
+        self.cancelled = True
+        self.cancelled_generation = generation
+        self.current_generation = generation
+        self.end_time = datetime.datetime.now(datetime.timezone.utc)
+        self._write_progress()
 
     def set_current_generation(self, generation: int) -> None:
         self.current_generation = generation
@@ -205,6 +229,8 @@ class BaseEngine(ABC):
             "Saving scenario result for scenario %s", fitness_result.scenario_id
         )
         result = fitness_result.model_dump(mode="json")
+        if result.get("outcome") is None:
+            result.pop("outcome", None)
         result["scenario"]["name"] = fitness_result.scenario.name
         parameters = getattr(fitness_result.scenario, "parameters", None)
         if parameters is not None:
@@ -243,6 +269,11 @@ class BaseEngine(ABC):
                 }
                 for item in self.config.fitness_function.items
             }
+            if self.config.fitness_function.query is not None and not configured_items:
+                configured_items["0"] = {
+                    "query": self.config.fitness_function.query,
+                    "query_type": self.config.fitness_function.type.value,
+                }
             self._score_query_metadata[key] = {
                 str(score["id"]): configured_items.get(
                     str(score.get("id")), {"query": None, "query_type": None}
@@ -293,7 +324,9 @@ class BaseEngine(ABC):
         progress = {
             "completedGenerations": self.completed_generations,
             "currentGeneration": self.current_generation,
-            "completedScenarios": len(ordinary),
+            "completedScenarios": sum(
+                1 for result in ordinary if result.outcome != "cancelled"
+            ),
             "configuredGenerations": self.config.genetic.generations,
             "populationSize": self.config.genetic.population_size,
             "bestFitness": max(scores) if scores else None,
@@ -304,6 +337,8 @@ class BaseEngine(ABC):
             "fitnessProgression": self._fitness_progression,
             "fitnessFinalByScenario": self._fitness_finality,
             "resultChecksums": self._progress_checksums,
+            "cancelledGeneration": self.cancelled_generation,
+            **({"status": STATUS_CANCELLED} if self.cancelled else {}),
         }
         atomic_write_text(
             os.path.join(self.output_dir, "progress.json"),

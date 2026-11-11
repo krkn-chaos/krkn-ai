@@ -1,5 +1,5 @@
-import math
 import datetime
+import math
 import time
 from collections import defaultdict
 from typing import Dict, Iterable, List
@@ -13,6 +13,7 @@ from krkn_ai.models.custom_errors import (
 from krkn_ai.utils.mock import MockType, is_mock_enabled
 from krkn_ai.utils.logger import get_logger
 from krkn_ai.utils.rng import rng
+from krkn_ai.chaos_engines.cancellation import CANCELLATION_EVENT
 
 logger = get_logger(__name__)
 
@@ -91,7 +92,7 @@ class FitnessCalculator:
                         logger.warning(
                             f"Pre-flight check: query '{query}' returned no data. Retrying... ({attempt + 1}/{retries})"
                         )
-                        time.sleep(retry_delay)
+                        CANCELLATION_EVENT.wait(retry_delay)
                         continue
                     else:
                         raise FitnessFunctionConfigurationError(
@@ -108,7 +109,7 @@ class FitnessCalculator:
                     logger.warning(
                         f"Pre-flight check errored: {e}. Retrying... ({attempt + 1}/{retries})"
                     )
-                    time.sleep(retry_delay)
+                    CANCELLATION_EVENT.wait(retry_delay)
                     continue
                 else:
                     raise FitnessFunctionConfigurationError(

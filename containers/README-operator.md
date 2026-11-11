@@ -33,8 +33,9 @@ before changing the runner, service APIs, or release process.
 
 Manual execution can run from the host or from any container that has access
 to the Kubernetes API. The target cluster must already have the
-`krkn-operator` `KrknScenarioRun` CRD and the caller must be allowed to
-create, read, and delete `KrknScenarioRun` objects.
+`krkn-operator` `KrknScenarioRun` and `KrknAIRun` CRDs. The caller must be
+allowed to create/read child runs and patch child cancellation requests;
+controller-managed runs also require parent-run read access.
 
 Set the operator-runner context:
 
@@ -119,9 +120,10 @@ Kubernetes Secret instead of storing them in a `KrknScenarioRun`.
 `KrknAIRun` Pods use `EmptyDir` for transient output. The uploader sidecar
 checkpoints new or changed artifacts every 10 seconds for operator-managed
 runs; the standalone uploader retains its 150-second default. Each checkpoint
-exposes a manifest with `status: in_progress`. When the orchestrator writes its
-completion marker, the uploader immediately syncs once more and commits a final
-manifest with `status: succeeded` or `status: failed`. The standalone
+exposes a manifest with `status: in_progress`. The orchestrator atomically writes
+`.krkn-ai-complete` with an explicit `outcome` (`succeeded`, `failed`, or
+`cancelled`) and `exitCode`. The uploader commits a final manifest with the
+matching outcome, including `status: cancelled`. The standalone
 `quay.io/krkn-chaos/krkn-ai-service:<tag>` image stores artifacts and manifests
 on its single PVC.
 
@@ -132,10 +134,20 @@ remain null until a generation is complete and its artifacts are finalized;
 per-item raw scores remain available while a generation runs. Final per-item
 scores include their generation's `query` and `queryType`, but never weighting
 internals. Terminal incomplete scores are marked `unfinalized`, never promoted
-by a failed run. Typed reads verify result bytes against the copied manifest and
+by a failed or cancelled run. Typed reads verify result bytes against the copied manifest and
 return `503 artifact_updating` during an upload or normalization boundary.
 Retry the next poll rather than treating a transient mismatch as a missing
 result.
+
+Operator cancellation is cooperative: the runner verifies the parent
+`KrknAIRun` UID, stops scheduling new scenarios, and asks the controller to stop
+the active child without deleting its Pod. It waits for the child to reach a
+terminal phase before collecting its logs and health samples. A timed-out child
+receives the same durable stop request and is not abandoned while still active.
+The container entrypoint forwards TERM/INT to the runner so signals use this
+same cancellation path.
+Interrupted-generation raw scores and completed members are retained; the
+generation remains unfinalized and the run summary is marked `cancelled`.
 
 `GET /v1/runs/{uid}/scenarios` returns the complete committed
 `{"scenarios":[...]}` collection and rejects query parameters. The operator

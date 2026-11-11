@@ -15,6 +15,11 @@ from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import FitnessScoreResult
 from krkn_ai.models.config import FitnessFunctionItem, GeneticAlgorithmConfig
 from krkn_ai.models.scenario.base import ScenarioOrigin
+from krkn_ai.chaos_engines.cancellation import (
+    CancellationRequested,
+    CANCELLATION_EVENT,
+    request_cancellation,
+)
 from krkn_ai.run_results import parse_run_artifacts, scenario_detail
 
 
@@ -280,3 +285,160 @@ class TestGeneticAlgorithmCoreMethods:
         assert progress["bestFitness"] == 10.0
         assert progress["averageFitness"] == 10.0
         assert progress["fitnessFinalByScenario"] == {"0:1": True}
+
+    def test_cancelled_generation_persists_raw_result_without_normalizing(
+        self, genetic_algorithm, mock_command_run_result, mock_scenario
+    ):
+        engine = genetic_algorithm
+        engine.run_baseline = Mock()
+        engine.create_population = Mock(return_value=[mock_scenario, mock_scenario])
+        engine._check_and_stop = Mock(return_value=False)
+
+        result = mock_command_run_result
+        result.outcome = "cancelled"
+        result.fitness_result.scores = [
+            FitnessScoreResult(id=1, fitness_score=4.0, weighted_score=4.0)
+        ]
+        engine.calculate_fitness = Mock(
+            side_effect=lambda *_: (engine.save_scenario_result(result), result)[1]
+        )
+        CANCELLATION_EVENT.clear()
+
+        with patch(
+            "krkn_ai.algorithm.genetic.engine.normalize_generation_scores"
+        ) as normalize:
+            engine.simulate()
+
+        engine.calculate_fitness.assert_called_once()
+        normalize.assert_not_called()
+        progress = json.loads((Path(engine.output_dir) / "progress.json").read_text())
+        assert progress["status"] == "cancelled"
+        assert progress["completedScenarios"] == 0
+        assert progress["cancelledGeneration"] == 0
+        assert progress["completedGenerations"] == 0
+        assert progress["currentGeneration"] == 0
+        assert progress["fitnessFinalByScenario"] == {"0:1": False}
+        result_path = Path(engine.output_dir) / "yaml/generation_0/scenario_1.yaml"
+        saved = yaml.safe_load(result_path.read_text())
+        assert saved["outcome"] == "cancelled"
+        assert saved["fitness_result"]["scores"][0]["fitness_score"] == 4.0
+        assert saved["fitness_result"]["scores"][0]["normalized_score"] is None
+
+    def test_cancellation_after_child_completion_rolls_back_generation_scores(
+        self, genetic_algorithm, mock_command_run_result, mock_scenario
+    ):
+        engine = genetic_algorithm
+        engine.run_baseline = Mock()
+        engine.create_population = Mock(return_value=[mock_scenario])
+        engine._check_and_stop = Mock(return_value=False)
+        engine.config.fitness_function.items = [FitnessFunctionItem(query="up")]
+        result = mock_command_run_result.model_copy(deep=True)
+        result.generation_id = 0
+        result.scenario_id = 1
+        result.outcome = None
+        result.fitness_result.fitness_score = 10.0
+        result.fitness_result.scores = [
+            FitnessScoreResult(
+                id=engine.config.fitness_function.items[0].id,
+                fitness_score=4.0,
+                weighted_score=4.0,
+            )
+        ]
+        engine.calculate_fitness = Mock(
+            side_effect=lambda *_: (engine.save_scenario_result(result), result)[1]
+        )
+        CANCELLATION_EVENT.clear()
+
+        def normalize_then_cancel(results, *_args):
+            for member in results:
+                for score in member.fitness_result.scores:
+                    score.normalized_score = 0.75
+                    score.weighted_score = 0.75
+                member.fitness_result.fitness_score = 75.0
+            request_cancellation()
+
+        with patch(
+            "krkn_ai.algorithm.genetic.engine.normalize_generation_scores",
+            side_effect=normalize_then_cancel,
+        ) as normalize:
+            engine.simulate()
+
+        normalize.assert_called_once()
+        engine.calculate_fitness.assert_called_once()
+        progress = json.loads((Path(engine.output_dir) / "progress.json").read_text())
+        assert progress["status"] == "cancelled"
+        assert progress["completedGenerations"] == 0
+        assert progress["cancelledGeneration"] == 0
+        assert progress["fitnessFinalByScenario"] == {"0:1": False}
+        assert result.fitness_result.fitness_score == 10.0
+        assert result.fitness_result.scores[0].fitness_score == 4.0
+        assert result.fitness_result.scores[0].weighted_score == 4.0
+        assert result.fitness_result.scores[0].normalized_score is None
+        saved = yaml.safe_load(
+            (Path(engine.output_dir) / "yaml/generation_0/scenario_1.yaml").read_text()
+        )
+        assert saved["fitness_result"]["scores"][0]["normalized_score"] is None
+
+    def test_mark_cancelled_keeps_completed_generations_final(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        engine.set_current_generation(0)
+        engine.save_scenario_result(mock_command_run_result)
+        engine.complete_generation(0, [mock_command_run_result])
+
+        partial = mock_command_run_result.model_copy(deep=True)
+        partial.generation_id = 1
+        partial.scenario_id = 2
+        engine.set_current_generation(1)
+        engine.save_scenario_result(partial)
+        engine.mark_cancelled(1)
+
+        progress = json.loads((Path(engine.output_dir) / "progress.json").read_text())
+        assert progress["completedGenerations"] == 1
+        assert progress["cancelledGeneration"] == 1
+        assert progress["currentGeneration"] == 1
+        assert progress["fitnessFinalByScenario"] == {"0:1": True, "1:2": False}
+
+    def test_cached_member_is_written_without_old_normalized_score(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        CANCELLATION_EVENT.clear()
+        query = FitnessFunctionItem(query="up")
+        engine.config.fitness_function.items = [query]
+        cached = mock_command_run_result.model_copy(deep=True)
+        cached.fitness_result.scores = [
+            FitnessScoreResult(
+                id=query.id,
+                fitness_score=4.0,
+                weighted_score=0.5,
+                normalized_score=0.5,
+            )
+        ]
+        engine.seen_population[cached.scenario] = cached
+
+        current = engine.calculate_fitness(cached.scenario, generation_id=1)
+
+        assert current.fitness_result.scores[0].fitness_score == 4.0
+        assert current.fitness_result.scores[0].normalized_score is None
+        assert cached.fitness_result.scores[0].normalized_score == 0.5
+        assert current.fitness_result.scores[0].weighted_score == 4.0
+
+    def test_baseline_cancellation_stops_before_population_creation(
+        self, genetic_algorithm
+    ):
+        engine = genetic_algorithm
+        engine.run_baseline = Mock(side_effect=CancellationRequested)
+        engine.create_population = Mock()
+        CANCELLATION_EVENT.clear()
+
+        engine.simulate()
+
+        engine.create_population.assert_not_called()
+        assert engine.cancelled is True
+        assert engine.cancelled_generation is None
+        progress = json.loads((Path(engine.output_dir) / "progress.json").read_text())
+        assert progress["status"] == "cancelled"
+        assert progress["cancelledGeneration"] is None
+        assert progress["currentGeneration"] is None

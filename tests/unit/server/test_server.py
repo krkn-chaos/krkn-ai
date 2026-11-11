@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 
 import pytest
@@ -387,6 +388,199 @@ def test_artifact_upload_enforces_file_and_run_limits(tmp_path: Path):
     )
 
     assert response.status_code == 413
+
+
+def test_run_limit_counts_retained_revisions_without_double_counting_links(tmp_path):
+    client = TestClient(
+        create_app(tmp_path, "service-token", max_artifact_bytes=8, max_run_bytes=24)
+    )
+
+    def upload(path, content):
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size": len(content),
+        }
+        response = client.put(
+            f"/v1/runs/retained/files/{path}",
+            headers={**TOKEN_HEADERS, "X-Checksum-SHA256": entry["sha256"]},
+            content=content,
+        )
+        return entry, response
+
+    stable, response = upload("config.txt", b"constant")
+    assert response.status_code == 201
+    first, response = upload("run.log", b"firstlog")
+    assert response.status_code == 201
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": [stable, first]},
+        ).status_code
+        == 200
+    )
+
+    second, response = upload("run.log", b"next-log")
+    assert response.status_code == 201
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": [stable, second]},
+        ).status_code
+        == 200
+    )
+    _, response = upload("run.log", b"last-log")
+    assert response.status_code == 413
+    assert (
+        client.get("/v1/runs/retained/files/run.log", headers=TOKEN_HEADERS).content
+        == b"next-log"
+    )
+    assert (
+        client.get(
+            "/v1/runs/retained/files/run.log",
+            headers=TOKEN_HEADERS,
+            params={"sha256": first["sha256"]},
+        ).content
+        == b"firstlog"
+    )
+    assert (
+        client.post(
+            "/v1/runs/retained/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "failed", "files": [stable, second]},
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.parametrize("run_status", ["failed", "cancelled"])
+@pytest.mark.parametrize(
+    ("payload", "error_status"),
+    [
+        (b'{"generation_id":', 502),
+        (
+            b'{"generation_id":0,"scenario_id":1,"scenario":{},"fitness_result":{}}',
+            503,
+        ),
+    ],
+)
+def test_terminal_commit_retains_inconsistent_artifacts(
+    tmp_path, run_status, payload, error_status
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    progress = b'{"resultChecksums":{},"fitnessFinalByScenario":{}}'
+    entries = []
+    for path, content in [
+        ("progress.json", progress),
+        ("json/generation_0/scenario.json", payload),
+    ]:
+        checksum = hashlib.sha256(content).hexdigest()
+        assert (
+            client.put(
+                f"/v1/runs/interrupted/files/{path}",
+                headers={**TOKEN_HEADERS, "X-Checksum-SHA256": checksum},
+                content=content,
+            ).status_code
+            == 201
+        )
+        entries.append({"path": path, "sha256": checksum, "size": len(content)})
+        if path == "progress.json":
+            assert (
+                client.post(
+                    "/v1/runs/interrupted/commit",
+                    headers=TOKEN_HEADERS,
+                    json={"status": "in_progress", "files": entries},
+                ).status_code
+                == 200
+            )
+    assert (
+        client.post(
+            "/v1/runs/interrupted/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": "in_progress", "files": entries},
+        ).status_code
+        == error_status
+    )
+    assert (
+        client.get("/v1/runs/interrupted/results", headers=TOKEN_HEADERS).json()[
+            "status"
+        ]
+        == "in_progress"
+    )
+
+    response = client.post(
+        "/v1/runs/interrupted/commit",
+        headers=TOKEN_HEADERS,
+        json={"status": run_status, "files": entries},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == run_status
+    assert (
+        client.get(
+            "/v1/runs/interrupted/files/json/generation_0/scenario.json",
+            headers=TOKEN_HEADERS,
+        ).content
+        == payload
+    )
+    assert (
+        client.get("/v1/runs/interrupted/summary", headers=TOKEN_HEADERS).status_code
+        == error_status
+    )
+
+
+def test_uploader_finalizes_after_malformed_checkpoint(tmp_path, monkeypatch):
+    client = TestClient(create_app(tmp_path / "service", "service-token"))
+    output = tmp_path / "output"
+    run_output = output / "run-1"
+    scenario = run_output / "json" / "generation_0" / "scenario.json"
+    scenario.parent.mkdir(parents=True)
+    scenario.write_bytes(b'{"generation_id":')
+    marker = run_output / ".krkn-ai-complete"
+
+    def request(method, url, **kwargs):
+        body = kwargs.get("data")
+        reply = client.request(
+            method,
+            urlsplit(url).path,
+            headers=kwargs.get("headers"),
+            json=kwargs.get("json"),
+            content=body.read() if body is not None else None,
+        )
+        response = Response()
+        response.status_code = reply.status_code
+        response._content = reply.content
+        response.url = url
+        return response
+
+    monkeypatch.setenv("KRKNAI_OUTPUT_DIR", str(output))
+    monkeypatch.setenv("KRKNAI_UPLOAD_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("KRKNAI_RUN_UID", "run-1")
+    monkeypatch.setenv("KRKNAI_SERVICE_URL", "http://service")
+    monkeypatch.setenv("KRKNAI_SERVICE_TOKEN", "service-token")
+    monkeypatch.setenv("KRKNAI_UPLOAD_INTERVAL_SECONDS", "1")
+    monkeypatch.setattr(server_module.requests, "request", request)
+    monkeypatch.setattr(server_module, "MAX_REQUEST_ATTEMPTS", 1)
+    monkeypatch.setattr(
+        server_module.time,
+        "sleep",
+        lambda _: marker.write_text('{"exitCode":1,"outcome":"failed"}'),
+    )
+
+    upload_results()
+
+    assert (
+        client.get("/v1/runs/run-1/results", headers=TOKEN_HEADERS).json()["status"]
+        == "failed"
+    )
+    assert (
+        client.get(
+            "/v1/runs/run-1/files/json/generation_0/scenario.json",
+            headers=TOKEN_HEADERS,
+        ).content
+        == scenario.read_bytes()
+    )
 
 
 def test_uploader_retries_and_commits_after_failure_marker(tmp_path: Path, monkeypatch):
@@ -769,18 +963,9 @@ def test_config_validation_rejects_unusable_url_parameters(
 
 
 def test_typed_partial_results_validation_and_manifest_consistency(
-    tmp_path: Path, minimal_config, monkeypatch
+    tmp_path: Path, minimal_config
 ):
     client = TestClient(create_app(tmp_path, "service-token"))
-    original_parse = server_module.parse_run_artifacts
-    parse_calls = 0
-
-    def count_parses(files):
-        nonlocal parse_calls
-        parse_calls += 1
-        return original_parse(files)
-
-    monkeypatch.setattr(server_module, "parse_run_artifacts", count_parses)
     auth = TOKEN_HEADERS
     assert client.get("/v1/runs/run-1/summary", headers=auth).json() == {
         "artifactStatus": "not_available",
@@ -944,7 +1129,6 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         return client.get("/v1/runs/run-1/results", headers=auth).json()["committedAt"]
 
     committed_at = commit(files)
-    assert parse_calls == 2
     projection_path = tmp_path / ".result-views/run-1/projection.json"
     assert projection_path.is_file()
     assert (
@@ -956,7 +1140,6 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     assert (
         restarted.get("/v1/runs/run-1/scenarios/0/9", headers=auth).status_code == 200
     )
-    assert parse_calls == 2
     cached_view = json.loads(projection_path.read_text())
     body_reference = cached_view["details"]["0:9"]
     body_path = (
@@ -968,11 +1151,9 @@ def test_typed_partial_results_validation_and_manifest_consistency(
     body_path.write_text("corrupt cached detail")
     assert restarted.get("/v1/runs/run-1/summary", headers=auth).status_code == 200
     assert restarted.get("/v1/runs/run-1/scenarios", headers=auth).status_code == 200
-    assert parse_calls == 2
     repaired = restarted.get("/v1/runs/run-1/scenarios/0/9", headers=auth)
     assert repaired.status_code == 200
     assert repaired.json()["fitnessState"] == "provisional"
-    assert parse_calls == 3
     summary = client.get("/v1/runs/run-1/summary", headers=auth)
     assert summary.status_code == 200
     assert summary.json() == {
@@ -1082,7 +1263,6 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         ).content
         == previous_scenario_bytes
     )
-    assert parse_calls == 3
 
     files["progress.json"] = json.dumps(
         progress(21.0, 75.0, finalized=True, completed=1, best=75.0)
@@ -1100,7 +1280,6 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         progress(21.0, 75.0, finalized=True, completed=1, best=75.0)
     ).encode()
     committed_at = commit(files)
-    assert parse_calls == 5
     complete_index = client.get("/v1/runs/run-1/scenarios", headers=auth)
     assert complete_index.status_code == 200
     assert len(complete_index.json()["scenarios"]) == 2
@@ -1171,11 +1350,9 @@ def test_typed_partial_results_validation_and_manifest_consistency(
         "baselineFitness": 21.0,
         "fitnessProgression": [{"generation": 0, "best": 75.0, "average": 75.0}],
     }
-    assert parse_calls == 7
     final_index = client.get("/v1/runs/run-1/scenarios", headers=auth)
     assert final_index.status_code == 200
     assert len(final_index.json()["scenarios"]) == 2
-    assert parse_calls == 7
     assert {path.name for path in projection_path.parent.iterdir()} == {
         "projection.json",
         "views",

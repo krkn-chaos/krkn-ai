@@ -8,7 +8,7 @@ import json
 import pytest
 from unittest.mock import Mock, patch
 
-from krkn_ai.chaos_engines.krkn_runner import KrknRunner, KRKN_HUB_FAILURE_SCORE
+from krkn_ai.chaos_engines.krkn_runner import KRKN_HUB_FAILURE_SCORE, KrknRunner
 from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import (

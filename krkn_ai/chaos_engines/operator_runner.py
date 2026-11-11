@@ -29,10 +29,15 @@ TERMINAL_PHASES = {"Succeeded", "Failed", "PartiallyFailed", "Cancelled"}
 
 API_REQUEST_TIMEOUT = (5, 30)
 DEFAULT_SCENARIO_TIMEOUT_SECONDS = 60 * 60
+DEFAULT_CANCEL_GRACE_SECONDS = 180
 
 
 class ChildIdentityChangedError(RuntimeError):
     """The observed child no longer matches the resource created by this run."""
+
+
+class ChildStopUnconfirmedError(RuntimeError):
+    """A stopped child did not reach a terminal phase within the grace period."""
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,7 @@ class OperatorEnv:
     provider: str
     cluster: str
     scenario_timeout_seconds: int
+    cancel_grace_seconds: int
 
     @classmethod
     def from_environ(cls) -> "OperatorEnv":
@@ -82,6 +88,18 @@ class OperatorEnv:
                 "KRKNAI_SCENARIO_TIMEOUT_SECONDS must be a positive integer"
             )
 
+        raw_grace = os.environ.get(
+            "KRKNAI_CANCEL_GRACE_SECONDS", str(DEFAULT_CANCEL_GRACE_SECONDS)
+        )
+        try:
+            cancel_grace_seconds = int(raw_grace)
+        except ValueError as exc:
+            raise ValueError(
+                "KRKNAI_CANCEL_GRACE_SECONDS must be a positive integer"
+            ) from exc
+        if cancel_grace_seconds <= 0:
+            raise ValueError("KRKNAI_CANCEL_GRACE_SECONDS must be a positive integer")
+
         return cls(
             namespace=os.environ["KRKNAI_NAMESPACE"],
             run_name=os.environ["KRKNAI_RUN_NAME"],
@@ -91,6 +109,7 @@ class OperatorEnv:
             provider=os.environ["KRKNAI_PROVIDER"],
             cluster=os.environ["KRKNAI_CLUSTER"],
             scenario_timeout_seconds=scenario_timeout_seconds,
+            cancel_grace_seconds=cancel_grace_seconds,
         )
 
 
@@ -381,6 +400,8 @@ class OperatorExecutor:
 
     def _poll_until_terminal(self, name: str) -> str:
         deadline = time.monotonic() + self.env.scenario_timeout_seconds
+        cancel_grace_seconds = self.env.cancel_grace_seconds
+        stop_started_at: Optional[float] = None
         stop_requested = False
         timeout_requested = False
         while True:
@@ -400,13 +421,29 @@ class OperatorExecutor:
 
             if self._check_parent_intent():
                 self._cancellation_observed = not self._parent_identity_lost
+            now = time.monotonic()
             if not stop_requested:
                 if cancellation_requested():
                     self._cancellation_observed = not self._parent_identity_lost
+                    if stop_started_at is None:
+                        stop_started_at = now
                     stop_requested = self._request_child_cancellation(name)
-                elif time.monotonic() >= deadline:
+                elif now >= deadline:
                     timeout_requested = True
+                    if stop_started_at is None:
+                        stop_started_at = now
                     stop_requested = self._request_child_cancellation(name)
+
+            if (
+                stop_started_at is not None
+                and now - stop_started_at >= cancel_grace_seconds
+            ):
+                identity = self.active_child or {}
+                raise ChildStopUnconfirmedError(
+                    f"Stop unconfirmed for KrknScenarioRun {name} "
+                    f"(UID {identity.get('uid', 'unknown')}) after "
+                    f"{cancel_grace_seconds} seconds; child may still be active"
+                )
 
             if cancellation_requested():
                 time.sleep(self.poll_interval)

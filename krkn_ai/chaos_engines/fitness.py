@@ -1,5 +1,6 @@
-import math
 import datetime
+import math
+import time
 from collections import defaultdict
 from typing import Dict, Iterable, List
 
@@ -137,7 +138,7 @@ class FitnessCalculator:
                 logger.info(
                     f"Retrying fitness function calculation... (retry {retry + 1} of {retries})"
                 )
-                CANCELLATION_EVENT.wait(retry_delay)
+                time.sleep(retry_delay)
         raise FitnessFunctionCalculationError(
             f"Fitness function calculation failed after {retries} retries"
         )

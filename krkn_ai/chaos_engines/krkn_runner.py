@@ -202,6 +202,7 @@ class KrknRunner:
                     log, returncode = run_shell(
                         inject_es_config(command, self.config, self.runner_type, True),
                         do_not_log=not is_verbose(),
+                        cancellation_event=CANCELLATION_EVENT,
                     )
 
                     if isinstance(scenario, CompositeScenario):

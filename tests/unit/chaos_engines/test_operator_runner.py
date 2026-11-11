@@ -10,8 +10,11 @@ from kubernetes.config.config_exception import ConfigException
 
 from krkn_ai.chaos_engines.operator_runner import (
     API_REQUEST_TIMEOUT,
+    DEFAULT_CANCEL_GRACE_SECONDS,
     ChildIdentityChangedError,
+    ChildStopUnconfirmedError,
     GROUP,
+    OperatorEnv,
     PLURAL,
     VERSION,
     OperatorExecutor,
@@ -115,6 +118,21 @@ class TestOperatorExecutorAuthentication:
 
         load_incluster.assert_called_once_with()
         load_kubeconfig.assert_called_once_with(config_file="/tmp/test-kubeconfig")
+
+    @pytest.mark.parametrize("grace", ["invalid", "0", "-1"])
+    def test_cancel_grace_must_be_a_positive_integer(self, grace):
+        operator_env = {
+            "KRKNAI_NAMESPACE": "krkn-operator",
+            "KRKNAI_RUN_NAME": "manual-run",
+            "KRKNAI_RUN_UID": "run-uid",
+            "KRKNAI_TARGET_REQUEST_ID": "self",
+            "KRKNAI_PROVIDER": "krkn-operator",
+            "KRKNAI_CLUSTER": "self",
+            "KRKNAI_CANCEL_GRACE_SECONDS": grace,
+        }
+        with patch.dict(os.environ, operator_env, clear=True):
+            with pytest.raises(ValueError, match="KRKNAI_CANCEL_GRACE_SECONDS"):
+                OperatorEnv.from_environ()
 
 
 class TestOperatorExecutorScenarioRun:
@@ -303,6 +321,7 @@ class TestOperatorExecutorScenarioRun:
         executor.env = SimpleNamespace(
             namespace="krkn-operator",
             scenario_timeout_seconds=10,
+            cancel_grace_seconds=DEFAULT_CANCEL_GRACE_SECONDS,
             orchestrator_pod_name=None,
         )
         executor.co = Mock()
@@ -382,6 +401,7 @@ class TestOperatorExecutorScenarioRun:
             run_uid="run-uid",
             orchestrator_pod_name="orchestrator-pod",
             scenario_timeout_seconds=60,
+            cancel_grace_seconds=DEFAULT_CANCEL_GRACE_SECONDS,
         )
         executor.co = Mock()
         executor.active_child = {"name": "scenario-run", "uid": "child-uid"}
@@ -424,6 +444,60 @@ class TestOperatorExecutorScenarioRun:
 
         CANCELLATION_EVENT.clear()
 
+    @pytest.mark.parametrize("patch_fails", [False, True])
+    @pytest.mark.parametrize(
+        ("cancel_requested", "clock_values"),
+        [
+            (False, [0, 2, 3, 4]),
+            (True, [0, 0, 1, 2]),
+        ],
+    )
+    def test_unconfirmed_stop_aborts_after_grace(
+        self, cancel_requested, clock_values, patch_fails
+    ):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            namespace="krkn-operator",
+            scenario_timeout_seconds=1,
+            cancel_grace_seconds=2,
+            orchestrator_pod_name=None,
+        )
+        executor.co = Mock()
+        executor.co.get_namespaced_custom_object_status.return_value = {
+            "metadata": {"uid": "child-uid", "resourceVersion": "rv-running"},
+            "status": {"phase": "Running"},
+        }
+        if patch_fails:
+            executor.co.patch_namespaced_custom_object.side_effect = RuntimeError(
+                "patch rejected"
+            )
+        executor.active_child = {"name": "scenario-run", "uid": "child-uid"}
+        executor.poll_interval = 0
+        executor._timed_out = False
+        executor._cancellation_observed = False
+        executor._parent_identity_lost = False
+        CANCELLATION_EVENT.clear()
+        if cancel_requested:
+            CANCELLATION_EVENT.set()
+
+        try:
+            with (
+                patch(
+                    "krkn_ai.chaos_engines.operator_runner.time.monotonic",
+                    side_effect=clock_values,
+                ),
+                pytest.raises(
+                    ChildStopUnconfirmedError,
+                    match=r"scenario-run \(UID child-uid\)",
+                ) as exc_info,
+            ):
+                executor._poll_until_terminal("scenario-run")
+        finally:
+            CANCELLATION_EVENT.clear()
+
+        assert "may still be active" in str(exc_info.value)
+        assert executor.co.patch_namespaced_custom_object.call_count >= 1
+
     def test_recreated_child_is_never_patched_or_read_for_logs(self):
         executor = OperatorExecutor.__new__(OperatorExecutor)
         executor.env = SimpleNamespace(
@@ -432,6 +506,7 @@ class TestOperatorExecutorScenarioRun:
             run_uid="run-uid",
             orchestrator_pod_name=None,
             scenario_timeout_seconds=60,
+            cancel_grace_seconds=DEFAULT_CANCEL_GRACE_SECONDS,
             target_request_id="target",
             provider="krkn-operator",
             cluster="current-cluster",
@@ -477,6 +552,7 @@ class TestOperatorExecutorScenarioRun:
             run_uid="run-uid",
             orchestrator_pod_name=None,
             scenario_timeout_seconds=60,
+            cancel_grace_seconds=DEFAULT_CANCEL_GRACE_SECONDS,
             target_request_id="target",
             provider="krkn-operator",
             cluster="current-cluster",

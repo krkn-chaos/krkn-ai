@@ -40,12 +40,17 @@ token is required for every discovery and artifact route.
 
 ### Checkpoints and cancellation
 
-Uploads are staged separately from the published snapshot. A commit validates the
-uploaded checksums and cross-file result references, writes a complete immutable
-revision, then atomically publishes it. Interrupted or invalid uploads therefore
-leave the last committed snapshot readable. Terminal `succeeded`, `failed`, and
-`cancelled` snapshots cannot be overwritten; deleting the run remains the explicit
-way to remove retained artifacts.
+Uploads are staged separately from the published snapshot. Checkpoints validate
+checksums and cross-file result references before publishing an immutable revision.
+Invalid checkpoints leave the last committed snapshot readable. Terminal commits
+still verify checksums but retain inconsistent or malformed results from interrupted
+runs; typed result reads report the validation error while raw files remain
+downloadable. Terminal `succeeded`, `failed`, and `cancelled` snapshots cannot be
+overwritten; deleting the run removes retained artifacts.
+
+`KRKNAI_MAX_RUN_BYTES` counts retained artifact versions and staged uploads,
+counting shared hardlinks once. Historical checksum-pinned files remain available
+until the run is deleted.
 
 `GET /v1/runs/{uid}/results` returns the logical file paths and checksums plus
 `committedAt`. Archive readers can pin each file to that snapshot with

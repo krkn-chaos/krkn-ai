@@ -19,6 +19,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from itertools import chain
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, BinaryIO, Iterator, Literal
 
@@ -349,45 +350,48 @@ class ArtifactStore:
             )
         return self._revision_dir(uid, revision) / relative_path
 
-    def _effective_run_size(
-        self,
-        uid: str,
-        pending_path: PurePosixPath | None = None,
-        pending_size: int | None = None,
-    ) -> int:
-        sizes: dict[str, int] = {}
+    def _effective_run_size(self, uid: str) -> int:
+        run_dir = self.run_dir(uid)
+        uid_hash = hashlib.sha256(_safe_uid(uid).encode()).hexdigest()
+        paths = chain(
+            (
+                path
+                for path in run_dir.rglob("*")
+                if path != self._manifest_path(uid)
+                and path.relative_to(run_dir).parts[0] != ".revision-index"
+            ),
+            (self.root / ".upload-staging").glob(f"{uid_hash}-*-*"),
+        )
+        seen: set[tuple[int, int]] = set()
+        total = 0
+        for path in paths:
+            if not path.is_file():
+                continue
+            metadata = path.stat()
+            identity = (metadata.st_dev, metadata.st_ino)
+            if identity not in seen:
+                seen.add(identity)
+                total += metadata.st_size
+        return total
+
+    def _link_artifact(self, uid: str, source: Path, destination: Path) -> None:
         try:
-            manifest = self.manifest(uid)
-        except HTTPException as exc:
-            if exc.status_code != status.HTTP_404_NOT_FOUND:
+            os.link(source, destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
                 raise
-            manifest = None
-        if manifest is not None:
-            for entry in manifest["files"]:
-                if isinstance(entry, dict) and isinstance(entry.get("path"), str):
-                    path_hash = hashlib.sha256(entry["path"].encode()).hexdigest()
-                    sizes[path_hash] = entry.get("size", 0)
-        staged_sizes: dict[str, int] = {}
-        staging_dir = self.root / ".upload-staging"
-        uid_prefix = hashlib.sha256(_safe_uid(uid).encode()).hexdigest() + "-"
-        if staging_dir.exists():
-            for staged_file in staging_dir.iterdir():
-                if not staged_file.name.startswith(uid_prefix):
-                    continue
-                parts = staged_file.name[len(uid_prefix) :].split("-")
-                if (
-                    len(parts) == 2
-                    and re.fullmatch(r"[0-9a-f]{64}", parts[0])
-                    and re.fullmatch(r"[0-9a-f]{64}", parts[1])
-                ):
-                    staged_sizes[parts[0]] = max(
-                        staged_sizes.get(parts[0], 0), staged_file.stat().st_size
-                    )
-        sizes.update(staged_sizes)
-        if pending_path is not None and pending_size is not None:
-            path_hash = hashlib.sha256(str(pending_path).encode()).hexdigest()
-            sizes[path_hash] = max(staged_sizes.get(path_hash, 0), pending_size)
-        return sum(sizes.values())
+            if (
+                self._effective_run_size(uid) + source.stat().st_size
+                > self.max_run_bytes
+            ):
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
+                )
+            with source.open("rb") as source_file, destination.open("wb") as target:
+                shutil.copyfileobj(source_file, target)
+                target.flush()
+                os.fsync(target.fileno())
 
     def _begin_upload(self, uid: str) -> tuple[int, str]:
         with self.uid_lock(uid):
@@ -424,12 +428,14 @@ class ArtifactStore:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT, "run artifacts are already committed"
                 )
-            if self._effective_run_size(uid, relative_path, size) > self.max_run_bytes:
+            destination = self._staged_path(uid, relative_path, checksum)
+            if destination.exists():
+                return
+            if self._effective_run_size(uid) + size > self.max_run_bytes:
                 raise HTTPException(
                     status.HTTP_413_CONTENT_TOO_LARGE,
                     "artifact upload exceeds configured storage limit",
                 )
-            destination = self._staged_path(uid, relative_path, checksum)
             os.replace(temporary_name, destination)
             self._fsync_directory(destination.parent)
 
@@ -596,7 +602,7 @@ class ArtifactStore:
                         )
                     destination = temporary_dir / relative_path
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(source, destination)
+                    self._link_artifact(uid, source, destination)
                 os.replace(temporary_dir, revision_dir)
                 self._fsync_directory(revision_dir.parent)
             finally:
@@ -663,7 +669,8 @@ class ArtifactStore:
         revision = self._revision_id(files)
         revision_dir = self._revision_dir(uid, revision)
         revision_dir.parent.mkdir(parents=True, exist_ok=True)
-        if not revision_dir.exists():
+        created_revision = not revision_dir.exists()
+        if created_revision:
             temporary_dir = Path(
                 tempfile.mkdtemp(prefix=".revision-", dir=revision_dir.parent)
             )
@@ -697,18 +704,7 @@ class ArtifactStore:
                         )
                     destination = temporary_dir / relative_path
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        os.link(source, destination)
-                    except OSError as exc:
-                        if exc.errno != errno.EXDEV:
-                            raise
-                        with (
-                            source.open("rb") as source_file,
-                            destination.open("wb") as target,
-                        ):
-                            shutil.copyfileobj(source_file, target)
-                            target.flush()
-                            os.fsync(target.fileno())
+                    self._link_artifact(uid, source, destination)
                 os.replace(temporary_dir, revision_dir)
                 self._fsync_directory(revision_dir.parent)
             finally:
@@ -724,17 +720,28 @@ class ArtifactStore:
                     status.HTTP_503_SERVICE_UNAVAILABLE, "artifact_updating"
                 )
 
-        selected_files = {}
-        for entry in files:
-            path = entry["path"]
-            if path in {"progress.json", "results.json"} or re.fullmatch(
-                r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)", path
-            ):
-                selected_files[path] = (
-                    (revision_dir / _safe_path(path)).read_bytes(),
-                    entry["sha256"],
+        try:
+            if self._effective_run_size(uid) > self.max_run_bytes:
+                raise HTTPException(
+                    status.HTTP_413_CONTENT_TOO_LARGE,
+                    "artifact upload exceeds configured storage limit",
                 )
-        parse_run_artifacts(selected_files)
+            if request.status == "in_progress":
+                selected_files = {}
+                for entry in files:
+                    path = entry["path"]
+                    if path in {"progress.json", "results.json"} or re.fullmatch(
+                        r"(?:yaml|json)/generation_\d+/[^/]+\.(?:yaml|yml|json)", path
+                    ):
+                        selected_files[path] = (
+                            (revision_dir / _safe_path(path)).read_bytes(),
+                            entry["sha256"],
+                        )
+                parse_run_artifacts(selected_files)
+        except HTTPException:
+            if created_revision:
+                shutil.rmtree(revision_dir)
+            raise
 
         if existing is not None and existing.get("_revision") is None:
             self._materialize_legacy_revision(uid, existing)
@@ -1721,16 +1728,21 @@ def _upload_checkpoint(
             response = exc.response
             if marker.exists():
                 return
-            if (
-                response is None
-                or response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE
-            ):
+            if response is None:
                 raise
             try:
                 detail = response.json().get("detail")
             except (AttributeError, ValueError):
                 detail = None
-            if detail != "artifact_updating":
+            if (
+                response.status_code == status.HTTP_502_BAD_GATEWAY
+                and detail == "invalid committed artifact"
+            ):
+                return
+            if (
+                response.status_code != status.HTTP_503_SERVICE_UNAVAILABLE
+                or detail != "artifact_updating"
+            ):
                 raise
 
 

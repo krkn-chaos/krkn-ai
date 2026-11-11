@@ -2,8 +2,10 @@
 HealthCheckWatcher core functionality tests
 """
 
+import json
 import time
 from unittest.mock import Mock, patch
+import yaml
 
 from krkn_ai.chaos_engines.health_check_watcher import (
     HealthCheckWatcher,
@@ -15,6 +17,8 @@ from krkn_ai.models.config import (
     HealthCheckResult,
     ParameterValue,
 )
+from krkn_ai.utils.fs import read_config_from_file
+from krkn_ai.utils.mock import generate_mock_health_check_results
 
 
 class TestHealthCheckWatcherInitialization:
@@ -140,10 +144,10 @@ class TestHealthCheckWatcherResults:
         results = watcher.get_results()
 
         assert len(results) == 1
-        assert "http://localhost:8080/health" in results
-        assert len(results["http://localhost:8080/health"]) > 0
+        assert "test-app" in results
+        assert len(results["test-app"]) > 0
         # Verify all results are successful
-        for result in results["http://localhost:8080/health"]:
+        for result in results["test-app"]:
             assert isinstance(result, HealthCheckResult)
             assert result.success is True
             assert result.status_code == 200
@@ -166,7 +170,7 @@ class TestHealthCheckWatcherResults:
 
         with watcher._results_lock:
             watcher._thread_results[1] = (
-                "http://localhost:8080/health",
+                "test-app",
                 [first_result],
             )
 
@@ -175,7 +179,7 @@ class TestHealthCheckWatcherResults:
         with watcher._results_lock:
             watcher._thread_results[1][1].append(late_result)
 
-        assert results["http://localhost:8080/health"] == [first_result]
+        assert results["test-app"] == [first_result]
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_calculates_failure_score(self, mock_get):
@@ -497,6 +501,63 @@ class TestHealthCheckWatcherResults:
                 assert result.success is False
                 assert result.status_code == -1
                 assert result.error is not None
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    def test_private_url_param_does_not_leak_in_results_or_errors(
+        self, mock_get, tmp_path
+    ):
+        """Private URL params do not leak in result keys, errors, or mock results"""
+        config_data = {
+            "kubeconfig_file_path": "/tmp/kubeconfig",
+            "fitness_function": {"query": "up"},
+            "cluster_components": {"namespaces": [], "nodes": []},
+            "health_checks": {
+                "applications": [
+                    {
+                        "name": "api",
+                        "url": "http://127.0.0.1:1/health?token=$__TOKEN",
+                        "interval": 1,
+                    }
+                ]
+            },
+        }
+        config_file = str(tmp_path / "config.yaml")
+        with open(config_file, "w") as f:
+            yaml.dump(config_data, f)
+
+        loaded = read_config_from_file(config_file, param=["__TOKEN=SYNTH-SECRET-123"])
+        mock_get.side_effect = Exception(
+            "HTTPConnectionPool(host='127.0.0.1', port=1): "
+            "Max retries exceeded with url: /health?token=SYNTH-SECRET-123"
+        )
+
+        watcher = HealthCheckWatcher(loaded.health_checks, params=loaded.parameters)
+        watcher.run()
+        time.sleep(0.2)
+        watcher.stop()
+
+        results = watcher.get_results()
+        assert list(results.keys()) == ["api"]
+        dumped = json.dumps(
+            {
+                key: [item.model_dump(mode="json") for item in items]
+                for key, items in results.items()
+            }
+        )
+        assert "SYNTH-SECRET-123" not in dumped
+        assert "/health?***" in dumped
+
+        mock_results = generate_mock_health_check_results(
+            loaded.health_checks, sample_count=2
+        )
+        assert list(mock_results.keys()) == ["api"]
+        mock_dumped = json.dumps(
+            {
+                key: [item.model_dump(mode="json") for item in items]
+                for key, items in mock_results.items()
+            }
+        )
+        assert "SYNTH-SECRET-123" not in mock_dumped
 
 
 class TestHealthCheckWatcherHeaders:

@@ -584,7 +584,7 @@ def load_logs(output_dir: str):
                 scenario_type_from_log = dm.group(1).strip()
                 raw_dur = dm.group(2)
                 # Convert e.g. "3m12.701171021s" -> "3m 12s"
-                dur_m = re.match(r"(?:(\d+)m)?(?:(\d+)(?:\.\d+)?s)?", raw_dur)
+                dur_m = re.match(r"(?:(\d+)m(?!s))?(?:(\d+)(?:\.\d+)?s)?", raw_dur)
                 if dur_m:
                     mins = int(dur_m.group(1) or 0)
                     secs = int(dur_m.group(2) or 0)

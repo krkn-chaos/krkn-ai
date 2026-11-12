@@ -373,3 +373,26 @@ container-scenarios ran for 3m12s
         logs = load_logs("/tmp")
         assert len(logs) == 1
         assert logs[0]["scenario_id"] == 9
+
+
+@pytest.mark.parametrize(
+    ("raw_duration", "expected"),
+    [
+        ("500ms", "0s"),
+        ("1.5ms", "0s"),
+        ("1s500ms", "1s"),
+        ("1m2.5s", "1m 2s"),
+        ("0s", "0s"),
+    ],
+)
+def test_load_logs_does_not_interpret_milliseconds_as_minutes(
+    tmp_path, raw_duration, expected
+):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "scenario_1.log").write_text(
+        f"container-scenarios ran for {raw_duration}\n", encoding="utf-8"
+    )
+    logs = load_logs(str(tmp_path))
+    assert len(logs) == 1
+    assert logs[0]["duration"] == expected

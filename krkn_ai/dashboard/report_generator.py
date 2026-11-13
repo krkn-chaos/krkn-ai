@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 
 import pandas as pd
 import plotly.express as px
@@ -59,6 +59,13 @@ from krkn_ai.dashboard.tabs.fitness import (
     create_contribution_plot,
     create_weights_plot,
     runtime_weights,
+)
+import html
+from urllib.parse import urlsplit, urlunsplit
+import plotly.graph_objects as go
+from krkn_ai.dashboard.tabs.lineage import (
+    _ORIGIN_COLORS,
+    _ORIGIN_LABELS,
 )
 from krkn_ai.dashboard.data_loader import map_slo_columns
 
@@ -419,6 +426,343 @@ def _failed_bar(df_failed: pd.DataFrame) -> str:
     return _fig_html(fig, 320)
 
 
+_MAX_RAW_LOG_CHARS = 50_000
+
+
+def _render_logs_section(
+    df_logs: Optional[List[dict]], scen_id_to_name: Optional[dict] = None
+) -> str:
+    if not df_logs:
+        return "<p class='muted'>No scenario log files found.</p>"
+
+    items_html = []
+    for d in df_logs:
+        sid = d.get("scenario_id", "?")
+        name = ""
+        if scen_id_to_name:
+            name = scen_id_to_name.get(str(sid)) or scen_id_to_name.get(sid) or ""
+        label = f"Scenario {sid} – {name}" if name else f"Scenario {sid}"
+
+        job_ok = d.get("job_status") is True
+        badge = "Job passed" if job_ok else "Job failed"
+        badge_class = "good" if job_ok else "bad"
+        run_uuid = d.get("run_uuid", "—")
+        ts_raw = d.get("timestamp", "")
+        ts_disp = ts_raw.replace("T", " ").replace("Z", " UTC") if ts_raw else "—"
+
+        scen_type = d.get("scenario_type", "—")
+        cluster_ver = d.get("cluster_version", "—")
+        node_cnt = d.get("total_node_count", 0)
+        exit_st = d.get("exit_status", "—")
+        duration = d.get("duration", "—")
+
+        # HTML-escape all user/log-derived fields
+        esc_label = html.escape(str(label))
+        esc_badge = html.escape(str(badge))
+        esc_uuid = html.escape(str(run_uuid))
+        esc_ts = html.escape(str(ts_disp))
+        esc_duration = html.escape(str(duration))
+        esc_scen_type = html.escape(str(scen_type))
+        esc_cluster_ver = html.escape(str(cluster_ver))
+        esc_node_cnt = html.escape(str(node_cnt))
+        esc_exit_st = html.escape(str(exit_st))
+
+        cards_html = f"""
+        <div class="metric-row">
+            <div class="metric-card"><span class="metric-val">{esc_duration}</span><span class="metric-lbl">Duration ({esc_scen_type})</span></div>
+            <div class="metric-card"><span class="metric-val">{esc_cluster_ver}</span><span class="metric-lbl">Cluster Version</span></div>
+            <div class="metric-card"><span class="metric-val">{esc_node_cnt}</span><span class="metric-lbl">Total Nodes</span></div>
+            <div class="metric-card"><span class="metric-val">{esc_exit_st}</span><span class="metric-lbl">Exit Status</span></div>
+        </div>
+        """
+
+        raw_text = d.get("raw_text", "")
+        raw_log_block = ""
+        if raw_text:
+            if len(raw_text) > _MAX_RAW_LOG_CHARS:
+                raw_text = (
+                    raw_text[:_MAX_RAW_LOG_CHARS]
+                    + f"\n\n[... log truncated at {_MAX_RAW_LOG_CHARS:,} characters for HTML export ...]"
+                )
+            escaped_log = html.escape(raw_text)
+            raw_log_block = f"""
+            <details style="margin-top:0.8rem;">
+                <summary style="cursor:pointer;color:var(--m);font-size:0.85rem;">View Raw Log</summary>
+                <pre style="background:var(--bg);border:1px solid var(--b);border-radius:6px;padding:1rem;overflow-x:auto;font-size:0.75rem;margin-top:0.5rem;max-height:400px;overflow-y:auto;color:var(--t);"><code>{escaped_log}</code></pre>
+            </details>
+            """
+
+        items_html.append(f"""
+        <div class="subsec" style="border:1px solid var(--b);border-radius:8px;padding:1rem;margin-bottom:1rem;background:rgba(0,0,0,0.15);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem;">
+                <h4 style="font-size:1.05rem;color:var(--t);margin:0;">{esc_label}</h4>
+                <span class="{badge_class}" style="font-size:0.85rem;font-weight:600;">{esc_badge} | UUID: {esc_uuid} | {esc_ts}</span>
+            </div>
+            {cards_html}
+            {raw_log_block}
+        </div>
+        """)
+
+    return "\n".join(items_html)
+
+
+def _mask_url(url: str) -> str:
+    """Mask credentials and query string in a URL for report export."""
+    if not url or url == "—":
+        return url
+    try:
+        parts = urlsplit(str(url))
+        netloc = parts.netloc
+        if "@" in netloc:
+            netloc = netloc.split("@", 1)[1]
+        query = "***" if parts.query else ""
+        return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    except Exception:
+        return url
+
+
+def _render_config_section(
+    config_data: Optional[dict],
+    items: Optional[List] = None,
+    health_check_recos: Optional[Union[List[dict], dict]] = None,
+) -> str:
+    if not config_data:
+        return "<p class='muted'>Configuration file not found.</p>"
+
+    sections = []
+
+    # 1. Fitness section
+    ff = config_data.get("fitness_function") or {}
+    flags = [
+        key
+        for key in (
+            "include_krkn_failure",
+            "include_health_check_failure",
+            "include_health_check_response_time",
+        )
+        if ff.get(key, True)
+    ]
+    flags_str = ", ".join(flags) if flags else "none"
+    ff_html = f"<p class='meta'>Extra score components: {html.escape(flags_str)}.</p>"
+    if ff.get("query"):
+        q_esc = html.escape(str(ff.get("query")))
+        t_esc = html.escape(str(ff.get("type", "point")))
+        ff_html += (
+            f"<p>Single-query mode: <code>{q_esc}</code> (Type: {t_esc}). "
+            "Per-query items are ignored while <code>query</code> is set.</p>"
+        )
+
+    if items:
+        rows = []
+        for it in items:
+            name_val = html.escape(str(it.get("name") or "—"))
+            cat_val = html.escape(str(it.get("category") or "—"))
+            type_val = html.escape(str(it.get("type") or "—"))
+            is_enabled = bool(it.get("enabled"))
+            status_val = "in use" if is_enabled else "rejected"
+            if is_enabled:
+                w = it.get("weight")
+                weight_val = (
+                    f"{w:.4f}"
+                    if isinstance(w, (int, float))
+                    else html.escape(str(w or "—"))
+                )
+            else:
+                weight_val = "—"
+            reason_val = html.escape(str(it.get("reason") or "—"))
+            query_val = html.escape(str(it.get("query") or "—"))
+            rows.append(
+                f"<tr><td>{name_val}</td><td>{cat_val}</td><td>{type_val}</td>"
+                f"<td>{weight_val}</td><td>{status_val}</td><td>{reason_val}</td><td><code>{query_val}</code></td></tr>"
+            )
+        ff_html += f"""
+        <table class="report-table">
+            <thead><tr><th>Query</th><th>Category</th><th>Type</th><th>Weight</th><th>Status</th><th>Reason</th><th>PromQL</th></tr></thead>
+            <tbody>{"".join(rows)}</tbody>
+        </table>
+        """
+    elif not ff.get("query"):
+        ff_html += "<p class='muted'>No fitness function configured.</p>"
+
+    sections.append(f"<div class='subsec'><h3>Fitness Function</h3>{ff_html}</div>")
+
+    # 2. Health check section
+    hc = config_data.get("health_checks") or {}
+    apps = hc.get("applications") or []
+    if apps:
+        rows = "".join(
+            f"<tr><td>{html.escape(str(a.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(a.get('url', '—'))))}</code></td>"
+            f"<td>{html.escape(str(a.get('status_code', 200)))}</td><td>{html.escape(str(a.get('timeout', 4)))}s</td><td>{html.escape(str(a.get('interval', 2)))}s</td></tr>"
+            for a in apps
+        )
+        hc_html = f"""
+        <table class="report-table">
+            <thead><tr><th>Name</th><th>URL</th><th>Status Code</th><th>Timeout</th><th>Interval</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>
+        """
+    else:
+        hc_html = "<p class='muted'>No health checks configured.</p>"
+
+    if health_check_recos:
+        reco_items = health_check_recos
+        if isinstance(health_check_recos, dict):
+            if health_check_recos and isinstance(
+                next(iter(health_check_recos.values())), dict
+            ):
+                reco_items = pd.DataFrame(health_check_recos).to_dict(orient="records")
+            else:
+                reco_items = [health_check_recos]
+        elif isinstance(health_check_recos, pd.DataFrame):
+            reco_items = health_check_recos.to_dict(orient="records")
+
+        reco_rows = "".join(
+            f"<tr><td>{html.escape(str(r.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(r.get('url', '—'))))}</code></td>"
+            f"<td>{html.escape(str(r.get('reason', '—')))}</td></tr>"
+            for r in reco_items
+            if isinstance(r, dict)
+        )
+        if reco_rows:
+            hc_html += f"""
+            <p class='meta' style='margin-top:1rem;'>Discover found these services but left them commented out:</p>
+            <table class="report-table">
+                <thead><tr><th>Service</th><th>URL</th><th>Reason</th></tr></thead>
+                <tbody>{reco_rows}</tbody>
+            </table>
+            """
+
+    sections.append(
+        f"<hr class='d'/><div class='subsec'><h3>Health Checks ({len(apps)})</h3>{hc_html}</div>"
+    )
+
+    # 3. Scenario config
+    sc = config_data.get("scenario") or {}
+    sc_rows = "".join(
+        f"<tr><td>{html.escape(str(k))}</td><td>{'Enabled' if (isinstance(v, dict) and v.get('enable')) else 'Disabled'}</td></tr>"
+        for k, v in sc.items()
+        if isinstance(v, dict)
+    )
+    if sc_rows:
+        sc_html = f"""
+        <table class="report-table">
+            <thead><tr><th>Scenario</th><th>Status</th></tr></thead>
+            <tbody>{sc_rows}</tbody>
+        </table>
+        """
+        sections.append(
+            f"<hr class='d'/><div class='subsec'><h3>Scenario Types</h3>{sc_html}</div>"
+        )
+
+    # 4. Cluster section
+    cc = config_data.get("cluster_components") or {}
+    namespaces = cc.get("namespaces") or []
+    nodes = cc.get("nodes") or []
+    c_cards = f"""
+    <div class="metric-row">
+        <div class="metric-card"><span class="metric-val">{len(namespaces)}</span><span class="metric-lbl">Namespaces</span></div>
+        <div class="metric-card"><span class="metric-val">{len(nodes)}</span><span class="metric-lbl">Nodes</span></div>
+    </div>
+    """
+    sections.append(
+        f"<hr class='d'/><div class='subsec'><h3>Cluster Components</h3>{c_cards}</div>"
+    )
+
+    return "\n".join(sections)
+
+
+def _render_lineage_section(df_lineage: Optional[pd.DataFrame]) -> str:
+    if df_lineage is None or df_lineage.empty:
+        return "<p class='muted'>No lineage data available for this run.</p>"
+
+    has_origin = "origin" in df_lineage.columns and df_lineage["origin"].notna().any()
+    if not has_origin:
+        return "<p class='muted'>Lineage origin data not recorded for this run.</p>"
+
+    # 1. Pie chart
+    counts = df_lineage["origin"].value_counts()
+    labels = [_ORIGIN_LABELS.get(o, o) for o in counts.index]
+    colors = [_ORIGIN_COLORS.get(o, "#94a3b8") for o in counts.index]
+
+    pie_fig = go.Figure(
+        go.Pie(
+            labels=labels,
+            values=counts.values,
+            hole=0.45,
+            marker=dict(colors=colors),
+            textinfo="label+percent",
+            hovertemplate="%{label}: %{value} scenarios (%{percent})<extra></extra>",
+        )
+    )
+    pie_fig.update_layout(
+        title="Origin Distribution",
+        showlegend=False,
+        height=350,
+        margin=dict(t=40, b=20, l=20, r=20),
+        template="plotly_dark",
+    )
+    pie_html = _fig_html(pie_fig, 350)
+
+    # 2. Generation breakdown bar
+    bar_html = ""
+    if "generation" in df_lineage.columns:
+        grouped = (
+            df_lineage.groupby(["generation", "origin"])
+            .size()
+            .reset_index(name="count")
+        )
+        grouped["generation_display"] = grouped["generation"] + 1
+        grouped["origin_label"] = grouped["origin"].map(
+            lambda o: _ORIGIN_LABELS.get(o, o)
+        )
+        color_map = {_ORIGIN_LABELS.get(k, k): v for k, v in _ORIGIN_COLORS.items()}
+
+        bar_fig = px.bar(
+            grouped,
+            x="generation_display",
+            y="count",
+            color="origin_label",
+            color_discrete_map=color_map,
+            title="GA Strategy per Generation",
+            labels={
+                "generation_display": "Generation",
+                "count": "Scenarios",
+                "origin_label": "Origin",
+            },
+        )
+        bar_fig.update_layout(
+            barmode="stack",
+            xaxis=dict(tickmode="linear", tick0=1, dtick=1),
+            height=350,
+            margin=dict(t=40, b=20, l=20, r=20),
+            legend_title_text="Origin",
+            template="plotly_dark",
+        )
+        bar_html = _fig_html(bar_fig, 350)
+
+    charts_html = f"""
+    <div class="two-col">
+        <div>{pie_html}</div>
+        <div>{bar_html}</div>
+    </div>
+    """
+
+    # Table summary
+    cols = [
+        c
+        for c in ["generation", "scenario_id", "origin", "fitness_score", "parent_ids"]
+        if c in df_lineage.columns
+    ]
+    tbl_df = df_lineage[cols].copy()
+    if "generation" in tbl_df.columns:
+        tbl_df["generation"] = tbl_df["generation"] + 1
+    if "origin" in tbl_df.columns:
+        tbl_df["origin"] = tbl_df["origin"].map(lambda o: _ORIGIN_LABELS.get(o, o))
+
+    table_html = f"<div class='subsec'><h3>Scenario Lineage Details</h3>{_df_table(tbl_df)}</div>"
+
+    return f"{charts_html}<hr class='d'/>{table_html}"
+
+
 # HTML Template
 _PLOTLY_CDN = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
 
@@ -459,6 +803,11 @@ def generate_html_report(
     anomaly_mode: str = "z_score",
     fitness_items: Optional[List] = None,
     learned_weights: Optional[dict] = None,
+    df_logs: Optional[List[dict]] = None,
+    config_data: Optional[dict] = None,
+    df_lineage: Optional[pd.DataFrame] = None,
+    scen_id_to_name: Optional[dict] = None,
+    health_check_recos: Optional[dict] = None,
 ) -> str:
     """
     Generate a complete self-contained HTML report covering all six dashboard tabs.
@@ -493,6 +842,29 @@ def generate_html_report(
             df_det = df_det[df_det["scenario_id"].isin(str_ids)]
         if global_services:
             df_det = df_det[df_det["service"].isin(global_services)]
+
+    # Filter df_logs and df_lineage
+    if filtered_scenario_ids:
+        filter_ids = {str(x) for x in filtered_scenario_ids}
+        filter_ids.update(
+            {str(x).lstrip("0") for x in filtered_scenario_ids if str(x) != "0"}
+        )
+        if df_logs:
+            df_logs = [
+                d
+                for d in df_logs
+                if str(d.get("scenario_id")) in filter_ids
+                or str(d.get("scenario_id")).lstrip("0") in filter_ids
+            ]
+        if (
+            df_lineage is not None
+            and not df_lineage.empty
+            and "scenario_id" in df_lineage.columns
+        ):
+            df_lineage = df_lineage[
+                df_lineage["scenario_id"].astype(str).isin(filter_ids)
+                | df_lineage["scenario_id"].astype(str).str.lstrip("0").isin(filter_ids)
+            ]
 
     # Summary metrics
     non_bl = (
@@ -537,8 +909,13 @@ def generate_html_report(
         ("Health Checks", "tab-health"),
         ("Detailed Scenarios", "tab-detailed"),
         ("Anomaly Detection", "tab-anomalies"),
+        ("Logs", "tab-logs"),
+        ("Configuration", "tab-config"),
         ("Failed Scenarios", "tab-failed"),
     ]
+    has_lineage = df_lineage is not None and not df_lineage.empty
+    if has_lineage:
+        tab_defs.append(("Lineage", "tab-lineage"))
 
     # Header
     header = (
@@ -695,6 +1072,22 @@ def generate_html_report(
         "tab-anomalies",
     )
 
+    # Logs
+    tab_logs = _sec(
+        "Scenario Logs",
+        _render_logs_section(df_logs, scen_id_to_name=scen_id_to_name),
+        "tab-logs",
+    )
+
+    # Configuration
+    tab_config = _sec(
+        "Configuration",
+        _render_config_section(
+            config_data, items=fitness_items, health_check_recos=health_check_recos
+        ),
+        "tab-config",
+    )
+
     # Failed Scenarios
     tab5 = _sec(
         "Failed Scenarios",
@@ -709,5 +1102,26 @@ def generate_html_report(
         "tab-failed",
     )
 
-    body = "\n".join([header, tab1, tab_fit, tab2, tab3, tab4, tab5])
+    sections_list = [
+        header,
+        tab1,
+        tab_fit,
+        tab2,
+        tab3,
+        tab4,
+        tab_logs,
+        tab_config,
+        tab5,
+    ]
+
+    # Lineage (optional tab)
+    if has_lineage:
+        tab_lineage = _sec(
+            "Evolutionary Lineage",
+            _render_lineage_section(df_lineage),
+            "tab-lineage",
+        )
+        sections_list.append(tab_lineage)
+
+    body = "\n".join(sections_list)
     return _full_page(body, ts)

@@ -448,6 +448,33 @@ def main():
                     report_df_health = report_df_health[
                         report_df_health["component_name"].isin(global_services)
                     ]
+                report_df_logs = df_logs
+                if df_logs and filters_active and filtered_scenario_ids:
+                    str_filter_ids = set(str(x) for x in filtered_scenario_ids)
+                    report_df_logs = [
+                        d
+                        for d in df_logs
+                        if _norm_id(d.get("scenario_id")) in filtered_scenario_ids
+                        or str(d.get("scenario_id")) in str_filter_ids
+                    ]
+
+                report_df_lineage = (
+                    df_lineage.copy() if df_lineage is not None else None
+                )
+                if (
+                    report_df_lineage is not None
+                    and not report_df_lineage.empty
+                    and filters_active
+                    and filtered_scenario_ids
+                    and "scenario_id" in report_df_lineage.columns
+                ):
+                    report_df_lineage["_norm_id"] = report_df_lineage[
+                        "scenario_id"
+                    ].apply(_norm_id)
+                    report_df_lineage = report_df_lineage[
+                        report_df_lineage["_norm_id"].isin(filtered_scenario_ids)
+                    ].drop(columns=["_norm_id"])
+
                 raw_mode = st.session_state.get("anom_mode", "Z-Score")
                 amode = "z_score" if "Z-Score" in raw_mode else "pct_deviation"
 
@@ -462,6 +489,11 @@ def main():
                     anomaly_mode=amode,
                     fitness_items=fitness_items,
                     learned_weights=learned_weights,
+                    df_logs=report_df_logs,
+                    config_data=config_data,
+                    df_lineage=report_df_lineage,
+                    scen_id_to_name=scen_id_to_name,
+                    health_check_recos=health_check_recos,
                 ).encode("utf-8")
 
         from datetime import datetime as _dt

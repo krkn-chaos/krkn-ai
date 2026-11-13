@@ -223,6 +223,21 @@ class TestHealthCheckConfig:
         )
         assert app_no_headers.headers is None
 
+    @pytest.mark.parametrize("field", ["timeout", "interval"])
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_health_check_timing_rejects_non_positive(self, field, bad):
+        """timeout <= 0 fails every request; interval <= 0 polls in a tight loop"""
+        with pytest.raises(ValidationError, match=field):
+            HealthCheckApplicationConfig(
+                name="api", url="http://localhost:8080/health", **{field: bad}
+            )
+
+    def test_health_check_timing_accepts_positive(self):
+        app = HealthCheckApplicationConfig(
+            name="api", url="http://localhost:8080/health", timeout=1, interval=1
+        )
+        assert (app.timeout, app.interval) == (1, 1)
+
 
 class TestElasticConfig:
     """Test ElasticConfig credential validation"""

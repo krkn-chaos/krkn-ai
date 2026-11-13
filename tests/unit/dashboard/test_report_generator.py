@@ -383,3 +383,43 @@ def test_generate_html_report_filtering_and_log_truncation():
     # Scenario 2 should be excluded from logs and lineage
     assert "Scenario 2" not in html
     assert "Should be filtered out" not in html
+
+
+def test_generate_html_report_masks_secrets_and_omits_raw_dump():
+    config_data = {
+        "parameters": {
+            "__TOKEN": "***",
+            "__SECRET_KEY": "super-secret-pass",
+        },
+        "health_checks": {
+            "applications": [
+                {
+                    "name": "cart-service",
+                    "url": "http://cart/health?token=MY-SECRET-123&env=prod",
+                    "status_code": 200,
+                },
+                {
+                    "name": "auth-service",
+                    "url": "http://admin:my-password@auth.local/health?SECRET_KEY=super-secret-pass",
+                    "status_code": 200,
+                },
+            ]
+        },
+    }
+
+    html = generate_html_report(
+        df_results=pd.DataFrame(),
+        config_data=config_data,
+    )
+
+    # Raw config dump is omitted
+    assert "View Raw Configuration JSON" not in html
+
+    # Secrets in URLs are masked
+    assert "MY-SECRET-123" not in html
+    assert "my-password" not in html
+    assert "super-secret-pass" not in html
+
+    # Masked versions are present
+    assert "http://cart/health?token=***" in html
+    assert "http://admin:***@auth.local/health?SECRET_KEY=***" in html

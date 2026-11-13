@@ -458,7 +458,9 @@ def main():
                         or str(d.get("scenario_id")) in str_filter_ids
                     ]
 
-                report_df_lineage = df_lineage.copy() if df_lineage is not None else None
+                report_df_lineage = (
+                    df_lineage.copy() if df_lineage is not None else None
+                )
                 if (
                     report_df_lineage is not None
                     and not report_df_lineage.empty

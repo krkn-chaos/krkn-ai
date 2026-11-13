@@ -286,7 +286,10 @@ def test_generate_html_report_escaping_security():
 
     # Ensure no raw unescaped script tags exist in the report output
     assert "<script>alert('xss')</script>" not in html
-    assert "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;" in html or "&lt;script&gt;alert('xss')&lt;/script&gt;" in html
+    assert (
+        "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;" in html
+        or "&lt;script&gt;alert('xss')&lt;/script&gt;" in html
+    )
 
 
 def test_generate_html_report_config_parity_and_defaults():
@@ -421,5 +424,5 @@ def test_generate_html_report_masks_secrets_and_omits_raw_dump():
     assert "super-secret-pass" not in html
 
     # Masked versions are present
-    assert "http://cart/health?token=***" in html
-    assert "http://admin:***@auth.local/health?SECRET_KEY=***" in html
+    assert "http://cart/health?***" in html
+    assert "http://auth.local/health?***" in html

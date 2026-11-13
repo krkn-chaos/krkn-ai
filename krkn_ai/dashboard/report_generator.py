@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 
 import pandas as pd
 import plotly.express as px
@@ -61,8 +61,7 @@ from krkn_ai.dashboard.tabs.fitness import (
     runtime_weights,
 )
 import html
-import json
-import re
+from urllib.parse import urlsplit, urlunsplit
 import plotly.graph_objects as go
 from krkn_ai.dashboard.tabs.lineage import (
     _ORIGIN_COLORS,
@@ -507,52 +506,19 @@ def _render_logs_section(
     return "\n".join(items_html)
 
 
-def _mask_url(url: str, params: Optional[dict] = None) -> str:
-    """
-    Mask sensitive query parameters, private __ parameters, and credentials in URLs
-    for safe display in exported reports.
-    """
+def _mask_url(url: str) -> str:
+    """Mask credentials and query string in a URL for report export."""
     if not url or url == "—":
         return url
-
-    # Mask basic auth credentials: http://user:pass@host -> http://user:***@host
-    masked = re.sub(r"(://[^:/@\s]+):[^/@\s]+@", r"\1:***@", str(url))
-
-    sensitive_names = {
-        "token",
-        "secret",
-        "password",
-        "key",
-        "apikey",
-        "api_key",
-        "auth",
-        "access_token",
-    }
-    if params and isinstance(params, dict):
-        for k, v in params.items():
-            k_str = str(k)
-            sensitive_names.add(k_str)
-            if k_str.startswith("__"):
-                stripped = k_str.lstrip("_")
-                if stripped:
-                    sensitive_names.add(stripped)
-            # If plaintext secret value is known and not masked, redact it directly
-            val = v.get("value") if isinstance(v, dict) else v
-            if (
-                isinstance(val, str)
-                and len(val) >= 3
-                and val != "***"
-                and (k_str.startswith("__") or (isinstance(v, dict) and v.get("is_private")))
-            ):
-                masked = masked.replace(val, "***")
-
-    pattern = re.compile(
-        r"([?&](?:"
-        + "|".join(re.escape(name) for name in sensitive_names if name)
-        + r")=)([^&#\s]+)",
-        re.IGNORECASE,
-    )
-    return pattern.sub(r"\1***", masked)
+    try:
+        parts = urlsplit(str(url))
+        netloc = parts.netloc
+        if "@" in netloc:
+            netloc = netloc.split("@", 1)[1]
+        query = "***" if parts.query else ""
+        return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    except Exception:
+        return url
 
 
 def _render_config_section(
@@ -564,7 +530,6 @@ def _render_config_section(
         return "<p class='muted'>Configuration file not found.</p>"
 
     sections = []
-    params = config_data.get("parameters") or {}
 
     # 1. Fitness section
     ff = config_data.get("fitness_function") or {}
@@ -626,7 +591,7 @@ def _render_config_section(
     apps = hc.get("applications") or []
     if apps:
         rows = "".join(
-            f"<tr><td>{html.escape(str(a.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(a.get('url', '—'), params)))}</code></td>"
+            f"<tr><td>{html.escape(str(a.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(a.get('url', '—'))))}</code></td>"
             f"<td>{html.escape(str(a.get('status_code', 200)))}</td><td>{html.escape(str(a.get('timeout', 4)))}s</td><td>{html.escape(str(a.get('interval', 2)))}s</td></tr>"
             for a in apps
         )
@@ -652,7 +617,7 @@ def _render_config_section(
             reco_items = health_check_recos.to_dict(orient="records")
 
         reco_rows = "".join(
-            f"<tr><td>{html.escape(str(r.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(r.get('url', '—'), params)))}</code></td>"
+            f"<tr><td>{html.escape(str(r.get('name', '—')))}</td><td><code>{html.escape(str(_mask_url(r.get('url', '—'))))}</code></td>"
             f"<td>{html.escape(str(r.get('reason', '—')))}</td></tr>"
             for r in reco_items
             if isinstance(r, dict)
@@ -740,9 +705,15 @@ def _render_lineage_section(df_lineage: Optional[pd.DataFrame]) -> str:
     # 2. Generation breakdown bar
     bar_html = ""
     if "generation" in df_lineage.columns:
-        grouped = df_lineage.groupby(["generation", "origin"]).size().reset_index(name="count")
+        grouped = (
+            df_lineage.groupby(["generation", "origin"])
+            .size()
+            .reset_index(name="count")
+        )
         grouped["generation_display"] = grouped["generation"] + 1
-        grouped["origin_label"] = grouped["origin"].map(lambda o: _ORIGIN_LABELS.get(o, o))
+        grouped["origin_label"] = grouped["origin"].map(
+            lambda o: _ORIGIN_LABELS.get(o, o)
+        )
         color_map = {_ORIGIN_LABELS.get(k, k): v for k, v in _ORIGIN_COLORS.items()}
 
         bar_fig = px.bar(
@@ -776,7 +747,11 @@ def _render_lineage_section(df_lineage: Optional[pd.DataFrame]) -> str:
     """
 
     # Table summary
-    cols = [c for c in ["generation", "scenario_id", "origin", "fitness_score", "parent_ids"] if c in df_lineage.columns]
+    cols = [
+        c
+        for c in ["generation", "scenario_id", "origin", "fitness_score", "parent_ids"]
+        if c in df_lineage.columns
+    ]
     tbl_df = df_lineage[cols].copy()
     if "generation" in tbl_df.columns:
         tbl_df["generation"] = tbl_df["generation"] + 1
@@ -1107,7 +1082,9 @@ def generate_html_report(
     # Configuration
     tab_config = _sec(
         "Configuration",
-        _render_config_section(config_data, items=fitness_items, health_check_recos=health_check_recos),
+        _render_config_section(
+            config_data, items=fitness_items, health_check_recos=health_check_recos
+        ),
         "tab-config",
     )
 
@@ -1125,7 +1102,17 @@ def generate_html_report(
         "tab-failed",
     )
 
-    sections_list = [header, tab1, tab_fit, tab2, tab3, tab4, tab_logs, tab_config, tab5]
+    sections_list = [
+        header,
+        tab1,
+        tab_fit,
+        tab2,
+        tab3,
+        tab4,
+        tab_logs,
+        tab_config,
+        tab5,
+    ]
 
     # Lineage (optional tab)
     if has_lineage:

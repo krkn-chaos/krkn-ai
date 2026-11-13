@@ -166,6 +166,77 @@ def test_invalid_scenario_outcome_is_rejected_during_snapshot_validation():
     assert error.value.status_code == 502
 
 
+def test_private_image_requirements_endpoint_returns_canonical_catalog(tmp_path: Path):
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    response = client.get("/v1/images/requirements", headers=TOKEN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["scenarioTags"]
+    assert response.json()["workloadImageTags"] == {
+        "hog": "workload-krkn-hog",
+        "tools": "workload-krkn-tools",
+        "synFlood": "workload-krkn-syn-flood",
+        "networkChaos": "workload-krkn-network-chaos",
+    }
+    assert client.get("/v1/images/requirements").status_code == 401
+
+
+def test_discovery_threads_private_inventory_without_putting_it_in_config(
+    tmp_path: Path,
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    inventory = {
+        "registryName": "managed",
+        "repository": "registry.example.test/krkn/scenarios",
+        "availableTags": ["pod-scenarios"],
+        "workloadImageTags": {"hog": "workload-krkn-hog"},
+        "orchestratorImage": "registry.example.test/krkn/ai@sha256:" + "a" * 64,
+        "resultUploaderImage": "registry.example.test/krkn/uploader@sha256:" + "b" * 64,
+    }
+    with patch(
+        "krkn_ai.server.discover_config",
+        return_value="scenario:\n  pod_scenarios:\n    enable: true\n",
+    ) as discover:
+        response = client.post(
+            "/v1/discoveries",
+            headers=TOKEN_HEADERS,
+            json={
+                "kubeconfig": base64.b64encode(b"apiVersion: v1\n").decode(),
+                "registryName": "managed",
+                "imageInventory": inventory,
+            },
+        )
+
+    assert response.status_code == 200
+    assert "managed" not in response.json()["configYaml"]
+    context = discover.call_args.kwargs["registry_context"]
+    assert context.registry_name == "managed"
+
+
+def test_discovery_rejects_inventory_registry_name_mismatch(tmp_path: Path):
+    client = TestClient(create_app(tmp_path, "service-token"))
+    response = client.post(
+        "/v1/discoveries",
+        headers=TOKEN_HEADERS,
+        json={
+            "kubeconfig": base64.b64encode(b"apiVersion: v1\n").decode(),
+            "registryName": "selected",
+            "imageInventory": {
+                "registryName": "other",
+                "repository": "registry.example.test/krkn/scenarios",
+                "availableTags": [],
+                "workloadImageTags": {},
+                "orchestratorImage": "registry.example.test/krkn/ai@sha256:" + "a" * 64,
+                "resultUploaderImage": "registry.example.test/krkn/uploader@sha256:"
+                + "b" * 64,
+            },
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_discovery_renders_runner_kubeconfig(tmp_path: Path):
     client = TestClient(create_app(tmp_path, "service-token"))
     with patch(
@@ -933,6 +1004,35 @@ def test_config_validation_resolves_parameters_like_runtime(
         json={"configYaml": source},
     )
     assert response.status_code == 200
+    assert response.json() == {"valid": True}
+
+
+def test_config_validation_ignores_missing_private_helper_images(
+    tmp_path: Path, minimal_config
+):
+    config = minimal_config.model_dump(mode="json")
+    config["scenario"]["node_cpu_hog"] = {"enable": True}
+    inventory = {
+        "registryName": "managed",
+        "repository": "registry.example.test/krkn/scenarios",
+        "availableTags": ["dummy-scenario", "pod-scenarios", "node-cpu-hog"],
+        "workloadImageTags": {},
+        "orchestratorImage": "registry.example.test/krkn/ai@sha256:" + "a" * 64,
+        "resultUploaderImage": "registry.example.test/krkn/uploader@sha256:" + "b" * 64,
+    }
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    response = client.post(
+        "/v1/configs/validate",
+        headers=TOKEN_HEADERS,
+        json={
+            "configYaml": yaml.safe_dump(config),
+            "registryName": "managed",
+            "imageInventory": inventory,
+        },
+    )
+
+    assert response.status_code == 200, response.text
     assert response.json() == {"valid": True}
 
 

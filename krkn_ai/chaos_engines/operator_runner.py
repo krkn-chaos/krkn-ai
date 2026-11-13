@@ -9,6 +9,7 @@ from kubernetes.config.config_exception import ConfigException
 
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.scenario.base import CompositeScenario, Scenario
+from krkn_ai.registry import RegistryContext
 from kubernetes.client.rest import ApiException
 
 from krkn_ai.chaos_engines.cancellation import (
@@ -114,7 +115,24 @@ class OperatorEnv:
 
 
 class OperatorExecutor:
-    def __init__(self, config: ConfigFile):
+    def __init__(
+        self, config: ConfigFile, registry_context: RegistryContext | None = None
+    ):
+        managed_registry_name = os.environ.get("KRKNAI_OPERATOR_REGISTRY_NAME") or None
+        has_unvalidated_context = bool(os.environ.get("KRKNAI_IMAGE_INVENTORY"))
+        if registry_context is None and (
+            managed_registry_name or has_unvalidated_context
+        ):
+            raise ValueError(
+                "managed registry environment requires a validated operator registry context"
+            )
+        if registry_context is not None and managed_registry_name not in (
+            None,
+            registry_context.registry_name,
+        ):
+            raise ValueError(
+                "operator registry context does not match KRKNAI_OPERATOR_REGISTRY_NAME"
+            )
         try:
             kube_config.load_incluster_config()
         except ConfigException:
@@ -124,6 +142,7 @@ class OperatorExecutor:
         self.core = client.CoreV1Api()
         self.env = OperatorEnv.from_environ()
         self.config = config
+        self.registry_context = registry_context
         self.active_child: Optional[dict[str, str]] = None
         self.child_identities: list[dict[str, str]] = []
         self._timed_out = False
@@ -255,13 +274,20 @@ class OperatorExecutor:
             )
 
         scenario_name = scenario.krknctl_name or scenario.name
+        registry_context = getattr(self, "registry_context", None)
+        if registry_context is not None:
+            scenario_ref = {
+                "name": scenario_name,
+                "private": True,
+                "registryName": registry_context.registry_name,
+            }
+        else:
+            scenario_ref = {"private": False}
+
         spec = {
             "targetRequestId": self.env.target_request_id,
             "targetClusters": {self.env.provider: [self.env.cluster]},
-            "scenario": {
-                "name": scenario_name,
-                "private": False,
-            },
+            "scenario": scenario_ref,
             "maxRetries": 0,
             "environment": {key: str(value) for key, value in env.items()},
         }

@@ -36,6 +36,7 @@ from krkn_ai.models.scenario.scenario_dns_outage import DnsOutageScenario
 from krkn_ai.models.scenario.scenario_io_hog import NodeIOHogScenario
 from krkn_ai.models.scenario.scenario_memory_hog import NodeMemoryHogScenario
 from krkn_ai.models.scenario.scenario_syn_flood import SynFloodScenario
+from krkn_ai.registry import RegistryContext
 
 
 def test_term_signal_requests_cooperative_cancellation():
@@ -156,10 +157,7 @@ class TestOperatorExecutorScenarioRun:
 
         body = executor._to_scenariorun(scenario, generation_id=3, scenario_id=7)
 
-        assert body["spec"]["scenario"] == {
-            "name": "dummy-scenario",
-            "private": False,
-        }
+        assert body["spec"]["scenario"] == {"private": False}
         assert body["spec"]["maxRetries"] == 0
         assert "scenarioName" not in body["spec"]
         assert "scenarioImage" not in body["spec"]
@@ -175,6 +173,106 @@ class TestOperatorExecutorScenarioRun:
         assert environment["KRKNAI_PARENT_RUN_NAME"] == "ai-run"
         assert environment["KRKNAI_PARENT_RUN_UID"] == "run-uid"
         assert environment["KRKNAI_CLEANUP_ATTRIBUTION"] == "krkn-ai:ai-run/run-uid/3/7"
+
+    def test_private_child_scenario_keeps_public_helper_image(self):
+        class ImageParameter:
+            value = "public-helper:default"
+
+            def get_name(self, return_krknhub_name=False):
+                return "IMAGE" if return_krknhub_name else "image"
+
+            def get_value(self, return_krknhub_name=False):
+                return self.value
+
+        image_parameter = ImageParameter()
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name=None,
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        executor.registry_context = RegistryContext.create(
+            "managed",
+            {
+                "registryName": "managed",
+                "repository": "registry.example.test/krkn/scenarios",
+                "availableTags": ["node-cpu-hog"],
+                "workloadImageTags": {},
+                "orchestratorImage": "registry.example.test/krkn/ai@sha256:" + "a" * 64,
+                "resultUploaderImage": "registry.example.test/krkn/uploader@sha256:"
+                + "b" * 64,
+            },
+        )
+        scenario = SimpleNamespace(
+            name="node-cpu-hog",
+            krknctl_name="node-cpu-hog",
+            parameters=[image_parameter],
+            scenario_wait_duration=lambda _: 120,
+        )
+
+        body = executor._to_scenariorun(scenario, generation_id=1, scenario_id=2)
+        environment = body["spec"]["environment"]
+
+        assert body["spec"]["scenario"] == {
+            "name": "node-cpu-hog",
+            "private": True,
+            "registryName": "managed",
+        }
+        assert environment["IMAGE"] == "public-helper:default"
+        assert "KRKN_WORKLOAD_IMAGES" not in environment
+        assert "KRKN_IMAGE_PULL_SECRETS" not in environment
+        assert image_parameter.value == "public-helper:default"
+
+    def test_private_no_helper_scenario_omits_helper_context(self):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            orchestrator_pod_name=None,
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        executor.registry_context = RegistryContext.create(
+            "managed",
+            {
+                "registryName": "managed",
+                "repository": "registry.example.test/krkn/scenarios",
+                "availableTags": ["dummy-scenario"],
+                "workloadImageTags": {
+                    "hog": "private-hog",
+                    "tools": "private-tools",
+                    "synFlood": "private-syn",
+                    "networkChaos": "private-network",
+                },
+                "orchestratorImage": "registry.example.test/krkn/ai@sha256:" + "a" * 64,
+                "resultUploaderImage": "registry.example.test/krkn/uploader@sha256:"
+                + "b" * 64,
+            },
+        )
+        scenario = SimpleNamespace(
+            name="dummy-scenario",
+            krknctl_name="dummy-scenario",
+            parameters=[],
+            scenario_wait_duration=lambda _: 120,
+        )
+
+        body = executor._to_scenariorun(
+            scenario, generation_id=1, scenario_id="baseline"
+        )
+
+        assert body["spec"]["scenario"] == {
+            "name": "dummy-scenario",
+            "private": True,
+            "registryName": "managed",
+        }
+        assert "KRKN_WORKLOAD_IMAGES" not in body["spec"]["environment"]
+        assert "KRKN_IMAGE_PULL_SECRETS" not in body["spec"]["environment"]
 
     def test_dns_outage_uses_the_selected_pod_namespace(self):
         executor = OperatorExecutor.__new__(OperatorExecutor)

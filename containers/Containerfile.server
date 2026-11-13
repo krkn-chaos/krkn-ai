@@ -20,6 +20,10 @@ LABEL org.opencontainers.image.title="Krkn-AI artifact service" \
       org.opencontainers.image.description="Private artifact service for Krkn-AI runs" \
       org.opencontainers.image.source="https://github.com/krkn-chaos/krkn-ai" \
       org.opencontainers.image.licenses="Apache-2.0" \
+      krknctl.title="Krkn-AI artifact service" \
+      krknctl.description="Private artifact service for Krkn-AI runs" \
+      krknctl.input_fields="[]" \
+      krknctl.is_a_scenario="false" \
       io.krkn.operator-contract.major="1"
 
 WORKDIR /app

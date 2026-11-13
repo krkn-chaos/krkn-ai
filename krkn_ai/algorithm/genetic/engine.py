@@ -20,6 +20,7 @@ from krkn_ai.models.scenario.base import (
     ScenarioOrigin,
 )
 from krkn_ai.models.scenario.factory import ScenarioFactory
+from krkn_ai.registry import RegistryContext
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.reporter.json_summary_reporter import JSONSummaryReporter
 from krkn_ai.utils.logger import get_logger
@@ -51,6 +52,7 @@ class GeneticAlgorithm(BaseEngine):
         format: str,
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
+        registry_context: RegistryContext | None = None,
     ):
         if config.genetic.population_size % 2 != 0:
             logger.debug(
@@ -58,7 +60,9 @@ class GeneticAlgorithm(BaseEngine):
             )
             config.genetic.population_size += 1
 
-        super().__init__(config, output_dir, format, runner_type, run_uuid)
+        super().__init__(
+            config, output_dir, format, runner_type, run_uuid, registry_context
+        )
 
         # Shorthand for GA-specific params; shared fields stay on self.config
         self.algo_config: GeneticAlgorithmConfig = config.genetic

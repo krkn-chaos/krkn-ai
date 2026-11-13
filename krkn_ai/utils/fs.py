@@ -217,6 +217,7 @@ def _build_merged_config(
     output: str,
     discovered: ClusterComponents,
     fitness_queries: list = None,
+    scenario_enables: dict | None = None,
 ) -> Union[str, None]:
     """Merge discovered components into the existing config, keeping the user's
     edits."""
@@ -242,6 +243,13 @@ def _build_merged_config(
         mode="json", warnings="none", exclude_defaults=True
     )
     _merge_fitness_items(raw, fitness_queries)
+    if scenario_enables is not None and isinstance(raw.get("scenario"), dict):
+        for name, eligible in scenario_enables.items():
+            if not eligible:
+                for key in (name, name.replace("_", "-")):
+                    block = raw["scenario"].get(key)
+                    if isinstance(block, dict):
+                        block["enable"] = False
     return yaml.safe_dump(
         raw, default_flow_style=False, sort_keys=False, allow_unicode=True
     )
@@ -294,7 +302,9 @@ def save_discovery(
         return
 
     if exists and strategy == "merge":
-        text = _build_merged_config(output, components, fitness_queries)
+        text = _build_merged_config(
+            output, components, fitness_queries, scenario_enables
+        )
         if text is None:
             return
         with open(output, "w", encoding="utf-8") as f:

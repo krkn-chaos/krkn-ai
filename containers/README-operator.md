@@ -28,6 +28,8 @@ to the full `Containerfile` image.
 Both operator images carry an integration-contract label independent of their
 release tags. See [compatibility maintenance](../docs/developer_guide.md#maintaining-operator-integration-compatibility)
 before changing the runner, service APIs, or release process.
+Both images also carry Krkn scenario metadata with `krknctl.is_a_scenario=false`,
+so they can share a registry repository without appearing in scenario lists.
 
 ### Manual operator execution
 
@@ -108,6 +110,11 @@ The controller mounts `krkn-ai.yaml` and the target kubeconfig, sets
 `RUNNER_TYPE=operator`, and supplies the `KRKNAI_*` variables automatically.
 Operator-created runs use `FORMAT=json` for machine-readable result artifacts;
 the input configuration remains YAML. Standalone CLI output format is unchanged.
+For private runs, `KrknAIRun.spec.registryName` selects the saved registry.
+Its `aiOrchestratorTag` and `aiResultUploaderTag` resolve to digest-pinned images
+for the Pod's `orchestrator` and `result-uploader` containers, using the saved
+registry pull Secret. The shared artifact-service Deployment remains configured
+at installation time.
 Use the `KrknAIRun` and target Secret procedure in
 [`../hack/README.md`](../hack/README.md) for a complete cluster test.
 

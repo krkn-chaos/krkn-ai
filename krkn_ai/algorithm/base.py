@@ -13,6 +13,7 @@ from krkn_ai.constants import STATUS_CANCELLED
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.scenario.base import BaseScenario
+from krkn_ai.registry import RegistryContext
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.elastic_client import ElasticSearchClient
@@ -38,11 +39,27 @@ class BaseEngine(ABC):
         format: str,
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
+        registry_context: RegistryContext | None = None,
     ):
+        if registry_context is not None:
+            from krkn_ai.image_requirements import image_dependency_errors
+
+            if runner_type != KrknRunnerType.OPERATOR_RUNNER:
+                raise ValueError(
+                    "managed private registries are supported only by the operator runner"
+                )
+            missing_images = image_dependency_errors(config, registry_context)
+            if missing_images:
+                raise ValueError(
+                    "private registry is missing enabled scenario dependencies: "
+                    + "; ".join(missing_images)
+                )
+
         self.config = config
         self.format = format
         self.run_uuid = run_uuid if run_uuid is not None else str(uuid.uuid4())
         self.output_dir = output_dir
+        self.registry_context = registry_context
 
         rng.set_seed(self.config.seed)
         if self.config.seed is not None:
@@ -51,7 +68,10 @@ class BaseEngine(ABC):
             logger.info("Random seed: None (non-reproducible mode)")
 
         self.krkn_client = KrknRunner(
-            config, output_dir=self.output_dir, runner_type=runner_type
+            config,
+            output_dir=self.output_dir,
+            runner_type=runner_type,
+            registry_context=registry_context,
         )
 
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)

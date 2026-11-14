@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Container(BaseModel):
@@ -67,6 +67,7 @@ class Node(BaseModel):
 class ClusterComponents(BaseModel):
     namespaces: List[Namespace] = []
     nodes: List[Node] = []
+    disabled_nodes: List[Node] = Field(default_factory=list, exclude=True)
 
     def get_active_components(self) -> "ClusterComponents":
         """
@@ -89,5 +90,12 @@ class ClusterComponents(BaseModel):
             active_namespaces.append(active_ns)
 
         active_nodes = [n for n in self.nodes if not n.disabled]
+        disabled_nodes = [n for n in self.nodes if n.disabled] + list(
+            self.disabled_nodes
+        )
 
-        return ClusterComponents(namespaces=active_namespaces, nodes=active_nodes)
+        return ClusterComponents(
+            namespaces=active_namespaces,
+            nodes=active_nodes,
+            disabled_nodes=disabled_nodes,
+        )

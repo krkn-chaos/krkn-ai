@@ -26,7 +26,10 @@ class NodeSelectionResult:
     matching_nodes: List[Node]  # Actual nodes matching the selector
 
 
-def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
+def select_nodes(
+    nodes: List[Node],
+    disabled_nodes: Optional[List[Node]] = None,
+) -> NodeSelectionResult:
     """
     Select nodes for chaos injection using two strategies randomly.
 
@@ -36,6 +39,9 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
 
     Args:
         nodes: List of available nodes in the cluster
+        disabled_nodes: Optional list of disabled nodes. Labels that match any
+            disabled node are excluded from label selection so chaos is never
+            injected onto disabled nodes.
 
     Returns:
         NodeSelectionResult with node selector, count, taints, and matched nodes
@@ -55,10 +61,18 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
         f"Found {len(all_labels)} unique label combinations across {len(nodes)} nodes"
     )
 
-    # Strategy 1: Random node selection (50% probability, or if no labels available)
-    if rng.random() < 0.5 or not all_labels:
-        if not all_labels:
-            logger.debug("No node labels found, using random node selection")
+    # Exclude any labels that also match disabled nodes
+    disabled_labels = {
+        f"{k}={v}" for node in (disabled_nodes or []) for k, v in node.labels.items()
+    }
+    candidate_labels = [lbl for lbl in all_labels.keys() if lbl not in disabled_labels]
+
+    # Strategy 1: Random node selection (50% probability, or if no candidate labels available)
+    if rng.random() < 0.5 or not candidate_labels:
+        if not candidate_labels:
+            logger.debug(
+                "No safe candidate node labels found, falling back to random node selection"
+            )
 
         selected_node = rng.choice(nodes)
         node_selector = f"kubernetes.io/hostname={selected_node.name}"
@@ -69,7 +83,7 @@ def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
         logger.debug(f"Selected random node: {selected_node.name}")
     else:
         # Strategy 2: Label/value selection
-        selected_label = rng.choice(list(all_labels.keys()))
+        selected_label = rng.choice(candidate_labels)
         node_selector = selected_label
         label_key, label_value = selected_label.split("=", 1)
 

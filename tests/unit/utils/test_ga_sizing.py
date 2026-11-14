@@ -79,6 +79,30 @@ class TestCountTargetSpace:
 
         assert large_targets > small_targets
 
+    def test_node_target_count_excludes_disabled_nodes_labels(self):
+        """Labels shared with disabled nodes should not be counted as fanout groups."""
+        w0 = Node(
+            name="w-0", labels={"kubernetes.io/os": "linux", "zone": "us-east-1a"}
+        )
+        w1 = Node(
+            name="w-1", labels={"kubernetes.io/os": "linux", "zone": "us-east-1b"}
+        )
+        disabled_cp = Node(
+            name="cp-0",
+            labels={"kubernetes.io/os": "linux"},
+            disabled=True,
+        )
+
+        # Without disabled node: 2 nodes + 1 fanout group ("kubernetes.io/os=linux") = 3
+        count_without_disabled = ga_sizing._node_target_count([w0, w1])
+        assert count_without_disabled == 3
+
+        # With disabled node: "kubernetes.io/os=linux" excluded, so 2 nodes + 0 fanout groups = 2
+        count_with_disabled = ga_sizing._node_target_count(
+            [w0, w1], disabled_nodes=[disabled_cp]
+        )
+        assert count_with_disabled == 2
+
     def test_service_only_cluster_scales_with_service_count(self):
         """Regression: syn-flood targets services, not nodes/pods. A cluster
         whose only variety is in service count must not be sized as flat."""

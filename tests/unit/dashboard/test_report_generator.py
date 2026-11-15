@@ -388,6 +388,59 @@ def test_generate_html_report_filtering_and_log_truncation():
     assert "Should be filtered out" not in html
 
 
+def test_generate_html_report_preserves_failed_scenario_logs_and_lineage():
+    """Ensure failed scenarios (in df_failed) are not dropped from logs and lineage
+    when filtered_scenario_ids only contains successful scenarios from df_results."""
+    df_results = pd.DataFrame(
+        {
+            "scenario_id": ["1"],
+            "generation_id": [0],
+            "fitness_score": [10.0],
+            "krkn_failure_score": [0],
+        }
+    )
+    df_failed = pd.DataFrame(
+        {
+            "scenario_id": ["2"],
+            "generation_id": [0],
+            "fitness_score": [0.0],
+            "krkn_failure_score": [-1],
+        }
+    )
+    df_logs = [
+        {
+            "scenario_id": "1",
+            "job_status": True,
+            "duration": "10s",
+            "raw_text": "LOG-OF-SUCCESS-SCENARIO",
+        },
+        {
+            "scenario_id": "2",
+            "job_status": False,
+            "duration": "5s",
+            "raw_text": "LOG-OF-FAILED-SCENARIO",
+        },
+    ]
+    df_lineage = pd.DataFrame(
+        {
+            "scenario_id": ["1", "2"],
+            "generation": [0, 0],
+            "origin": ["initial", "crossover"],
+        }
+    )
+
+    html = generate_html_report(
+        df_results=df_results,
+        df_failed=df_failed,
+        filtered_scenario_ids=["1"],
+        df_logs=df_logs,
+        df_lineage=df_lineage,
+    )
+
+    assert "LOG-OF-SUCCESS-SCENARIO" in html
+    assert "LOG-OF-FAILED-SCENARIO" in html
+
+
 def test_generate_html_report_masks_secrets_and_omits_raw_dump():
     config_data = {
         "parameters": {

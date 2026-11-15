@@ -846,9 +846,13 @@ def generate_html_report(
     # Filter df_logs and df_lineage
     if filtered_scenario_ids:
         filter_ids = {str(x) for x in filtered_scenario_ids}
-        filter_ids.update(
-            {str(x).lstrip("0") for x in filtered_scenario_ids if str(x) != "0"}
-        )
+        if (
+            df_failed is not None
+            and not df_failed.empty
+            and "scenario_id" in df_failed.columns
+        ):
+            filter_ids.update(str(x) for x in df_failed["scenario_id"].unique())
+        filter_ids.update({x.lstrip("0") for x in list(filter_ids) if x != "0"})
         if df_logs:
             df_logs = [
                 d

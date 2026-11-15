@@ -449,12 +449,22 @@ def main():
                         report_df_health["component_name"].isin(global_services)
                     ]
                 report_df_logs = df_logs
-                if df_logs and filters_active and filtered_scenario_ids:
-                    str_filter_ids = set(str(x) for x in filtered_scenario_ids)
+                log_filter_ids = list(filtered_scenario_ids)
+                if (
+                    df_failed is not None
+                    and not df_failed.empty
+                    and "scenario_id" in df_failed.columns
+                ):
+                    log_filter_ids.extend(
+                        [_norm_id(x) for x in df_failed["scenario_id"].unique()]
+                    )
+
+                if df_logs and filters_active and log_filter_ids:
+                    str_filter_ids = set(str(x) for x in log_filter_ids)
                     report_df_logs = [
                         d
                         for d in df_logs
-                        if _norm_id(d.get("scenario_id")) in filtered_scenario_ids
+                        if _norm_id(d.get("scenario_id")) in log_filter_ids
                         or str(d.get("scenario_id")) in str_filter_ids
                     ]
 
@@ -465,14 +475,14 @@ def main():
                     report_df_lineage is not None
                     and not report_df_lineage.empty
                     and filters_active
-                    and filtered_scenario_ids
+                    and log_filter_ids
                     and "scenario_id" in report_df_lineage.columns
                 ):
                     report_df_lineage["_norm_id"] = report_df_lineage[
                         "scenario_id"
                     ].apply(_norm_id)
                     report_df_lineage = report_df_lineage[
-                        report_df_lineage["_norm_id"].isin(filtered_scenario_ids)
+                        report_df_lineage["_norm_id"].isin(log_filter_ids)
                     ].drop(columns=["_norm_id"])
 
                 raw_mode = st.session_state.get("anom_mode", "Z-Score")

@@ -75,7 +75,10 @@ def select_nodes(
             )
 
         selected_node = rng.choice(nodes)
-        node_selector = f"kubernetes.io/hostname={selected_node.name}"
+        hostname = selected_node.labels.get(
+            "kubernetes.io/hostname", selected_node.name
+        )
+        node_selector = f"kubernetes.io/hostname={hostname}"
         number_of_nodes = 1
         taints_json = _serialize_taints(selected_node.taints)
         matching_nodes = [selected_node]

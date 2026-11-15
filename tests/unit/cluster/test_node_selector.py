@@ -111,3 +111,15 @@ class TestSelectNodesDisabled:
 
         # All labels match disabled node; must fall back to hostname
         assert result.node_selector == "kubernetes.io/hostname=w-0"
+
+    def test_hostname_strategy_uses_hostname_label_if_different_from_name(self):
+        worker = Node(
+            name="worker-uuid-1234",
+            labels={"kubernetes.io/hostname": "custom-worker-host"},
+        )
+        with patch("krkn_ai.cluster.node_selector.rng") as rng:
+            rng.random.return_value = 0.1  # Strategy 1 (single node)
+            rng.choice.return_value = worker
+            result = select_nodes([worker])
+
+        assert result.node_selector == "kubernetes.io/hostname=custom-worker-host"

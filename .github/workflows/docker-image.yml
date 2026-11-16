@@ -23,16 +23,56 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    environment: production
     runs-on: ubuntu-latest
     # Releases are intentionally manual, but only the protected main ref may
     # publish or sign production images.
     if: ${{ github.ref == 'refs/heads/main' }}
     steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          if [[ ! "$RELEASE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Invalid image tag: use 1-128 ASCII letters, digits, underscores, periods or hyphens; do not start with a period or hyphen."
+            exit 1
+          fi
+
+      - name: Determine tags
+        id: tags
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+        run: |
+          set -euo pipefail
+          TAGS="quay.io/krkn-chaos/krkn-ai:${RELEASE_TAG}"
+          OPERATOR_TAGS="quay.io/krkn-chaos/krkn-ai-operator:${RELEASE_TAG}"
+          SERVICE_TAGS="quay.io/krkn-chaos/krkn-ai-service:${RELEASE_TAG}"
+          if [ "$PUSH_LATEST" = "true" ]; then
+            TAGS="${TAGS},quay.io/krkn-chaos/krkn-ai:latest"
+            OPERATOR_TAGS="${OPERATOR_TAGS},quay.io/krkn-chaos/krkn-ai-operator:latest"
+            SERVICE_TAGS="${SERVICE_TAGS},quay.io/krkn-chaos/krkn-ai-service:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "operator_tags=${OPERATOR_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "service_tags=${SERVICE_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "image=quay.io/krkn-chaos/krkn-ai:${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "operator_image=quay.io/krkn-chaos/krkn-ai-operator:${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "service_image=quay.io/krkn-chaos/krkn-ai-service:${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
+      # Docker actions track major tags for automatic updates; these refs are mutable.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -42,24 +82,6 @@ jobs:
           registry: quay.io
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
-
-      - name: Determine tags
-        id: tags
-        run: |
-          TAGS="quay.io/krkn-chaos/krkn-ai:${{ inputs.tag }}"
-          OPERATOR_TAGS="quay.io/krkn-chaos/krkn-ai-operator:${{ inputs.tag }}"
-          SERVICE_TAGS="quay.io/krkn-chaos/krkn-ai-service:${{ inputs.tag }}"
-          if [ "${{ inputs.push_latest }}" = "true" ]; then
-            TAGS="${TAGS},quay.io/krkn-chaos/krkn-ai:latest"
-            OPERATOR_TAGS="${OPERATOR_TAGS},quay.io/krkn-chaos/krkn-ai-operator:latest"
-            SERVICE_TAGS="${SERVICE_TAGS},quay.io/krkn-chaos/krkn-ai-service:latest"
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "operator_tags=${OPERATOR_TAGS}" >> "$GITHUB_OUTPUT"
-          echo "service_tags=${SERVICE_TAGS}" >> "$GITHUB_OUTPUT"
-          echo "image=quay.io/krkn-chaos/krkn-ai:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          echo "operator_image=quay.io/krkn-chaos/krkn-ai-operator:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-          echo "service_image=quay.io/krkn-chaos/krkn-ai-service:${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v4.1.2

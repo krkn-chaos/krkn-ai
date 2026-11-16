@@ -15,6 +15,7 @@ from krkn_ai.algorithm.genetic import GeneticAlgorithm
 from krkn_ai.models.app import FitnessScoreResult
 from krkn_ai.models.config import FitnessFunctionItem, GeneticAlgorithmConfig
 from krkn_ai.models.scenario.base import ScenarioOrigin
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 from krkn_ai.chaos_engines.cancellation import (
     CancellationRequested,
     CANCELLATION_EVENT,
@@ -442,3 +443,31 @@ class TestGeneticAlgorithmCoreMethods:
         assert progress["status"] == "cancelled"
         assert progress["cancelledGeneration"] is None
         assert progress["currentGeneration"] is None
+
+    def test_baseline_infrastructure_failure_stops_population_creation(
+        self, genetic_algorithm, mock_command_run_result, mock_scenario
+    ):
+        engine = genetic_algorithm
+        CANCELLATION_EVENT.clear()
+        engine.create_population = Mock()
+        engine.krkn_client.run.side_effect = OperatorInfrastructureError(
+            "KrknScenarioRun failed before scenario execution",
+            mock_command_run_result,
+        )
+        engine.save_scenario_result = Mock()
+        engine.health_check_reporter.plot_report = Mock()
+        engine.health_check_reporter.write_fitness_result = Mock()
+
+        with patch(
+            "krkn_ai.algorithm.base.ScenarioFactory.create_dummy_scenario",
+            return_value=mock_scenario,
+        ):
+            with pytest.raises(OperatorInfrastructureError):
+                engine.simulate()
+
+        engine.create_population.assert_not_called()
+        assert engine.baseline_result is mock_command_run_result
+        engine.save_scenario_result.assert_called_once_with(mock_command_run_result)
+        engine.health_check_reporter.plot_report.assert_called_once_with(
+            mock_command_run_result
+        )

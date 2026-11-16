@@ -9,10 +9,12 @@ from typing import Dict, Optional
 import yaml
 
 from krkn_ai.chaos_engines.krkn_runner import KrknRunner
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 from krkn_ai.constants import STATUS_CANCELLED
 from krkn_ai.models.config import ConfigFile
 from krkn_ai.models.app import CommandRunResult, KrknRunnerType
 from krkn_ai.models.scenario.base import BaseScenario
+from krkn_ai.registry import RegistryContext
 from krkn_ai.models.scenario.factory import ScenarioFactory
 from krkn_ai.reporter.health_check_reporter import HealthCheckReporter
 from krkn_ai.utils.elastic_client import ElasticSearchClient
@@ -38,11 +40,27 @@ class BaseEngine(ABC):
         format: str,
         runner_type: KrknRunnerType = None,
         run_uuid: Optional[str] = None,
+        registry_context: RegistryContext | None = None,
     ):
+        if registry_context is not None:
+            from krkn_ai.image_requirements import image_dependency_errors
+
+            if runner_type != KrknRunnerType.OPERATOR_RUNNER:
+                raise ValueError(
+                    "managed private registries are supported only by the operator runner"
+                )
+            missing_images = image_dependency_errors(config, registry_context)
+            if missing_images:
+                raise ValueError(
+                    "private registry is missing enabled scenario dependencies: "
+                    + "; ".join(missing_images)
+                )
+
         self.config = config
         self.format = format
         self.run_uuid = run_uuid if run_uuid is not None else str(uuid.uuid4())
         self.output_dir = output_dir
+        self.registry_context = registry_context
 
         rng.set_seed(self.config.seed)
         if self.config.seed is not None:
@@ -51,7 +69,10 @@ class BaseEngine(ABC):
             logger.info("Random seed: None (non-reproducible mode)")
 
         self.krkn_client = KrknRunner(
-            config, output_dir=self.output_dir, runner_type=runner_type
+            config,
+            output_dir=self.output_dir,
+            runner_type=runner_type,
+            registry_context=registry_context,
         )
 
         self.valid_scenarios = ScenarioFactory.generate_valid_scenarios(self.config)
@@ -103,9 +124,14 @@ class BaseEngine(ABC):
         baseline_scenario = ScenarioFactory.create_dummy_scenario()
         baseline_scenario.end.value = self.config.baseline.duration
 
-        self.baseline_result = self.krkn_client.run(
-            baseline_scenario, 0, scenario_id="baseline"
-        )
+        try:
+            self.baseline_result = self.krkn_client.run(
+                baseline_scenario, 0, scenario_id="baseline"
+            )
+        except OperatorInfrastructureError as error:
+            self.baseline_result = error.result
+            self._record_scenario_result(self.baseline_result)
+            raise
 
         if self.config.fitness_function.include_health_check_response_time:
             stats = compute_baseline_response_stats(
@@ -114,11 +140,7 @@ class BaseEngine(ABC):
             self.krkn_client.set_baseline_response_stats(stats)
             logger.info("Baseline response stats computed for %d URLs", len(stats))
 
-        self.save_scenario_result(self.baseline_result)
-        self.health_check_reporter.plot_report(self.baseline_result)
-        self.health_check_reporter.write_fitness_result(self.baseline_result)
-        if self.elastic_client is not None:
-            self.elastic_client.index_run_result(self.baseline_result, self.run_uuid)
+        self._record_scenario_result(self.baseline_result)
         logger.info(
             "Baseline completed | scenario_id=baseline returncode=%d elapsed=%s",
             self.baseline_result.returncode,
@@ -130,16 +152,23 @@ class BaseEngine(ABC):
     ) -> CommandRunResult:
         if cancellation_requested():
             raise CancellationRequested()
-        scenario_result = self.krkn_client.run(scenario, generation_id)
+        try:
+            scenario_result = self.krkn_client.run(scenario, generation_id)
+        except OperatorInfrastructureError as error:
+            scenario_result = error.result
+            self.seen_population[scenario] = scenario_result
+            self._record_scenario_result(scenario_result)
+            raise
         self.seen_population[scenario] = scenario_result
+        self._record_scenario_result(scenario_result)
+        return scenario_result
 
+    def _record_scenario_result(self, scenario_result: CommandRunResult) -> None:
         self.save_scenario_result(scenario_result)
         self.health_check_reporter.plot_report(scenario_result)
         self.health_check_reporter.write_fitness_result(scenario_result)
         if self.elastic_client is not None:
             self.elastic_client.index_run_result(scenario_result, self.run_uuid)
-
-        return scenario_result
 
     def start_cancellation_monitor(self) -> None:
         self.krkn_client.start_cancellation_monitor()

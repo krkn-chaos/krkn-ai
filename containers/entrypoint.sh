@@ -115,6 +115,9 @@ case "$MODE_LOWER" in
 
         # Build the command
         CMD=(krkn_ai discover --kubeconfig "$KUBECONFIG" --output "$OUTPUT_DIR/krkn-ai.yaml")
+        if [ -n "${KRKNAI_OPERATOR_REGISTRY_NAME:-}" ]; then
+            CMD+=(--operator-registry-name "$KRKNAI_OPERATOR_REGISTRY_NAME")
+        fi
 
         # Add optional parameters
         if [ -n "$NAMESPACE" ]; then
@@ -157,6 +160,9 @@ case "$MODE_LOWER" in
 
         # Build the command array
         CMD=(krkn_ai run --config "$CONFIG_FILE" --output "$OUTPUT_DIR" --kubeconfig "$KUBECONFIG")
+        if [ -n "${KRKNAI_OPERATOR_REGISTRY_NAME:-}" ]; then
+            CMD+=(--operator-registry-name "$KRKNAI_OPERATOR_REGISTRY_NAME")
+        fi
         if [ -n "$KRKNAI_RUN_UID" ]; then
             CMD+=(--run-uuid "$KRKNAI_RUN_UID")
         fi

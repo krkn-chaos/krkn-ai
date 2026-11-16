@@ -29,11 +29,14 @@ from krkn_ai.utils.weight_learning import load_learned_weights
 from krkn_ai.templates.generator import create_krkn_ai_template
 from krkn_ai.cluster import ClusterManager
 from krkn_ai.models.scenario.factory import ScenarioFactory
+from krkn_ai.image_requirements import filter_discovery_scenarios
+from krkn_ai.registry import RegistryContext, registry_context_from_sources
 from krkn_ai.chaos_engines.cancellation import (
     cancellation_requested,
     handle_cancellation_signals,
 )
 from krkn_ai.utils.atomic import atomic_write_text
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 
 
 class DiscoveryError(RuntimeError):
@@ -105,6 +108,11 @@ def main():
     default=None,
     help="Run UUID used for the output directory name.",
 )
+@click.option(
+    "--operator-registry-name",
+    default=None,
+    help="Managed private registry name (operator runner only).",
+)
 @click.pass_context
 def run(
     ctx,
@@ -120,6 +128,7 @@ def run(
     port: int = 8501,
     allow_dangerous_scenarios: bool = False,
     run_uuid: uuid.UUID = None,
+    operator_registry_name: str = None,
 ):
     run_uuid_str = str(run_uuid) if run_uuid is not None else str(uuid.uuid4())
     new_output_path = os.path.join(output, run_uuid_str)
@@ -163,6 +172,18 @@ def run(
         elif runner_type.lower() == "operator":
             enum_runner_type = KrknRunnerType.OPERATOR_RUNNER
 
+    try:
+        registry_context = registry_context_from_sources(operator_registry_name)
+        if (
+            registry_context is not None
+            and enum_runner_type != KrknRunnerType.OPERATOR_RUNNER
+        ):
+            raise ValueError(
+                "managed private registries require --runner-type operator"
+            )
+    except ValueError as error:
+        logger.error("%s", error)
+        sys.exit(1)
     dashboard = DashboardManager(new_output_path, port) if monitoring else nullcontext()
 
     with handle_cancellation_signals(), dashboard:
@@ -190,6 +211,7 @@ def run(
                     output_dir=new_output_path,
                     format=format,
                     runner_type=enum_runner_type,
+                    registry_context=registry_context,
                 )
             else:
                 logger.error("Unknown algorithm type: %s", parsed_config.algorithm)
@@ -215,6 +237,14 @@ def run(
         ) as e:
             logger.error("%s", e)
             sys.exit(1)
+        except OperatorInfrastructureError as e:
+            logger.error("%s", e)
+            if engine is not None:
+                try:
+                    engine.save()
+                except Exception:
+                    logger.exception("Failed to save reports after operator failure")
+            sys.exit(1)
         except FitnessFunctionCalculationError as e:
             logger.error("Unable to calculate fitness function score: %s", e)
             sys.exit(1)
@@ -233,18 +263,13 @@ def run(
                     ):
                         engine.mark_cancelled(engine.current_generation)
                         cancelled = True
-                    status = STATUS_CANCELLED if cancelled else STATUS_FAILED
-                    if cancelled:
-                        try:
-                            with open(results_path, encoding="utf-8") as result_file:
-                                summary = json.load(result_file)
-                        except (OSError, json.JSONDecodeError):
-                            summary = {}
-                        summary["status"] = status
-                        atomic_write_text(results_path, json.dumps(summary))
-                    else:
-                        with open(results_path, "w") as f:
-                            json.dump({"status": status}, f)
+                    try:
+                        with open(results_path, encoding="utf-8") as result_file:
+                            summary = json.load(result_file)
+                    except (OSError, json.JSONDecodeError):
+                        summary = {}
+                    summary["status"] = STATUS_CANCELLED if cancelled else STATUS_FAILED
+                    atomic_write_text(results_path, json.dumps(summary))
                 except Exception as e:
                     logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)
@@ -326,6 +351,11 @@ def monitor(ctx, output: str, port: int):
     help="Path to a learned_weights.json from a previous run, to prioritize fitness queries.",
     default=None,
 )
+@click.option(
+    "--operator-registry-name",
+    default=None,
+    help="Managed private registry name for image-aware discovery.",
+)
 @click.pass_context
 def discover(
     ctx,
@@ -338,11 +368,13 @@ def discover(
     skip_pod_name: str = None,
     save_strategy: str = "skip",
     learned_weights: str = None,
+    operator_registry_name: str = None,
 ):
     init_logger(None, verbose >= 2)
     logger = get_logger(__name__)
     fresh_write = not os.path.exists(output) or save_strategy.lower() == "overwrite"
     try:
+        registry_context = registry_context_from_sources(operator_registry_name)
         (
             cluster_components,
             scenario_enables,
@@ -359,8 +391,9 @@ def discover(
             recommend_fitness=fresh_write or save_strategy.lower() == "merge",
             strict_prometheus=False,
             learned_weights=learned_weights,
+            registry_context=registry_context,
         )
-    except DiscoveryError as error:
+    except (DiscoveryError, ValueError) as error:
         logger.error("%s", error)
         sys.exit(1)
     save_discovery(
@@ -387,6 +420,7 @@ def _discover_data(
     strict_prometheus: bool,
     learned_weights: str | None,
     warnings: list[str] | None = None,
+    registry_context: RegistryContext | None = None,
 ):
     if not kubeconfig or not os.path.exists(kubeconfig):
         raise DiscoveryError("Kubeconfig file not found.")
@@ -412,9 +446,21 @@ def _discover_data(
 
     scenario_enables = (
         ScenarioFactory.recommend_enabled_scenarios(cluster_components, kubeconfig)
-        if fresh_write
+        if fresh_write or registry_context is not None
         else None
     )
+    if registry_context is not None and scenario_enables is not None:
+        try:
+            scenario_enables, image_warnings = filter_discovery_scenarios(
+                scenario_enables,
+                registry_context,
+            )
+        except ValueError as error:
+            raise DiscoveryError(str(error)) from error
+        for message in image_warnings:
+            get_logger(__name__).warning(message)
+            if warnings is not None:
+                warnings.append(message)
     health_checks = (
         cluster_manager.recommend_health_checks(cluster_components)
         if fresh_write
@@ -463,6 +509,7 @@ def discover_config(
     skip_pod_name: str | None = None,
     rendered_kubeconfig: str | None = None,
     warnings: list[str] | None = None,
+    registry_context: RegistryContext | None = None,
 ) -> str:
     """Discover a fresh configuration without writing it to disk."""
     (
@@ -482,6 +529,7 @@ def discover_config(
         strict_prometheus=False,
         learned_weights=None,
         warnings=warnings,
+        registry_context=registry_context,
     )
     return create_krkn_ai_template(
         rendered_kubeconfig or kubeconfig,

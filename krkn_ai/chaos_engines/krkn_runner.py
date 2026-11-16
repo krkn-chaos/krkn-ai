@@ -14,6 +14,7 @@ from krkn_ai.models.app import (
     auto_id,
 )
 from krkn_ai.models.config import ConfigFile
+from krkn_ai.registry import RegistryContext
 from krkn_ai.models.scenario.base import (
     Scenario,
     BaseScenario,
@@ -34,7 +35,10 @@ from krkn_ai.chaos_engines.cancellation import (
     cancellation_requested,
 )
 from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
-from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
+from krkn_ai.chaos_engines.operator_runner import (
+    OperatorExecutor,
+    OperatorInfrastructureError,
+)
 
 logger = get_logger(__name__)
 
@@ -47,8 +51,17 @@ class KrknRunner:
         config: ConfigFile,
         output_dir: str,
         runner_type: Optional[KrknRunnerType] = None,
+        registry_context: RegistryContext | None = None,
     ):
+        if (
+            registry_context is not None
+            and runner_type != KrknRunnerType.OPERATOR_RUNNER
+        ):
+            raise ValueError(
+                "managed private registries are supported only by the operator runner"
+            )
         self.config = config
+        self.registry_context = registry_context
 
         if is_mock_enabled(MockType.FITNESS):
             self.prom_client = None
@@ -117,7 +130,9 @@ class KrknRunner:
         if self.runner_type != KrknRunnerType.OPERATOR_RUNNER:
             return
         if self._operator_executor is None:
-            self._operator_executor = OperatorExecutor(self.config)
+            self._operator_executor = OperatorExecutor(
+                self.config, self.registry_context
+            )
         self._operator_executor.start_parent_monitor()
 
     def stop_cancellation_monitor(self) -> None:
@@ -151,6 +166,7 @@ class KrknRunner:
             None,
             None,
         )
+        infrastructure_failure = False
         command = ""
         recovery_failed = False
 
@@ -167,10 +183,17 @@ class KrknRunner:
             if self.runner_type == KrknRunnerType.OPERATOR_RUNNER:
                 command = f"operator:{getattr(scenario, 'krknhub_image', '')}"
                 if self._operator_executor is None:
-                    self._operator_executor = OperatorExecutor(self.config)
+                    self._operator_executor = OperatorExecutor(
+                        self.config, self.registry_context
+                    )
                 try:
                     health_check_watcher.run()
-                    log, executor_returncode, outcome = self._operator_executor.execute(
+                    (
+                        log,
+                        executor_returncode,
+                        outcome,
+                        infrastructure_failure,
+                    ) = self._operator_executor.execute(
                         scenario, generation_id, scenario_id
                     )
                     telemetry = extract_telemetry_from_log(log, executor_returncode)
@@ -329,7 +352,7 @@ class KrknRunner:
                     ),
                 )
 
-        return CommandRunResult(
+        result = CommandRunResult(
             generation_id=generation_id,
             scenario_id=scenario_id,
             scenario=scenario,
@@ -347,6 +370,12 @@ class KrknRunner:
             outcome=outcome,
             resiliency_score=resiliency_score,
         )
+        if (
+            self.runner_type == KrknRunnerType.OPERATOR_RUNNER
+            and infrastructure_failure
+        ):
+            raise OperatorInfrastructureError(result.log, result)
+        return result
 
     def runner_command(self, scenario: Scenario) -> str:
         assert self.runner_type is not None

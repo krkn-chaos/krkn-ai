@@ -35,6 +35,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import Receive, Scope, Send
 
 from krkn_ai.cli.cmd import DiscoveryError, discover_config
+from krkn_ai.image_requirements import image_dependency_errors, requirements_response
+from krkn_ai.registry import registry_context_from_request
 from krkn_ai.run_results import (
     completed_generation_count,
     parse_run_artifacts,
@@ -73,6 +75,8 @@ class DiscoveryRequest(BaseModel):
     podLabelPattern: str = ".*"
     nodeLabelPattern: str = ".*"
     skipPodName: str | None = None
+    registryName: str | None = None
+    imageInventory: dict[str, Any] | None = None
 
 
 class ManifestFile(BaseModel):
@@ -1410,6 +1414,13 @@ def create_app(
             **values,
         }
 
+    @app.get(
+        "/v1/images/requirements",
+        dependencies=[Depends(authenticate)],
+    )
+    def image_requirements() -> dict[str, Any]:
+        return requirements_response()
+
     @app.post("/v1/configs/validate", dependencies=[Depends(authenticate)])
     async def validate_config(request: Request):
         try:
@@ -1463,6 +1474,30 @@ def create_app(
                 },
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
+        try:
+            registry_context = registry_context_from_request(
+                payload.get("registryName"),
+                payload.get("imageInventory"),
+            )
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"errors": [{"path": "imageInventory", "message": "Invalid value"}]},
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            )
+        if registry_context is not None:
+            missing_images = image_dependency_errors(config, registry_context)
+            if missing_images:
+                return JSONResponse(
+                    {
+                        "errors": [
+                            {
+                                "path": "imageInventory",
+                                "message": "; ".join(missing_images),
+                            }
+                        ]
+                    },
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                )
         return {"valid": True}
 
     @app.get(
@@ -1515,6 +1550,15 @@ def create_app(
     @app.post("/v1/discoveries", dependencies=[Depends(authenticate)])
     def discover(request: DiscoveryRequest) -> dict[str, Any]:
         try:
+            registry_context = registry_context_from_request(
+                request.registryName,
+                request.imageInventory,
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid image registry context"
+            ) from exc
+        try:
             kubeconfig = base64.b64decode(request.kubeconfig, validate=True)
         except (ValueError, binascii.Error) as exc:
             raise HTTPException(
@@ -1535,6 +1579,7 @@ def create_app(
                     skip_pod_name=request.skipPodName,
                     rendered_kubeconfig="/input/kubeconfig",
                     warnings=warnings,
+                    registry_context=registry_context,
                 )
             except DiscoveryError as exc:
                 raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc

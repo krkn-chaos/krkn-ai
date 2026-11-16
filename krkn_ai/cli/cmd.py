@@ -36,6 +36,7 @@ from krkn_ai.chaos_engines.cancellation import (
     handle_cancellation_signals,
 )
 from krkn_ai.utils.atomic import atomic_write_text
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 
 
 class DiscoveryError(RuntimeError):
@@ -236,6 +237,14 @@ def run(
         ) as e:
             logger.error("%s", e)
             sys.exit(1)
+        except OperatorInfrastructureError as e:
+            logger.error("%s", e)
+            if engine is not None:
+                try:
+                    engine.save()
+                except Exception:
+                    logger.exception("Failed to save reports after operator failure")
+            sys.exit(1)
         except FitnessFunctionCalculationError as e:
             logger.error("Unable to calculate fitness function score: %s", e)
             sys.exit(1)
@@ -254,18 +263,13 @@ def run(
                     ):
                         engine.mark_cancelled(engine.current_generation)
                         cancelled = True
-                    status = STATUS_CANCELLED if cancelled else STATUS_FAILED
-                    if cancelled:
-                        try:
-                            with open(results_path, encoding="utf-8") as result_file:
-                                summary = json.load(result_file)
-                        except (OSError, json.JSONDecodeError):
-                            summary = {}
-                        summary["status"] = status
-                        atomic_write_text(results_path, json.dumps(summary))
-                    else:
-                        with open(results_path, "w") as f:
-                            json.dump({"status": status}, f)
+                    try:
+                        with open(results_path, encoding="utf-8") as result_file:
+                            summary = json.load(result_file)
+                    except (OSError, json.JSONDecodeError):
+                        summary = {}
+                    summary["status"] = STATUS_CANCELLED if cancelled else STATUS_FAILED
+                    atomic_write_text(results_path, json.dumps(summary))
                 except Exception as e:
                     logger.exception("Failed to write results.json: %s", e)
             logger.info("Check run.log file in '%s' for more details.", new_output_path)

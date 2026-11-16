@@ -5,12 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from kubernetes import client, config as kube_config
-from kubernetes.config.config_exception import ConfigException
-
-from krkn_ai.models.config import ConfigFile
-from krkn_ai.models.scenario.base import CompositeScenario, Scenario
-from krkn_ai.registry import RegistryContext
 from kubernetes.client.rest import ApiException
+from kubernetes.config.config_exception import ConfigException
 
 from krkn_ai.chaos_engines.cancellation import (
     CancellationRequested,
@@ -18,7 +14,12 @@ from krkn_ai.chaos_engines.cancellation import (
     cancellation_requested,
     request_cancellation,
 )
+from krkn_ai.models.app import CommandRunResult
+from krkn_ai.models.config import ConfigFile
+from krkn_ai.models.scenario.base import CompositeScenario, Scenario
+from krkn_ai.registry import RegistryContext
 from krkn_ai.utils.logger import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,14 @@ class ChildIdentityChangedError(RuntimeError):
 
 class ChildStopUnconfirmedError(RuntimeError):
     """A stopped child did not reach a terminal phase within the grace period."""
+
+
+class OperatorInfrastructureError(RuntimeError):
+    """A child failed before creating a scenario pod."""
+
+    def __init__(self, message: str, result: CommandRunResult):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass(frozen=True)
@@ -182,7 +191,7 @@ class OperatorExecutor:
 
     def execute(
         self, scenario: Scenario, generation_id: int, scenario_id: int | str
-    ) -> tuple[str, int, Optional[str]]:
+    ) -> tuple[str, int, Optional[str], bool]:
         if isinstance(scenario, CompositeScenario):
             raise NotImplementedError("composite scenarios unsupported in operator MVP")
 
@@ -217,14 +226,17 @@ class OperatorExecutor:
             self._cancellation_observed = True
             request_cancellation()
 
+        log = ""
         pod = None
+        child_status: dict[str, Any] = {}
+        child_status_available = False
         try:
-            pod = self._pod_name(name)
+            pod, child_status = self._pod_and_status(name)
+            child_status_available = True
         except ApiException as error:
             logger.warning(
                 "Unable to inspect stopped child %s for logs: %s", name, error
             )
-        log = ""
         if pod:
             try:
                 log = self.core.read_namespaced_pod_log(
@@ -243,10 +255,59 @@ class OperatorExecutor:
                 f"{self.env.scenario_timeout_seconds} second timeout and was "
                 "stopped after reaching a terminal phase"
             )
-            return f"{message}\n{log}".strip(), 1, None
+            return f"{message}\n{log}".strip(), 1, None, False
         if phase == "Cancelled":
-            return log, 0, "cancelled"
-        return log, 0 if phase == "Succeeded" else 1, None
+            return log, 0, "cancelled", False
+        if (
+            phase in {"Failed", "PartiallyFailed"}
+            and not pod
+            and child_status_available
+            and not cancellation_requested()
+        ):
+            failure = self._format_child_failure(name, child_status)
+            return failure, 1, None, True
+        return log, 0 if phase == "Succeeded" else 1, None, False
+
+    @staticmethod
+    def _format_child_failure(name: str, status: dict[str, Any]) -> str:
+        details = []
+        for job in status.get("clusterJobs", []):
+            if not isinstance(job, dict):
+                continue
+            fields = []
+            if job.get("failureReason"):
+                fields.append(f"failureReason={job['failureReason']}")
+            if job.get("message"):
+                fields.append(f"message={job['message']}")
+            if fields:
+                target = "/".join(
+                    value
+                    for value in (job.get("providerName"), job.get("clusterName"))
+                    if value
+                )
+                details.append(
+                    f"{target}: {', '.join(fields)}" if target else ", ".join(fields)
+                )
+
+        if not details:
+            for condition in status.get("conditions", []):
+                if not isinstance(condition, dict):
+                    continue
+                fields = [
+                    f"{key}={condition[key]}"
+                    for key in ("reason", "message")
+                    if condition.get(key)
+                ]
+                if fields:
+                    details.append(", ".join(fields))
+
+        diagnostic = "; ".join(details) or (
+            "no child pod was created; inspect krkn-operator events and controller logs"
+        )
+        return (
+            f"KrknScenarioRun {name} failed before scenario execution "
+            f"(no scenario pod): {diagnostic}"
+        )
 
     def _to_scenariorun(
         self, scenario: Scenario, generation_id: int, scenario_id: int | str
@@ -476,7 +537,7 @@ class OperatorExecutor:
             else:
                 CANCELLATION_EVENT.wait(self.poll_interval)
 
-    def _pod_name(self, name: str) -> Optional[str]:
+    def _pod_and_status(self, name: str) -> tuple[Optional[str], dict[str, Any]]:
         resource = self.co.get_namespaced_custom_object(
             GROUP,
             VERSION,
@@ -486,5 +547,14 @@ class OperatorExecutor:
             _request_timeout=API_REQUEST_TIMEOUT,
         )
         self._observe_child(resource, name)
-        jobs = resource.get("status", {}).get("clusterJobs", [])
-        return jobs[0].get("podName") if jobs else None
+        status = resource.get("status", {})
+        jobs = status.get("clusterJobs") or []
+        pod = next(
+            (
+                job.get("podName")
+                for job in jobs
+                if isinstance(job, dict) and job.get("podName")
+            ),
+            None,
+        )
+        return pod, status

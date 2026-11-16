@@ -137,6 +137,97 @@ class TestOperatorExecutorAuthentication:
 
 
 class TestOperatorExecutorScenarioRun:
+    @pytest.mark.parametrize(
+        (
+            "phase",
+            "pod_name",
+            "expected_returncode",
+            "expected_outcome",
+            "infrastructure_failure",
+        ),
+        [
+            ("Failed", None, 1, None, True),
+            ("Failed", "scenario-pod", 1, None, False),
+            ("Cancelled", None, 0, "cancelled", False),
+        ],
+    )
+    def test_failed_child_distinguishes_missing_pod_from_executed_failure(
+        self,
+        phase,
+        pod_name,
+        expected_returncode,
+        expected_outcome,
+        infrastructure_failure,
+    ):
+        executor = OperatorExecutor.__new__(OperatorExecutor)
+        executor.env = SimpleNamespace(
+            namespace="krkn-operator",
+            scenario_timeout_seconds=60,
+            cancel_grace_seconds=DEFAULT_CANCEL_GRACE_SECONDS,
+            orchestrator_pod_name=None,
+            target_request_id="target",
+            provider="krkn-operator",
+            cluster="current-cluster",
+            run_name="ai-run",
+            run_uid="run-uid",
+        )
+        executor.config = SimpleNamespace(wait_duration=120, elastic=None)
+        executor.co = Mock()
+        executor.co.create_namespaced_custom_object.return_value = {
+            "metadata": {"name": "scenario-run", "uid": "child-uid"}
+        }
+        executor.co.get_namespaced_custom_object_status.return_value = {
+            "metadata": {"uid": "child-uid", "resourceVersion": "status-rv"},
+            "status": {"phase": phase},
+        }
+        executor.co.get_namespaced_custom_object.return_value = {
+            "metadata": {"uid": "child-uid", "resourceVersion": "details-rv"},
+            "status": {
+                "clusterJobs": [
+                    {
+                        "providerName": "krkn-operator",
+                        "clusterName": "current-cluster",
+                        "podName": pod_name,
+                        "failureReason": "JobCreationFailed",
+                        "message": "Failed to create scenario pod",
+                    }
+                ]
+            },
+        }
+        executor.core = Mock()
+        executor.core.read_namespaced_pod_log.return_value = "scenario log"
+        executor.child_identities = []
+        executor.poll_interval = 0
+        CANCELLATION_EVENT.clear()
+        scenario = SimpleNamespace(
+            name="dummy-scenario",
+            krknctl_name="dummy-scenario",
+            parameters=[],
+            scenario_wait_duration=lambda _: 120,
+        )
+
+        try:
+            log, returncode, outcome, is_infrastructure_failure = executor.execute(
+                scenario, generation_id=1, scenario_id=1
+            )
+        finally:
+            CANCELLATION_EVENT.clear()
+
+        assert returncode == expected_returncode
+        assert outcome == expected_outcome
+        assert is_infrastructure_failure is infrastructure_failure
+        if infrastructure_failure:
+            assert "scenario-run" in log
+            assert "failureReason=JobCreationFailed" in log
+            assert "Failed to create scenario pod" in log
+            executor.core.read_namespaced_pod_log.assert_not_called()
+        elif pod_name:
+            assert log == "scenario log"
+            executor.core.read_namespaced_pod_log.assert_called_once()
+        else:
+            assert log == ""
+            executor.core.read_namespaced_pod_log.assert_not_called()
+
     def test_uses_current_scenario_reference_contract(self):
         executor = OperatorExecutor.__new__(OperatorExecutor)
         executor.env = SimpleNamespace(

@@ -2,6 +2,7 @@
 CLI command tests
 """
 
+import json
 import os
 import tempfile
 from unittest.mock import Mock, patch
@@ -12,6 +13,7 @@ from click.testing import CliRunner
 from pydantic import ValidationError
 
 from krkn_ai.cli.cmd import main
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 from krkn_ai.models.custom_errors import FitnessFunctionCalculationError
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile
@@ -364,6 +366,43 @@ class TestRunCommand:
                         )
         finally:
             os.unlink(config_path)
+
+    def test_operator_infrastructure_failure_exits_nonzero_and_saves_reports(
+        self, minimal_config, mock_command_run_result, tmp_path
+    ):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("{}")
+        output = tmp_path / "results"
+        run_uuid = "9bea54b8-ce36-4296-aefe-fb98d0842dfc"
+        engine = Mock(cancelled=False)
+        engine.simulate.side_effect = OperatorInfrastructureError(
+            "KrknScenarioRun child failed before scenario execution: ImageResolutionFailed",
+            mock_command_run_result,
+        )
+        with (
+            patch("krkn_ai.cli.cmd.read_config_from_file", return_value=minimal_config),
+            patch("krkn_ai.cli.cmd.GeneticAlgorithm", return_value=engine),
+        ):
+            result = CliRunner().invoke(
+                main,
+                [
+                    "run",
+                    "--config",
+                    str(config_path),
+                    "--output",
+                    str(output),
+                    "--run-uuid",
+                    run_uuid,
+                    "--runner-type",
+                    "operator",
+                ],
+            )
+
+        assert result.exit_code == 1
+        summary = json.loads((output / run_uuid / "results.json").read_text())
+        assert summary["status"] == "failed"
+        engine.save.assert_called_once()
+        engine.stop_cancellation_monitor.assert_called_once()
 
 
 class TestDiscoverCommand:

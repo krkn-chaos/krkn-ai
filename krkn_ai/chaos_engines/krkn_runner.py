@@ -35,7 +35,10 @@ from krkn_ai.chaos_engines.cancellation import (
     cancellation_requested,
 )
 from krkn_ai.chaos_engines.telemetry_parser import extract_telemetry_from_log
-from krkn_ai.chaos_engines.operator_runner import OperatorExecutor
+from krkn_ai.chaos_engines.operator_runner import (
+    OperatorExecutor,
+    OperatorInfrastructureError,
+)
 
 logger = get_logger(__name__)
 
@@ -163,6 +166,7 @@ class KrknRunner:
             None,
             None,
         )
+        infrastructure_failure = False
         command = ""
         recovery_failed = False
 
@@ -184,7 +188,12 @@ class KrknRunner:
                     )
                 try:
                     health_check_watcher.run()
-                    log, executor_returncode, outcome = self._operator_executor.execute(
+                    (
+                        log,
+                        executor_returncode,
+                        outcome,
+                        infrastructure_failure,
+                    ) = self._operator_executor.execute(
                         scenario, generation_id, scenario_id
                     )
                     telemetry = extract_telemetry_from_log(log, executor_returncode)
@@ -343,7 +352,7 @@ class KrknRunner:
                     ),
                 )
 
-        return CommandRunResult(
+        result = CommandRunResult(
             generation_id=generation_id,
             scenario_id=scenario_id,
             scenario=scenario,
@@ -361,6 +370,12 @@ class KrknRunner:
             outcome=outcome,
             resiliency_score=resiliency_score,
         )
+        if (
+            self.runner_type == KrknRunnerType.OPERATOR_RUNNER
+            and infrastructure_failure
+        ):
+            raise OperatorInfrastructureError(result.log, result)
+        return result
 
     def runner_command(self, scenario: Scenario) -> str:
         assert self.runner_type is not None

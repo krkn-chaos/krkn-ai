@@ -9,16 +9,17 @@ import pytest
 from unittest.mock import Mock, patch
 
 from krkn_ai.chaos_engines.krkn_runner import KRKN_HUB_FAILURE_SCORE, KrknRunner
+from krkn_ai.chaos_engines.operator_runner import OperatorInfrastructureError
 from krkn_ai.chaos_engines.telemetry_parser import TelemetryResult
 from krkn_ai.models.app import KrknRunnerType
+from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import (
     FitnessFunction,
     FitnessFunctionType,
     HealthCheckConfig,
 )
-from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.base import CompositeScenario, CompositeDependency
-from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 
 
 class TestKrknRunnerInitialization:
@@ -176,7 +177,12 @@ class TestKrknRunnerRun:
                 runner_type=KrknRunnerType.OPERATOR_RUNNER,
             )
             runner._operator_executor = Mock()
-            runner._operator_executor.execute.return_value = ("scenario log", 1, None)
+            runner._operator_executor.execute.return_value = (
+                "scenario log",
+                1,
+                None,
+                False,
+            )
 
             result = runner.run(
                 DummyScenario(cluster_components=ClusterComponents()),
@@ -184,6 +190,48 @@ class TestKrknRunnerRun:
             )
 
         assert result.returncode == 1
+
+    def test_operator_infrastructure_failure_raises_with_result(
+        self, minimal_config, temp_output_dir
+    ):
+        minimal_config.health_checks = HealthCheckConfig()
+
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled",
+                return_value=False,
+            ),
+            patch("krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"),
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher"
+            ) as health_check_watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
+                return_value=TelemetryResult(exit_status=0),
+            ),
+        ):
+            health_check_watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                config=minimal_config,
+                output_dir=temp_output_dir,
+                runner_type=KrknRunnerType.OPERATOR_RUNNER,
+            )
+            runner._operator_executor = Mock()
+            runner._operator_executor.execute.return_value = (
+                "KrknScenarioRun child failed before scenario execution",
+                1,
+                None,
+                True,
+            )
+
+            with pytest.raises(OperatorInfrastructureError) as exc_info:
+                runner.run(
+                    DummyScenario(cluster_components=ClusterComponents()),
+                    generation_id=0,
+                )
+
+        assert exc_info.value.result.returncode == 1
+        assert "failed before scenario execution" in exc_info.value.result.log
 
     def test_cancelled_operator_execution_still_collects_raw_fitness(
         self, minimal_config, temp_output_dir
@@ -213,6 +261,7 @@ class TestKrknRunnerRun:
                 "partial scenario log",
                 1,
                 "cancelled",
+                False,
             )
 
             result = runner.run(
@@ -281,7 +330,12 @@ class TestKrknRunnerRun:
             runner = KrknRunner(minimal_config, temp_output_dir, runner_type)
             runner.fitness_calculator.calculate_fitness_value = Mock(return_value=0.0)
             runner._operator_executor = Mock()
-            runner._operator_executor.execute.return_value = (log, exit_status, None)
+            runner._operator_executor.execute.return_value = (
+                log,
+                exit_status,
+                None,
+                False,
+            )
             result = runner.run(
                 DummyScenario(cluster_components=ClusterComponents()), 0
             )

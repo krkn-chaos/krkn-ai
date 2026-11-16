@@ -282,7 +282,7 @@ class OperatorExecutor:
                 "registryName": registry_context.registry_name,
             }
         else:
-            scenario_ref = {"private": False}
+            scenario_ref = {"name": scenario_name, "private": False}
 
         spec = {
             "targetRequestId": self.env.target_request_id,

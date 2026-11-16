@@ -157,7 +157,10 @@ class TestOperatorExecutorScenarioRun:
 
         body = executor._to_scenariorun(scenario, generation_id=3, scenario_id=7)
 
-        assert body["spec"]["scenario"] == {"private": False}
+        assert body["spec"]["scenario"] == {
+            "name": "dummy-scenario",
+            "private": False,
+        }
         assert body["spec"]["maxRetries"] == 0
         assert "scenarioName" not in body["spec"]
         assert "scenarioImage" not in body["spec"]

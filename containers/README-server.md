@@ -10,11 +10,13 @@ for its guarantees and when to increment it.
 
 The artifact service receives authenticated results from operator-managed runs
 and stores them beneath `runs/<KrknAIRun UID>/` on its single mounted PVC.
-Build and publish it separately from the runner image:
+Build and publish it separately from the runner image, using a valid Python
+version for `<tag>`:
 
 ```bash
 podman build \
   -f containers/Containerfile.server \
+  --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<tag> \
   -t quay.io/krkn-chaos/krkn-ai-service:<tag> \
   .
 podman push quay.io/krkn-chaos/krkn-ai-service:<tag>

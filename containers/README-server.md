@@ -10,15 +10,22 @@ for its guarantees and when to increment it.
 
 The artifact service receives authenticated results from operator-managed runs
 and stores them beneath `runs/<KrknAIRun UID>/` on its single mounted PVC.
-Build and publish it separately from the runner image:
+Build and publish it separately from the runner image, using a valid Python
+version for `<tag>`:
 
 ```bash
 podman build \
   -f containers/Containerfile.server \
+  --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<tag> \
   -t quay.io/krkn-chaos/krkn-ai-service:<tag> \
   .
 podman push quay.io/krkn-chaos/krkn-ai-service:<tag>
 ```
+
+When `.git` is excluded from the build context, set
+`--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<version>` so the installed package
+has the intended version. The authenticated `GET /v1/version` endpoint returns
+an object containing that installed `version`.
 
 For a local smoke test, mount a writable directory at the service artifact
 root and set a non-empty bearer token:

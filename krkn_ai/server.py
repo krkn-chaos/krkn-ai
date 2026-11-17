@@ -19,6 +19,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from importlib.metadata import version as package_version
 from itertools import chain
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, BinaryIO, Iterator, Literal
@@ -1413,6 +1414,10 @@ def create_app(
             "artifactStatus": run_status,
             **values,
         }
+
+    @app.get("/v1/version", dependencies=[Depends(authenticate)])
+    def service_version() -> dict[str, str]:
+        return {"version": package_version("krkn_ai")}
 
     @app.get(
         "/v1/images/requirements",

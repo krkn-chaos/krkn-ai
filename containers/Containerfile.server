@@ -12,6 +12,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY README.md ./
 COPY krkn_ai ./krkn_ai
+ARG SETUPTOOLS_SCM_PRETEND_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.12-slim-bookworm

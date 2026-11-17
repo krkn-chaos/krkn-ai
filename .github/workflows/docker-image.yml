@@ -4,9 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag (e.g. 0.0.3)"
+        description: "Release version and image tag (e.g. 0.0.3)"
         required: true
-        default: "0.0.x"
       image:
         description: "Image to build and push"
         required: true
@@ -44,6 +43,16 @@ jobs:
             echo "::error::Invalid image tag: use 1-128 ASCII letters, digits, underscores, periods or hyphens; do not start with a period or hyphen."
             exit 1
           fi
+          python3 -m pip install --quiet --target "$RUNNER_TEMP/release-tag-validation" packaging
+          PYTHONPATH="$RUNNER_TEMP/release-tag-validation" python3 - <<'PY'
+          import os
+          from packaging.version import InvalidVersion, Version
+
+          try:
+              Version(os.environ["RELEASE_TAG"])
+          except InvalidVersion:
+              raise SystemExit("::error::Image tag must also be a valid Python version (e.g. 1.2.3 or 1.2.3rc1).")
+          PY
 
       - name: Determine tags
         id: tags

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import datetime
 import hashlib
+from importlib.metadata import version as distribution_version
 import json
 import threading
 from contextlib import contextmanager
@@ -164,6 +165,33 @@ def test_invalid_scenario_outcome_is_rejected_during_snapshot_validation():
     with pytest.raises(HTTPException) as error:
         parse_run_artifacts({result_path: (result, checksum)})
     assert error.value.status_code == 502
+
+
+def test_service_version_returns_installed_distribution_version(
+    tmp_path: Path, monkeypatch
+):
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    def unexpected_lock(*args, **kwargs):
+        raise AssertionError("version endpoint must not acquire artifact locks")
+
+    monkeypatch.setattr(server_module.fcntl, "flock", unexpected_lock)
+    response = client.get("/v1/version", headers=TOKEN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"version": distribution_version("krkn_ai")}
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [None, {"Authorization": "Bearer wrong-token"}],
+)
+def test_service_version_requires_authentication(tmp_path: Path, headers):
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    response = client.get("/v1/version", headers=headers)
+
+    assert response.status_code == 401
 
 
 def test_private_image_requirements_endpoint_returns_canonical_catalog(tmp_path: Path):

@@ -11,6 +11,7 @@ Working Details:
 from collections import defaultdict
 import threading
 import time
+from urllib.parse import urlsplit
 import requests
 from typing import Dict, List, Optional, Tuple
 
@@ -36,6 +37,11 @@ class HealthCheckWatcher:
     ):
         self.config = config
         self._params = {k: v.value for k, v in (params or {}).items()}
+        self._private_values = sorted(
+            {v.value for v in (params or {}).values() if v.is_private and v.value},
+            key=len,
+            reverse=True,
+        )
         self._stop_event = threading.Event()
         self._threads: List[threading.Thread] = []
         self._results_lock = threading.Lock()
@@ -60,6 +66,16 @@ class HealthCheckWatcher:
         merged = {**(self.config.headers or {}), **(app.headers or {})}
         return {k: preprocess_param_string(v, self._params) for k, v in merged.items()}
 
+    def _redact_error(self, error_msg: str, url: str) -> str:
+        parsed = urlsplit(url)
+        if parsed.query:
+            error_msg = error_msg.replace(f"?{parsed.query}", "?***")
+        if parsed.password:
+            error_msg = error_msg.replace(parsed.password, "***")
+        for secret in self._private_values:
+            error_msg = error_msg.replace(secret, "***")
+        return error_msg
+
     def run_health_check(self, health_check: HealthCheckApplicationConfig):
         # Each thread gets its own private results list
         thread_id = threading.current_thread().ident
@@ -67,15 +83,16 @@ class HealthCheckWatcher:
             return  # Skip if thread ID is None (should not happen in normal operation)
         thread_results: List[HealthCheckResult] = []
         with self._results_lock:
-            self._thread_results[thread_id] = (str(health_check.url), thread_results)
+            self._thread_results[thread_id] = (health_check.name, thread_results)
 
         resolved_headers = self._resolve_headers(health_check)
 
         # Simple polling loop, stops when stop() is called
         while not self._stop_event.is_set():
+            url_str = str(health_check.url)
             try:
                 resp = requests.get(
-                    str(health_check.url),
+                    url_str,
                     headers=resolved_headers,
                     timeout=health_check.timeout,
                 )
@@ -86,7 +103,7 @@ class HealthCheckWatcher:
                 status = -1
                 success = False
                 resp = None
-                error = str(e)
+                error = self._redact_error(str(e), url_str)
 
             result = HealthCheckResult(
                 name=health_check.name,

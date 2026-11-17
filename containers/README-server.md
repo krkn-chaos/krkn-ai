@@ -20,6 +20,11 @@ podman build \
 podman push quay.io/krkn-chaos/krkn-ai-service:<tag>
 ```
 
+When `.git` is excluded from the build context, set
+`--build-arg SETUPTOOLS_SCM_PRETEND_VERSION=<version>` so the installed package
+has the intended version. The authenticated `GET /v1/version` endpoint returns
+an object containing that installed `version`.
+
 For a local smoke test, mount a writable directory at the service artifact
 root and set a non-empty bearer token:
 

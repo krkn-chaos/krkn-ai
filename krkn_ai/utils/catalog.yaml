@@ -5,6 +5,7 @@
   query_template: 'sum(increase(kube_pod_container_status_restarts_total{namespace="$ns"}[$range$]))'
   requires: [kube_pod_container_status_restarts_total]
   scope: namespace
+  default_weight: 4.0
 
 - key: pod-unavailable
   category: availability
@@ -12,6 +13,7 @@
   query_template: 'sum(kube_pod_status_phase{namespace="$ns", phase=~"Pending|Failed|Unknown"})'
   requires: [kube_pod_status_phase]
   scope: namespace
+  default_weight: 4.0
 
 - key: oom-kills
   category: resource
@@ -19,6 +21,7 @@
   query_template: 'sum(kube_pod_container_status_last_terminated_reason{namespace="$ns", reason="OOMKilled"})'
   requires: [kube_pod_container_status_last_terminated_reason]
   scope: namespace
+  default_weight: 1.0
 
 - key: cpu-throttle
   category: resource
@@ -26,6 +29,7 @@
   query_template: 'max(rate(container_cpu_cfs_throttled_periods_total{namespace="$ns", container!=""}[$range$]) / rate(container_cpu_cfs_periods_total{namespace="$ns", container!=""}[$range$]))'
   requires: [container_cpu_cfs_throttled_periods_total, container_cpu_cfs_periods_total]
   scope: namespace
+  default_weight: 1.0
 
 - key: node-pressure
   category: node
@@ -33,6 +37,7 @@
   query_template: 'sum(kube_node_status_condition{condition=~"MemoryPressure|DiskPressure|PIDPressure", status="true"})'
   requires: [kube_node_status_condition]
   scope: cluster
+  default_weight: 2.0
 
 - key: apiserver-errors
   category: control_plane
@@ -40,6 +45,7 @@
   query_template: 'sum(rate(apiserver_request_total{code=~"5.."}[$range$])) / sum(rate(apiserver_request_total[$range$]))'
   requires: [apiserver_request_total]
   scope: cluster
+  default_weight: 3.0
 
 - key: apiserver-latency
   category: control_plane

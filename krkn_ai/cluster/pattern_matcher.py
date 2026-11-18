@@ -17,41 +17,67 @@ from krkn_ai.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-_OPENING = {"(": ")", "{": "}"}
+# A brace is a repetition quantifier only in these forms ({3}, {1,3}, {2,},
+# {,3}); any other brace is a literal character for Python's re module.
+_QUANTIFIER_RE = re.compile(r"\{(?:\d+|\d*,\d*)\}")
+
+
+def _character_class_end(pattern_string: str, start: int) -> int:
+    """Return the index just past the character class opening at ``start``."""
+    i = start + 1
+    if pattern_string.startswith("^", i):
+        i += 1
+    if pattern_string.startswith("]", i):
+        i += 1  # a ] right after [ or [^ is a literal
+    while i < len(pattern_string):
+        if pattern_string[i] == "\\":
+            i += 2
+        elif pattern_string[i] == "]":
+            return i + 1
+        else:
+            i += 1
+    return len(pattern_string)
 
 
 def _split_patterns(pattern_string: str) -> List[str]:
     """
     Split a pattern string on the commas that separate patterns.
 
-    A comma inside a regex, such as a ``{1,3}`` quantifier or a ``[a,b]``
-    character class, belongs to that regex and does not start a new pattern.
+    A comma inside a regex, such as a ``{1,3}`` quantifier, a ``[a,b]``
+    character class or a ``(a,b)`` group, belongs to that regex and does not
+    start a new pattern. A brace that isn't a quantifier is a literal, so it
+    doesn't hide the commas after it, and ``(?#...)`` comments are skipped.
     """
     parts: List[str] = []
-    current: List[str] = []
-    closers: List[str] = []
-    in_class = False
-    escaped = False
-    for char in pattern_string:
-        if escaped:
-            escaped = False
-        elif char == "\\":
-            escaped = True
-        elif in_class:
-            # Inside [...] only an unescaped ] is special.
-            in_class = char != "]"
-        elif char == "[":
-            in_class = True
-        elif char in _OPENING:
-            closers.append(_OPENING[char])
-        elif closers and char == closers[-1]:
-            closers.pop()
-        elif char == "," and not closers:
-            parts.append("".join(current))
-            current = []
+    start = 0
+    depth = 0
+    i = 0
+    while i < len(pattern_string):
+        char = pattern_string[i]
+        if char == "\\":
+            i += 2
             continue
-        current.append(char)
-    parts.append("".join(current))
+        if char == "[":
+            i = _character_class_end(pattern_string, i)
+            continue
+        if pattern_string.startswith("(?#", i):
+            close = pattern_string.find(")", i + 3)
+            i = len(pattern_string) if close == -1 else close + 1
+            continue
+        if char == "{":
+            quantifier = _QUANTIFIER_RE.match(pattern_string, i)
+            if quantifier:
+                i = quantifier.end()
+                continue
+        elif char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        elif char == "," and not depth:
+            parts.append(pattern_string[start:i])
+            start = i + 1
+        i += 1
+    parts.append(pattern_string[start:])
     return [part.strip() for part in parts if part.strip()]
 
 

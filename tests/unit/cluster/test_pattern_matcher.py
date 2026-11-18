@@ -381,6 +381,33 @@ class TestPatternMatcherCommaInsideRegex:
         assert matcher.matches("robot-shop")
         assert not matcher.matches("kube-system")
 
+    def test_literal_brace_does_not_hide_separator(self):
+        # "{," is not a quantifier, so the brace is a literal and the comma
+        # still separates patterns, as it did before quantifiers were handled
+        matcher = PatternMatcher.from_string("kube{,bar")
+        assert len(matcher.include_patterns) == 2
+        assert matcher.filter(["kube{", "bar", "kube{,bar"]) == {"kube{", "bar"}
+
+    def test_exclusion_after_literal_brace_still_excludes(self):
+        matcher = PatternMatcher.from_string("*,!foo{,!default")
+        assert not matcher.matches("default")
+        assert not matcher.matches("foo{")
+        assert matcher.matches("other")
+
+    @pytest.mark.parametrize("quantifier", ["{3}", "{1,3}", "{2,}", "{,3}"])
+    def test_every_quantifier_form_stays_one_pattern(self, quantifier):
+        matcher = PatternMatcher.from_string(f"a{quantifier},b")
+        assert len(matcher.include_patterns) == 2
+
+    def test_bracket_in_regex_comment_does_not_hide_separator(self):
+        matcher = PatternMatcher.from_string("*,!foo(?#[),!default")
+        assert not matcher.matches("default")
+        assert not matcher.matches("foo")
+
+    def test_leading_bracket_in_character_class_is_literal(self):
+        matcher = PatternMatcher.from_string("[],]x,default")
+        assert matcher.filter([",x", "]x", "default", "y"]) == {",x", "]x", "default"}
+
     def test_validate_reports_invalid_regex_after_quantifier(self):
         assert PatternMatcher.validate("app-[0-9]{1,3}") == []
         errors = PatternMatcher.validate("app-[0-9]{1,3},bad[")

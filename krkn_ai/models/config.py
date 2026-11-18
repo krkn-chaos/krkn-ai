@@ -193,8 +193,10 @@ class HealthCheckApplicationConfig(BaseModel):
     name: str
     url: AnyHttpUrl
     status_code: int = 200  # Expected status code
-    timeout: int = 4  # in seconds
-    interval: int = 2  # in seconds
+    # requests rejects a timeout <= 0 before sending, so every check would
+    # fail; an interval <= 0 makes the watcher poll the app in a tight loop.
+    timeout: int = Field(default=4, gt=0)  # in seconds
+    interval: int = Field(default=2, gt=0)  # in seconds
     headers: Optional[Dict[str, str]] = None
 
 

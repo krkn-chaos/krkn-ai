@@ -244,6 +244,35 @@ class TestContainerScenario:
             scenario = ContainerScenario(cluster_components=cluster)
             assert scenario.label_selector.value == "app=db"
 
+    def test_container_scenario_never_targets_disabled_container(self):
+        """A container marked disabled is not picked (#495)."""
+        pod = Pod(
+            name="web",
+            labels={"app": "web"},
+            containers=[
+                Container(name="web"),
+                Container(name="sidecar", disabled=True),
+            ],
+        )
+        cluster = ClusterComponents(namespaces=[Namespace(name="app", pods=[pod])])
+        active = cluster.get_active_components()
+
+        assert [c.name for c in active.namespaces[0].pods[0].containers] == ["web"]
+        scenario = ContainerScenario(cluster_components=active)
+        assert scenario.container_name.value == "web"
+
+    def test_container_scenario_raises_when_every_container_disabled(self):
+        """With every container disabled there is nothing to target."""
+        pod = Pod(
+            name="web",
+            labels={"app": "web"},
+            containers=[Container(name="web", disabled=True)],
+        )
+        cluster = ClusterComponents(namespaces=[Namespace(name="app", pods=[pod])])
+
+        with pytest.raises(ScenarioParameterInitError):
+            ContainerScenario(cluster_components=cluster.get_active_components())
+
 
 class TestNodeCPUHogScenario:
     """Test NodeCPUHogScenario class"""

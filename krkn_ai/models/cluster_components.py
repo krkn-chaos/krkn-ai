@@ -80,7 +80,17 @@ class ClusterComponents(BaseModel):
             # Create a copy of namespace with filtered sub-components
             active_ns = Namespace(
                 name=ns.name,
-                pods=[p for p in ns.pods if not p.disabled],
+                pods=[
+                    p.model_copy(
+                        update={
+                            "containers": [c for c in p.containers if not c.disabled]
+                        }
+                    )
+                    if any(c.disabled for c in p.containers)
+                    else p
+                    for p in ns.pods
+                    if not p.disabled
+                ],
                 services=[s for s in ns.services if not s.disabled],
                 pvcs=[pvc for pvc in ns.pvcs if not pvc.disabled],
                 vmis=[vmi for vmi in ns.vmis if not vmi.disabled],

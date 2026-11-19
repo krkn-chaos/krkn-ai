@@ -63,6 +63,18 @@ class TestClusterComponents:
         assert cluster.namespaces[0].name == "test-namespace"
         assert cluster.nodes[0].name == "test-node"
 
+    def test_get_active_components_tracks_disabled_nodes(self):
+        """Active components drop disabled nodes from active pool and preserve them in disabled_nodes."""
+        w0 = Node(name="w-0", labels={"role": "worker"})
+        cp0 = Node(name="cp-0", labels={"role": "cp"}, disabled=True)
+        cluster = ClusterComponents(nodes=[w0, cp0])
+        active = cluster.get_active_components()
+
+        assert len(active.nodes) == 1
+        assert active.nodes[0].name == "w-0"
+        assert len(active.disabled_nodes) == 1
+        assert active.disabled_nodes[0].name == "cp-0"
+
 
 class TestNamespace:
     """Test Namespace model"""

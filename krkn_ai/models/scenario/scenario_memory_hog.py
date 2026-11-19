@@ -59,7 +59,8 @@ class NodeMemoryHogScenario(Scenario):
             )
 
         # Use shared node selection logic
-        result = select_nodes(nodes)
+        disabled_nodes = getattr(self._cluster_components, "disabled_nodes", None)
+        result = select_nodes(nodes, disabled_nodes=disabled_nodes)
 
         self.node_selector.value = result.node_selector
         self.number_of_nodes.value = result.number_of_nodes

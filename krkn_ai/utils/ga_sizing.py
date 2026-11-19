@@ -57,18 +57,26 @@ def _pvc_or_pod_targets(components: ClusterComponents) -> List[Tuple]:
     return [(ns, p) for ns in components.namespaces for p in ns.pods]
 
 
-def _node_target_count(nodes: List[Node]) -> int:
+def _node_target_count(
+    nodes: List[Node], disabled_nodes: Optional[List[Node]] = None
+) -> int:
     """Mirrors krkn_ai.cluster.node_selector.select_nodes(): a target is
     either one specific node (selected individually) or one label=value
     group spanning 2+ nodes (a fan-out target). A label that only ever
     matches a single node is not counted again -- it collapses onto the
-    individual-node case and would otherwise double-count that node."""
+    individual-node case and would otherwise double-count that node.
+    Labels matching any disabled node are excluded."""
     if not nodes:
         return 0
+    disabled_labels = {
+        f"{k}={v}" for node in (disabled_nodes or []) for k, v in node.labels.items()
+    }
     groups: Dict[str, set] = defaultdict(set)
     for node in nodes:
         for key, value in node.labels.items():
-            groups[f"{key}={value}"].add(node.name)
+            lbl = f"{key}={value}"
+            if lbl not in disabled_labels:
+                groups[lbl].add(node.name)
     fanout_groups = sum(1 for members in groups.values() if len(members) > 1)
     return len(nodes) + fanout_groups
 
@@ -97,9 +105,15 @@ TARGET_SPACE_COUNTERS: Dict[str, Callable[[ClusterComponents], int]] = {
     "container_scenarios": lambda c: len(
         _pod_label_targets(c, require_containers=True)
     ),
-    "node_cpu_hog": lambda c: _node_target_count(c.nodes),
-    "node_memory_hog": lambda c: _node_target_count(c.nodes),
-    "node_io_hog": lambda c: _node_target_count(c.nodes),
+    "node_cpu_hog": lambda c: _node_target_count(
+        c.nodes, getattr(c, "disabled_nodes", None)
+    ),
+    "node_memory_hog": lambda c: _node_target_count(
+        c.nodes, getattr(c, "disabled_nodes", None)
+    ),
+    "node_io_hog": lambda c: _node_target_count(
+        c.nodes, getattr(c, "disabled_nodes", None)
+    ),
     "time_scenarios": _time_scenario_target_count,
     "network_scenarios": _network_scenario_target_count,
     "dns_outage": lambda c: len(_all_pods(c)),

@@ -266,6 +266,30 @@ class TestNodeCPUHogScenario:
         assert scenario.node_cpu_percentage.value <= 100
         assert scenario.number_of_nodes.value >= 1
 
+    def test_node_cpu_hog_scenario_excludes_disabled_nodes_labels(self):
+        """Test that node-cpu-hog does not use labels shared with disabled nodes"""
+        worker = Node(
+            name="w-0",
+            labels={"kubernetes.io/os": "linux", "app": "worker"},
+        )
+        disabled_node = Node(
+            name="cp-0",
+            labels={"kubernetes.io/os": "linux"},
+            disabled=True,
+        )
+        cluster = ClusterComponents(
+            namespaces=[], nodes=[worker], disabled_nodes=[disabled_node]
+        )
+
+        with patch("krkn_ai.cluster.node_selector.rng") as rng:
+            rng.random.return_value = 0.9  # Force label strategy
+            rng.choice.side_effect = lambda seq: seq[0]
+            rng.randint.return_value = 1
+            rng.sample.return_value = [worker]
+            scenario = NodeCPUHogScenario(cluster_components=cluster)
+
+        assert scenario.node_selector.value == "app=worker"
+
 
 class TestAppOutageScenario:
     """Test AppOutageScenario class"""

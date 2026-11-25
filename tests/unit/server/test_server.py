@@ -1733,6 +1733,87 @@ def test_failed_later_generation_preserves_only_completed_fitness(tmp_path: Path
     assert detail["fitnessState"] == "unfinalized"
 
 
+def _commit_summary_run(client, uid, results, run_status):
+    """Commit one finalized scenario plus progress.json and the given results.json."""
+    scenario = yaml.safe_dump(
+        {
+            "generation_id": 0,
+            "scenario_id": 1,
+            "scenario": {"name": "pod_scenarios", "parameters": []},
+            "returncode": 0,
+            "duration_seconds": 1.0,
+            "fitness_result": {"fitness_score": 5, "scores": []},
+        }
+    ).encode()
+    files = {
+        "yaml/generation_0/scenario-1.yaml": scenario,
+        "progress.json": json.dumps(
+            {
+                "completedGenerations": 1,
+                "currentGeneration": 1,
+                "completedScenarios": 1,
+                "configuredGenerations": 3,
+                "populationSize": 2,
+                "fitnessFinalByScenario": {"0:1": True},
+                "resultChecksums": {"0:1": hashlib.sha256(scenario).hexdigest()},
+            }
+        ).encode(),
+        "results.json": json.dumps(results).encode(),
+    }
+    manifest_files = []
+    for path, content in files.items():
+        checksum = hashlib.sha256(content).hexdigest()
+        assert (
+            client.put(
+                f"/v1/runs/{uid}/files/{path}",
+                headers={**TOKEN_HEADERS, "X-Checksum-Sha256": checksum},
+                content=content,
+            ).status_code
+            == 201
+        )
+        manifest_files.append({"path": path, "sha256": checksum, "size": len(content)})
+    assert (
+        client.post(
+            f"/v1/runs/{uid}/commit",
+            headers=TOKEN_HEADERS,
+            json={"status": run_status, "files": manifest_files},
+        ).status_code
+        == 200
+    )
+    return client.get(f"/v1/runs/{uid}/summary", headers=TOKEN_HEADERS).json()
+
+
+@pytest.mark.parametrize("run_status", ["failed", "cancelled"])
+def test_terminal_summary_without_results_config_uses_progress(
+    tmp_path: Path, run_status: str
+):
+    """The CLI's results.json has only a status when a run fails or is cancelled
+    before engine.save(); the summary keeps the configured values from progress."""
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    summary = _commit_summary_run(
+        client, "run-ended", {"status": run_status}, run_status
+    )
+
+    assert summary["artifactStatus"] == run_status
+    assert summary["configuredGenerations"] == 3
+    assert summary["populationSize"] == 2
+
+
+def test_terminal_summary_prefers_results_config_over_progress(tmp_path: Path):
+    client = TestClient(create_app(tmp_path, "service-token"))
+
+    summary = _commit_summary_run(
+        client,
+        "run-done",
+        {"status": "succeeded", "config": {"generations": 5, "population_size": 4}},
+        "succeeded",
+    )
+
+    assert summary["configuredGenerations"] == 5
+    assert summary["populationSize"] == 4
+
+
 def test_cancelled_generation_keeps_raw_scores_and_finalizes_prior_fitness(
     tmp_path: Path,
 ):

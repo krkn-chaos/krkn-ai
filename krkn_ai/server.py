@@ -1308,8 +1308,14 @@ def create_app(
                             for artifact in artifacts.scenarios.values()
                         ),
                     )
+            # results.json has no config when a run failed or was cancelled
+            # before the summary was saved; progress.json always has them.
             configured_generations = config.get("generations")
+            if configured_generations is None:
+                configured_generations = progress.get("configuredGenerations")
             population_size = config.get("population_size")
+            if population_size is None:
+                population_size = progress.get("populationSize")
         else:
             completed_scenarios = progress.get("completedScenarios")
             if completed_scenarios is None and artifacts.scenarios:

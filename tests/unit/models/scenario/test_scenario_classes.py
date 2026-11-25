@@ -273,6 +273,86 @@ class TestContainerScenario:
         with pytest.raises(ScenarioParameterInitError):
             ContainerScenario(cluster_components=cluster.get_active_components())
 
+    @staticmethod
+    def _container_targets(cluster, runs=100):
+        """(namespace, label selector, container) picked over many scenarios."""
+        targets = set()
+        for seed in range(runs):
+            with patch("krkn_ai.models.scenario.scenario_container.rng", RNG(seed)):
+                scenario = ContainerScenario(cluster_components=cluster)
+            targets.add(
+                (
+                    scenario.namespace.value,
+                    scenario.label_selector.value,
+                    scenario.container_name.value,
+                )
+            )
+        return targets
+
+    @pytest.mark.parametrize("pod_disabled", [False, True])
+    def test_container_scenario_avoids_selectors_of_a_disabled_container(
+        self, pod_disabled
+    ):
+        """Krkn picks among all pods matching the label, so a pair is only used
+        if no pod in the namespace with that label has the container disabled."""
+
+        def pod(name, off=False, **labels):
+            return Pod(
+                name=name,
+                labels={"service": "cart", **labels},
+                containers=[
+                    Container(name="cart"),
+                    Container(name="proxy", disabled=off),
+                ],
+            )
+
+        protected = pod("cart-1", off=True)
+        protected.disabled = pod_disabled
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(name="shop", pods=[protected, pod("cart-2", pod="two")]),
+                Namespace(name="other", pods=[pod("cart-3")]),
+            ]
+        )
+        expected = {
+            ("shop", "service=cart", "cart"),
+            ("shop", "pod=two", "cart"),
+            ("shop", "pod=two", "proxy"),
+            ("other", "service=cart", "cart"),
+            ("other", "service=cart", "proxy"),
+        }
+        active = cluster.get_active_components()
+
+        assert self._container_targets(active) == expected
+        assert self._container_targets(active.get_active_components()) == expected
+        assert self._container_targets(active.model_copy(deep=True)) == expected
+
+    def test_container_scenario_skips_pod_without_a_usable_selector(self):
+        """A pod whose only container shares every label with a disabled one is
+        skipped, and with no other pod the scenario can't be created."""
+        shared = {"app": "web"}
+        off = Pod(
+            name="a", labels=shared, containers=[Container(name="c", disabled=True)]
+        )
+        on = Pod(name="b", labels=shared, containers=[Container(name="c")])
+        other = Pod(name="x", labels={"app": "db"}, containers=[Container(name="c")])
+
+        cluster = ClusterComponents(
+            namespaces=[Namespace(name="ns", pods=[off, on, other])]
+        )
+        assert self._container_targets(cluster.get_active_components()) == {
+            ("ns", "app=db", "c")
+        }
+
+        cluster = ClusterComponents(namespaces=[Namespace(name="ns", pods=[off, on])])
+        with pytest.raises(ScenarioParameterInitError):
+            ContainerScenario(cluster_components=cluster.get_active_components())
+
+        on.labels = {"app": "web", "pod": "b"}
+        assert self._container_targets(cluster.get_active_components()) == {
+            ("ns", "pod=b", "c")
+        }
+
 
 @pytest.mark.parametrize(
     "scenario_cls", [NodeCPUHogScenario, NodeMemoryHogScenario, NodeIOHogScenario]

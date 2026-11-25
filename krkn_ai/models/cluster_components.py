@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 from pydantic import BaseModel, PrivateAttr
 
 
@@ -52,6 +52,13 @@ class Namespace(BaseModel):
     pvcs: List[PVC] = []
     vmis: List[VMI] = []
     disabled: bool = False
+    # (label, value, container) of the containers dropped by get_active_components
+    _disabled_containers: Set[Tuple[str, str, str]] = PrivateAttr(default=set())
+
+    def can_target_container(self, pod: Pod, label: str, container: str) -> bool:
+        """Whether no pod sharing this label has the container disabled. Krkn
+        picks among all the pods matching the label."""
+        return (label, pod.labels[label], container) not in self._disabled_containers
 
 
 class Node(BaseModel):
@@ -101,6 +108,13 @@ class ClusterComponents(BaseModel):
                 vmis=[vmi for vmi in ns.vmis if not vmi.disabled],
                 disabled=ns.disabled,
             )
+            active_ns._disabled_containers = ns._disabled_containers | {
+                (label, value, c.name)
+                for p in ns.pods
+                for c in p.containers
+                if c.disabled
+                for label, value in p.labels.items()
+            }
             active_namespaces.append(active_ns)
 
         active_nodes = [n for n in self.nodes if not n.disabled]

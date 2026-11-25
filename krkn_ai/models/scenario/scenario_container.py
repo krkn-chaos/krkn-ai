@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 from krkn_ai.models.cluster_components import Namespace, Pod
 from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.utils.rng import rng
@@ -11,6 +11,20 @@ from krkn_ai.models.scenario.parameters import (
     LabelSelectorParameter,
     NamespaceParameter,
 )
+
+
+def container_targets(namespace: Namespace, pod: Pod) -> Dict[str, List[str]]:
+    """Names of the containers that can be targeted through each label of the pod."""
+    targets = {}
+    for label in pod.labels:
+        names = [
+            c.name
+            for c in pod.containers
+            if namespace.can_target_container(pod, label, c.name)
+        ]
+        if names:
+            targets[label] = names
+    return targets
 
 
 class ContainerScenario(Scenario):
@@ -59,7 +73,8 @@ class ContainerScenario(Scenario):
         # "ValueError: low >= high", terminating the whole GA run.
         for namespace in self._cluster_components.namespaces:
             for pod in namespace.pods:
-                if len(pod.labels) > 0 and len(pod.containers) > 0:
+                # skip selectors that also match a pod with the container disabled
+                if container_targets(namespace, pod):
                     namespace_pod_tuple.append((namespace, pod))
 
         if len(namespace_pod_tuple) == 0:
@@ -69,8 +84,9 @@ class ContainerScenario(Scenario):
 
         # Select a random namespace and pod from the tuple list
         namespace, pod = rng.choice(namespace_pod_tuple)
+        targets = container_targets(namespace, pod)
         labels = pod.labels
-        label = rng.choice(list(labels.keys()))
+        label = rng.choice(list(targets.keys()))
 
         self.namespace.value = namespace.name
 
@@ -79,7 +95,7 @@ class ContainerScenario(Scenario):
 
         # Krkn matches container names literally; krkn-hub defaults an empty
         # name to "etcd", so always provide an explicit discovered name.
-        self.container_name.value = rng.choice([x.name for x in pod.containers])
+        self.container_name.value = rng.choice(targets[label])
 
         target_container = self.container_name.value
 

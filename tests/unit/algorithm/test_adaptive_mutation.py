@@ -41,7 +41,7 @@ class TestAdaptMutationRateEarlyReturns:
     ):
         """Should return when fewer than 2 generations exist"""
         genetic_algorithm.algo_config.adaptive_mutation.enable = True
-        genetic_algorithm.best_of_generation = generations
+        genetic_algorithm.comparable_best_of_generation = generations
         genetic_algorithm.stagnant_generations = 5
         original_rate = genetic_algorithm.algo_config.scenario_mutation_rate
         original_current_rate = genetic_algorithm.current_scenario_mutation_rate
@@ -71,7 +71,7 @@ class TestAdaptMutationRateStagnantTracking:
         genetic_algorithm.algo_config.adaptive_mutation = AdaptiveMutation(
             enable=True, threshold=0.5, generations=10, min=0.05, max=0.9
         )
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(prev),
             make_generation_result(curr),
         ]
@@ -90,7 +90,7 @@ class TestAdaptMutationRateUpdate:
         genetic_algorithm.algo_config.adaptive_mutation = AdaptiveMutation(
             enable=True, threshold=0.5, generations=5, min=0.05, max=0.9
         )
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(10.1),
         ]
@@ -111,7 +111,7 @@ class TestAdaptMutationRateUpdate:
         )
         genetic_algorithm.algo_config.scenario_mutation_rate = 0.3
         genetic_algorithm.current_scenario_mutation_rate = 0.3
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(10.1),
         ]
@@ -132,7 +132,7 @@ class TestAdaptMutationRateUpdate:
         )
         genetic_algorithm.algo_config.scenario_mutation_rate = 0.3
         genetic_algorithm.current_scenario_mutation_rate = 0.3
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(11.0),  # 1.0 improvement >= 0.5 threshold
         ]
@@ -153,7 +153,7 @@ class TestAdaptMutationRateUpdate:
         )
         genetic_algorithm.algo_config.scenario_mutation_rate = 0.3
         genetic_algorithm.current_scenario_mutation_rate = 0.3
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(10.1),
         ]
@@ -178,7 +178,7 @@ class TestAdaptMutationRateUpdate:
             enable=True, threshold=0.5, generations=1, min=0.05, max=0.9
         )
         original_rate = genetic_algorithm.algo_config.scenario_mutation_rate
-        genetic_algorithm.best_of_generation = [
+        genetic_algorithm.comparable_best_of_generation = [
             make_generation_result(10.0),
             make_generation_result(10.1),
         ]

@@ -164,7 +164,7 @@ krkn_ai run \
 | Command | Key Options |
 |---------|-------------|
 | `discover` | `-k` kubeconfig, `-n` namespace, `-pl` pod-label, `-nl` node-label, `-o` output, `-v` verbose, `--skip-pod-name`, `-S` save-strategy, `--learned-weights` |
-| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type, `-p` params, `--monitoring`, `--port` |
+| `run` | `-k` kubeconfig, `-c` config, `-o` output dir, `--run-uuid` optional child-directory UUID, `-f` format, `-r` runner type (`krknctl`, `krknhub`, `operator`), `-p` params, `-s` seed, `-m`/`--monitoring`, `--port`, `--allow-dangerous-scenarios`, `-v` verbose |
 | `monitor` | `-o` results dir, `-p` port |
 
 Run any command with `--help` for full details.
@@ -247,7 +247,6 @@ relative signal and normalize to zero. Totals are still recomputed on the 0–10
 scale using the enabled components; raw item measurements remain unchanged.
 Failed misconfiguration results (`fitness_score: -1`) are excluded from this
 normalization. Scores become final only when their whole generation completes.
-Existing downloaded artifacts are historical and are not rewritten by this fix.
 
 > You can also run Krkn-AI as a container with Podman or on Kubernetes. See [container instructions](./containers/README.md).
 

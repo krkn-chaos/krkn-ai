@@ -34,7 +34,7 @@ uv run krkn_ai run \
   --monitoring --port 9000
 ```
 
-> **Note:** The dashboard process continues running even after the experiment finishes. A message like `"Run finished. Monitoring dashboard will remain running. Terminate manually when done."` is logged. You must stop it manually (e.g., with Ctrl+C or by killing the process).
+> **Note:** The dashboard is stopped when the run ends, whether it finishes, fails or is cancelled. The run then logs the command to reopen it, `krkn_ai monitor -o <run-directory>` (see below).
 
 While the run is in progress the sidebar displays **"Execution in progress…"** and the dashboard polls for new data every 3 seconds, so charts update automatically as each generation completes.
 
@@ -107,11 +107,11 @@ The dashboard reads `reports/all.csv`, `reports/health_check_report.csv`, and th
 
 ## Visualisation Layer Walkthrough
 
-The dashboard is divided into a **sidebar** (controls and global filters) and **seven tabs** covering different aspects of the experiment.
+The dashboard is divided into a **sidebar** (controls and global filters) and **eight tabs** covering different aspects of the experiment, plus a ninth, **Lineage**, when the run recorded population lineage.
 
 ### Sidebar
 
-**Run Selector**: appears only when the output directory contains multiple UUID runs. Results are sorted by last-modified time (newest first).
+**Run Selector**: appears when `-o` points to a parent directory with at least one run subdirectory (one that holds `results.json` or `krkn-ai.yaml`). Runs are sorted by last-modified time (newest first).
 
 **Status indicator**: reflects the value in `results.json`:
 - *"Execution in progress…"* - run is active; dashboard auto-refreshes every 3 s.
@@ -146,6 +146,23 @@ The **Dashboard** tab shows a high-level experiment summary.
 | **Generation & Scenario Details** | Sortable table of all executed scenarios (generation, scenario ID/name, duration, individual score components, fitness). A generation dropdown lets you drill into a specific generation. |
 | **Score Delta vs Baseline** | Grouped bar chart showing the delta of each score component (fitness, health check failure, health check response time, krkn failure) relative to the baseline scenario. Bars above zero indicate improvement over baseline. |
 | **Fitness Improvement Trend vs Baseline** | Area/line chart showing per-generation best and average fitness as a percentage improvement over the baseline. Positive values mean the evolved scenarios are better than running with no chaos. |
+
+---
+
+### Fitness
+
+The **Fitness** tab breaks the fitness score down by Prometheus query. It is only filled in when the config uses `fitness_function.items`; a run with a single `fitness_function.query` has nothing to break down.
+
+| Panel | Description |
+|-------|-------------|
+| **Summary** | Number of queries in use, queries `discover` rejected, and the total weight. |
+| **Contribution chart** | Stacked bar of what each query contributed to every scenario's fitness. |
+| **Query Statistics** | Per query: weight, mean and max value, spread and mean contribution. Queries that returned the same value for every scenario are marked *Flat*. |
+| **Query Evolution** | Mean raw value per generation, one line per selected query, before weighting. |
+| **Queries Discover Rejected** | Queries `discover` left out, with the reason. |
+| **Fitness Weights** | The weights used in this run, compared with `learned_weights.json` when the run wrote one, plus the `discover --learned-weights` command to reuse them. |
+
+Data sources: `reports/all.csv`, `krkn-ai.yaml` and `learned_weights.json`.
 
 ---
 
@@ -235,6 +252,11 @@ The **Failed Scenarios** tab shows scenarios where `krkn_failure_score < 0` (krk
 
 ---
 
+### Lineage
+The **Lineage** tab appears only when `results.json` contains `population_lineage`. It shows where each scenario came from (initial population, crossover, composition, parameter mutation or type mutation) as a distribution and per generation, and a **Lineage Explorer** to trace a scenario back through its parents.
+
+---
+
 ## Exporting a Report
 Click **Generate HTML Report** in the sidebar to generate a self-contained HTML file of the current view. After the spinner completes, click **Download Report** to save the file.
 
@@ -254,10 +276,18 @@ severity:
 
 duration:
   z_threshold: 1.5
-  baseline_pct: 30.0
+  baseline_pct: 50.0
 
 hc_failure:
   baseline_pct: 30.0
+
+fitness_regression:
+  high_drop_pct: 20.0
+  medium_drop_pct: 10.0
+  z_div: 10.0
+  high_abs_drop: 0.2
+  medium_abs_drop: 0.05
+  min_abs_drop: 0.000001
 
 hc_response_time:
   z_threshold: 1.5
@@ -266,11 +296,6 @@ hc_response_time:
 service_response_time:
   z_threshold: 1.5
   baseline_pct: 30.0
-
-fitness_regression:
-  high_drop_pct: 20.0
-  medium_drop_pct: 10.0
-  z_div: 10.0
 ```
 
 Edit this file and restart the dashboard to apply new thresholds.

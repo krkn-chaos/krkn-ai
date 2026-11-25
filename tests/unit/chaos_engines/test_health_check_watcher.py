@@ -140,10 +140,10 @@ class TestHealthCheckWatcherResults:
         results = watcher.get_results()
 
         assert len(results) == 1
-        assert "http://localhost:8080/health" in results
-        assert len(results["http://localhost:8080/health"]) > 0
+        assert "test-app" in results
+        assert len(results["test-app"]) > 0
         # Verify all results are successful
-        for result in results["http://localhost:8080/health"]:
+        for result in results["test-app"]:
             assert isinstance(result, HealthCheckResult)
             assert result.success is True
             assert result.status_code == 200
@@ -166,7 +166,7 @@ class TestHealthCheckWatcherResults:
 
         with watcher._results_lock:
             watcher._thread_results[1] = (
-                "http://localhost:8080/health",
+                "test-app",
                 [first_result],
             )
 
@@ -175,7 +175,7 @@ class TestHealthCheckWatcherResults:
         with watcher._results_lock:
             watcher._thread_results[1][1].append(late_result)
 
-        assert results["http://localhost:8080/health"] == [first_result]
+        assert results["test-app"] == [first_result]
 
     @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
     def test_summarize_success_rate_calculates_failure_score(self, mock_get):
@@ -688,3 +688,36 @@ class TestComputeBaselineResponseStats:
         }
         stats = compute_baseline_response_stats(results)
         assert len(stats) == 0
+
+
+class TestHealthCheckWatcherKeying:
+    """Tests that health_check_results are keyed by application name, not resolved URL."""
+
+    @patch("krkn_ai.chaos_engines.health_check_watcher.requests.get")
+    def test_results_keyed_by_name_not_resolved_url_with_private_params(self, mock_get):
+        """Verify that resolved URLs containing private tokens do not leak as dictionary keys."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.elapsed.total_seconds.return_value = 0.05
+        mock_get.return_value = mock_response
+
+        # URL contains private param value that was substituted
+        app_config = HealthCheckApplicationConfig(
+            name="cart-service",
+            url="https://api.example.com/health?token=MY-SECRET-123",
+            interval=1,
+        )
+        config = HealthCheckConfig(applications=[app_config])
+        watcher = HealthCheckWatcher(config)
+
+        watcher.run()
+        time.sleep(0.1)
+        watcher.stop()
+
+        results = watcher.get_results()
+
+        # Key MUST be the app name ('cart-service'), NEVER the URL containing secrets
+        assert "cart-service" in results
+        assert "https://api.example.com/health?token=MY-SECRET-123" not in results
+        assert len(results["cart-service"]) > 0
+        assert results["cart-service"][0].name == "cart-service"

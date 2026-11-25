@@ -17,6 +17,70 @@ from krkn_ai.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# A brace is a repetition quantifier only in these forms ({3}, {1,3}, {2,},
+# {,3}); any other brace is a literal character for Python's re module.
+_QUANTIFIER_RE = re.compile(r"\{(?:\d+|\d*,\d*)\}")
+
+
+def _character_class_end(pattern_string: str, start: int) -> int:
+    """Return the index just past the character class opening at ``start``."""
+    i = start + 1
+    if pattern_string.startswith("^", i):
+        i += 1
+    if pattern_string.startswith("]", i):
+        i += 1  # a ] right after [ or [^ is a literal
+    while i < len(pattern_string):
+        if pattern_string[i] == "\\":
+            i += 2
+        elif pattern_string[i] == "]":
+            return i + 1
+        else:
+            i += 1
+    return len(pattern_string)
+
+
+def _split_patterns(pattern_string: str) -> List[str]:
+    """
+    Split a pattern string on the commas that separate patterns.
+
+    A comma inside a regex, such as a ``{1,3}`` quantifier, a ``[a,b]``
+    character class or a ``(a,b)`` group, belongs to that regex and does not
+    start a new pattern. A brace that isn't a quantifier is a literal, so it
+    doesn't hide the commas after it, and ``(?#...)`` comments are skipped.
+    """
+    parts: List[str] = []
+    start = 0
+    depth = 0
+    i = 0
+    while i < len(pattern_string):
+        char = pattern_string[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char == "[":
+            i = _character_class_end(pattern_string, i)
+            continue
+        if pattern_string.startswith("(?#", i):
+            close = pattern_string.find(")", i + 3)
+            i = len(pattern_string) if close == -1 else close + 1
+            continue
+        if char == "{":
+            quantifier = _QUANTIFIER_RE.match(pattern_string, i)
+            if quantifier:
+                i = quantifier.end()
+                continue
+        elif char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        elif char == "," and not depth:
+            parts.append(pattern_string[start:i])
+            start = i + 1
+        i += 1
+    parts.append(pattern_string[start:])
+    return [part.strip() for part in parts if part.strip()]
+
+
 class PatternValidationError(ValueError):
     """Raised when a pattern string contains invalid regex."""
 
@@ -85,7 +149,7 @@ class PatternMatcher:
         exclude: List[re.Pattern] = []
 
         # Split by comma and process each part
-        parts = [p.strip() for p in stripped.split(",") if p.strip()]
+        parts = _split_patterns(stripped)
 
         for part in parts:
             if part == "*":
@@ -225,7 +289,7 @@ class PatternMatcher:
         if not pattern_string or pattern_string.strip() in ("", "*"):
             return errors
 
-        parts = [p.strip() for p in pattern_string.split(",") if p.strip()]
+        parts = _split_patterns(pattern_string)
         for part in parts:
             if part == "*":
                 continue

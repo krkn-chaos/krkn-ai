@@ -45,7 +45,9 @@ def _terminate_process_group(process, grace_period=5):
     process.wait()
 
 
-def run_shell(command, do_not_log=False, timeout=None, cancellation_event=None):
+def run_shell(
+    command, do_not_log=False, timeout=None, cancellation_event=None, cwd=None
+):
     """
     Run shell command and get logs and statuscode in output.
 
@@ -71,6 +73,7 @@ def run_shell(command, do_not_log=False, timeout=None, cancellation_event=None):
             stderr=subprocess.STDOUT,
             text=True,
             start_new_session=cancellation_event is not None,
+            cwd=cwd,
         )
     except OSError as e:
         level = logging.DEBUG if do_not_log else logging.ERROR

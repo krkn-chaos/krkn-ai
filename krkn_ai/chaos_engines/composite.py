@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import tempfile
 
 from krkn_ai.models.scenario.base import (
@@ -33,9 +34,10 @@ def build_graph_command(
         json.dump(scenario_json, f, ensure_ascii=False, indent=4)
     logger.info("Created scenario json in path: %s", json_file)
 
+    # krknctl runs in the graph log directory, so relative paths would break
     command = KRKNCTL_GRAPH_RUN_TEMPLATE.format(
-        path=json_file,
-        kubeconfig=kubeconfig_path,
+        path=shlex.quote(os.path.abspath(json_file)),
+        kubeconfig=shlex.quote(os.path.abspath(os.path.expanduser(kubeconfig_path))),
     )
     return command
 

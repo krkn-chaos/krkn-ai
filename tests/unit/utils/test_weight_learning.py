@@ -1,5 +1,6 @@
 """Unit tests for learning fitness-query weights from a run."""
 
+import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -97,3 +98,83 @@ class TestSaveLoad:
 
     def test_none_path_returns_empty(self):
         assert load_learned_weights(None) == {}
+
+
+class TestSNRWeightLearning:
+    def test_snr_downweights_noisy_steady_state_query(self):
+        items = [_item(0, "quiet_metric"), _item(1, "noisy_metric")]
+        # Both metrics exhibit identical scenario spread across chaos runs
+        results = [
+            _scenario([(0, 0.0), (1, 0.0)]),
+            _scenario([(0, 100.0), (1, 100.0)]),
+        ]
+
+        class FakePromClient:
+            def process_prom_query_in_range(self, query, start_time, end_time, granularity):
+                if "quiet_metric" in query:
+                    # Flat steady-state baseline: constant 10.0
+                    return [{"values": [[0, "10.0"], [30, "10.0"], [60, "10.0"]]}]
+                else:
+                    # Noisy steady-state baseline: wild fluctuations
+                    return [{"values": [[0, "0.0"], [30, "50.0"], [60, "100.0"]]}]
+
+        weights = learn_weights(results, items, prom_client=FakePromClient())
+        assert weights["quiet_metric"] > weights["noisy_metric"]
+
+    def test_snr_shared_scale_and_noise_floor_stability(self):
+        # A perfectly quiet metric (noise=0) should not cause runaway explosive weighting
+        items = [_item(0, "zero_noise"), _item(1, "tiny_noise")]
+        results = [
+            _scenario([(0, 10.0), (1, 10.0)]),
+            _scenario([(0, 50.0), (1, 50.0)]),
+        ]
+
+        class FakePromClient:
+            def process_prom_query_in_range(self, query, start_time, end_time, granularity):
+                if "zero_noise" in query:
+                    return [{"values": [[0, "5.0"], [30, "5.0"]]}]
+                else:
+                    return [{"values": [[0, "5.0"], [30, "5.05"]]}]
+
+        weights = learn_weights(results, items, prom_client=FakePromClient())
+        # Both weights should be in sane, comparable proportions, bounded by the noise floor
+        ratio = weights["zero_noise"] / weights["tiny_noise"]
+        assert 1.0 <= ratio < 2.0
+
+    def test_baseline_window_passed_to_prom(self):
+        items = [_item(0, "metric_a")]
+        results = [_scenario([(0, 10.0)]), _scenario([(0, 50.0)])]
+
+        captured_window = {}
+        t_start = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        t_end = datetime.datetime(2026, 1, 1, 12, 5, 0, tzinfo=datetime.timezone.utc)
+
+        class CapturingPromClient:
+            def process_prom_query_in_range(self, query, start_time, end_time, granularity):
+                captured_window["start"] = start_time
+                captured_window["end"] = end_time
+                return [{"values": [[0, "5.0"]]}]
+
+        learn_weights(
+            results,
+            items,
+            prom_client=CapturingPromClient(),
+            baseline_window=(t_start, t_end),
+        )
+        assert captured_window["start"] == t_start
+        assert captured_window["end"] == t_end
+
+    def test_prom_failure_gracefully_degrades_to_signal_spread(self):
+        items = [_item(0, "metric_a"), _item(1, "metric_b")]
+        results = [
+            _scenario([(0, 10.0), (1, 5.0)]),
+            _scenario([(0, 50.0), (1, 5.0)]),
+        ]
+
+        class BrokenPromClient:
+            def process_prom_query_in_range(self, query, start_time, end_time, granularity):
+                raise RuntimeError("Prometheus timeout")
+
+        weights = learn_weights(results, items, prom_client=BrokenPromClient())
+        assert weights["metric_a"] == 1.0
+        assert weights["metric_b"] == 0.0

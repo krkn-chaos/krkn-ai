@@ -264,11 +264,19 @@ class TestRecommendFitnessQueries:
         prom = _FakeProm(_all_required_metrics(), metrics_raises=True)
         assert recommend_fitness_queries(_components(["demo"]), prom) == []
 
-    def test_equal_weights_when_seeds_default(self):
-        # catalog seeds all default (1.0) -> equal split
+    def test_expert_priors_when_seeds_default(self):
+        # catalog seeds reflect expert domain priors (availability > node/resource)
         prom = _FakeProm(_all_required_metrics())
         results = recommend_fitness_queries(_components(["demo"]), prom)
-        weights = [r["weight"] for r in results if r["enabled"]]
+        by_name = {r["name"]: r["weight"] for r in results if r["enabled"]}
+        # Availability items (e.g. pod-restarts) must receive higher seed priority than resource items
+        assert by_name["pod-restarts:demo"] > by_name["cpu-throttle:demo"]
+        assert by_name["apiserver-errors"] > by_name["oom-kills:demo"]
+
+    def test_equal_weights_when_seeds_uniform(self):
+        enabled = [{"weight": 1.0}, {"weight": 1.0}, {"weight": 1.0}]
+        _assign_weights(enabled)
+        weights = [r["weight"] for r in enabled]
         assert max(weights) - min(weights) < 0.001
 
     def test_weights_normalize_catalog_seeds(self):

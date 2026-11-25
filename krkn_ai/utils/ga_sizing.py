@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Tuple
 
 from krkn_ai.constants import POPULATION_INJECTION_RATE
-from krkn_ai.models.cluster_components import ClusterComponents, Node
+from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import ConfigFile, FitnessFunction, ScenarioConfig
 from krkn_ai.models.scenario.factory import ScenarioFactory, scenario_specs
 from krkn_ai.utils.logger import get_logger
@@ -57,14 +57,15 @@ def _pvc_or_pod_targets(components: ClusterComponents) -> List[Tuple]:
     return [(ns, p) for ns in components.namespaces for p in ns.pods]
 
 
-def _node_target_count(nodes: List[Node]) -> int:
+def _node_target_count(components: ClusterComponents) -> int:
     """Mirrors krkn_ai.cluster.node_selector.select_nodes(): a target is
     either one specific node (selected individually) or one label=value
     group spanning 2+ nodes (a fan-out target). A label that only ever
     matches a single node is not counted again -- it collapses onto the
     individual-node case and would otherwise double-count that node."""
-    if not nodes:
-        return 0
+    nodes = components.nodes
+    if not nodes or components.has_disabled_nodes:
+        return len(nodes)
     groups: Dict[str, set] = defaultdict(set)
     for node in nodes:
         for key, value in node.labels.items():
@@ -97,9 +98,9 @@ TARGET_SPACE_COUNTERS: Dict[str, Callable[[ClusterComponents], int]] = {
     "container_scenarios": lambda c: len(
         _pod_label_targets(c, require_containers=True)
     ),
-    "node_cpu_hog": lambda c: _node_target_count(c.nodes),
-    "node_memory_hog": lambda c: _node_target_count(c.nodes),
-    "node_io_hog": lambda c: _node_target_count(c.nodes),
+    "node_cpu_hog": _node_target_count,
+    "node_memory_hog": _node_target_count,
+    "node_io_hog": _node_target_count,
     "time_scenarios": _time_scenario_target_count,
     "network_scenarios": _network_scenario_target_count,
     "dns_outage": lambda c: len(_all_pods(c)),
@@ -201,7 +202,7 @@ def recommend_genetic_params(
         "generations": generations,
         "population_size": population_size,
         "tournament_size": max(2, min(6, population_size // 3)),
-        "composition_rate": 0.0 if tier == "small" else 0.3,
+        "composition_rate": 0.0,
         "population_injection_rate": POPULATION_INJECTION_RATE,
         "exploration_saturation": EXPLORATION_SATURATION,
         "generation_saturation": GENERATION_SATURATION,

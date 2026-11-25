@@ -1,5 +1,4 @@
 from krkn_ai.cluster import select_nodes
-from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.models.scenario.base import Scenario
 from krkn_ai.models.scenario.parameters import (
     HogScenarioImageParameter,
@@ -48,15 +47,7 @@ class NodeCPUHogScenario(Scenario):
 
     def mutate(self):
         """Mutate CPU hog scenario parameters by selecting target nodes."""
-        nodes = self._cluster_components.nodes
-
-        if not nodes:
-            raise ScenarioParameterInitError(
-                "No nodes found in cluster components for node-cpu-hog scenario"
-            )
-
-        # Use shared node selection logic
-        result = select_nodes(nodes)
+        result = select_nodes(self._cluster_components)
 
         self.node_selector.value = result.node_selector
         self.number_of_nodes.value = result.number_of_nodes

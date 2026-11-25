@@ -12,7 +12,6 @@ from krkn_ai.models.scenario.parameters import (
     TaintParameter,
     TotalChaosDurationParameter,
 )
-from krkn_ai.models.custom_errors import ScenarioParameterInitError
 
 
 class NodeIOHogScenario(Scenario):
@@ -60,15 +59,7 @@ class NodeIOHogScenario(Scenario):
 
     def mutate(self):
         """Mutate IO hog scenario parameters by selecting target nodes."""
-        nodes = self._cluster_components.nodes
-
-        if not nodes:
-            raise ScenarioParameterInitError(
-                "No nodes found in cluster components for node-io-hog scenario"
-            )
-
-        # Use shared node selection logic
-        result = select_nodes(nodes)
+        result = select_nodes(self._cluster_components)
 
         self.node_selector.value = result.node_selector
         self.number_of_nodes.value = result.number_of_nodes

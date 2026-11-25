@@ -117,7 +117,7 @@ algorithm: genetic
 genetic:
   generations: 5
   population_size: 10
-  composition_rate: 0.3
+  composition_rate: 0
   population_injection_rate: 0.1
 
 fitness_function:

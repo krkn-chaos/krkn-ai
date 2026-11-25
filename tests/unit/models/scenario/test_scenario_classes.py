@@ -245,6 +245,27 @@ class TestContainerScenario:
             assert scenario.label_selector.value == "app=db"
 
 
+@pytest.mark.parametrize(
+    "scenario_cls", [NodeCPUHogScenario, NodeMemoryHogScenario, NodeIOHogScenario]
+)
+def test_hog_selector_excludes_disabled_nodes(scenario_cls):
+    cluster = ClusterComponents(
+        nodes=[
+            Node(name="excluded", disabled=True),
+            Node(name="worker-1", labels={"kubernetes.io/os": "linux"}),
+            Node(name="worker-2", labels={"kubernetes.io/os": "linux"}),
+        ]
+    )
+    with patch("krkn_ai.cluster.node_selector.rng", RNG(seed=5)):
+        scenario = scenario_cls(cluster_components=cluster.get_active_components())
+
+    assert scenario.node_selector.value in {
+        "kubernetes.io/hostname=worker-1",
+        "kubernetes.io/hostname=worker-2",
+    }
+    assert scenario.number_of_nodes.value == 1
+
+
 class TestNodeCPUHogScenario:
     """Test NodeCPUHogScenario class"""
 

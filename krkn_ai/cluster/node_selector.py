@@ -9,7 +9,8 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from typing import List, Set, Optional
-from krkn_ai.models.cluster_components import Node
+from krkn_ai.models.cluster_components import ClusterComponents, Node
+from krkn_ai.models.custom_errors import ScenarioParameterInitError
 from krkn_ai.utils.rng import rng
 from krkn_ai.utils.logger import get_logger
 
@@ -26,42 +27,33 @@ class NodeSelectionResult:
     matching_nodes: List[Node]  # Actual nodes matching the selector
 
 
-def select_nodes(nodes: List[Node]) -> NodeSelectionResult:
-    """
-    Select nodes for chaos injection using two strategies randomly.
-
-    Randomly chooses between:
-    1. Selecting a single random node (50% probability)
-    2. Selecting a label/value combo and all matching nodes (50% probability)
-
-    Args:
-        nodes: List of available nodes in the cluster
-
-    Returns:
-        NodeSelectionResult with node selector, count, taints, and matched nodes
-
-    Raises:
-        ValueError: If nodes list is empty
-    """
+def select_nodes(components: ClusterComponents) -> NodeSelectionResult:
+    """Avoid shared selectors when they could match a disabled node."""
+    hostname_only = components.has_disabled_nodes
+    nodes = (
+        [node for node in components.nodes if not node.disabled]
+        if hostname_only
+        else components.nodes
+    )
     if not nodes:
-        raise ValueError("No nodes available for selection")
+        raise ScenarioParameterInitError("No nodes found in cluster components")
 
     all_labels: Counter[str] = Counter()
-    for node in nodes:
-        for label_key, label_value in node.labels.items():
-            all_labels[f"{label_key}={label_value}"] += 1
+    if not hostname_only:
+        for node in nodes:
+            for label_key, label_value in node.labels.items():
+                all_labels[f"{label_key}={label_value}"] += 1
 
     logger.debug(
         f"Found {len(all_labels)} unique label combinations across {len(nodes)} nodes"
     )
 
-    # Strategy 1: Random node selection (50% probability, or if no labels available)
     if rng.random() < 0.5 or not all_labels:
-        if not all_labels:
-            logger.debug("No node labels found, using random node selection")
-
         selected_node = rng.choice(nodes)
-        node_selector = f"kubernetes.io/hostname={selected_node.name}"
+        hostname = selected_node.labels.get(
+            "kubernetes.io/hostname", selected_node.name
+        )
+        node_selector = f"kubernetes.io/hostname={hostname}"
         number_of_nodes = 1
         taints_json = _serialize_taints(selected_node.taints)
         matching_nodes = [selected_node]

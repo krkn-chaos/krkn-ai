@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from krkn_ai.cluster import select_nodes
-from krkn_ai.models.cluster_components import Node
+from krkn_ai.models.cluster_components import ClusterComponents, Node
 
 CONTROL_PLANE_TAINT = "node-role.kubernetes.io/control-plane:NoSchedule"
 
@@ -30,7 +30,7 @@ def _select_by_label(nodes, label, count, sample):
         rng.choice.return_value = label
         rng.randint.return_value = count
         rng.sample.return_value = sample
-        return select_nodes(nodes)
+        return select_nodes(ClusterComponents(nodes=nodes))
 
 
 class TestSelectNodesTaints:
@@ -55,7 +55,7 @@ class TestSelectNodesTaints:
         with patch("krkn_ai.cluster.node_selector.rng") as rng:
             rng.random.return_value = 0.1
             rng.choice.return_value = nodes[0]
-            result = select_nodes(nodes)
+            result = select_nodes(ClusterComponents(nodes=nodes))
 
         assert result.node_selector == "kubernetes.io/hostname=control-plane"
         assert json.loads(result.taints_json) == [CONTROL_PLANE_TAINT]

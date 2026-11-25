@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 
 class Container(BaseModel):
@@ -67,6 +67,11 @@ class Node(BaseModel):
 class ClusterComponents(BaseModel):
     namespaces: List[Namespace] = []
     nodes: List[Node] = []
+    _has_disabled_nodes: bool = PrivateAttr(default=False)
+
+    @property
+    def has_disabled_nodes(self) -> bool:
+        return self._has_disabled_nodes or any(node.disabled for node in self.nodes)
 
     def get_active_components(self) -> "ClusterComponents":
         """
@@ -90,4 +95,8 @@ class ClusterComponents(BaseModel):
 
         active_nodes = [n for n in self.nodes if not n.disabled]
 
-        return ClusterComponents(namespaces=active_namespaces, nodes=active_nodes)
+        active = ClusterComponents(namespaces=active_namespaces, nodes=active_nodes)
+        active._has_disabled_nodes = self._has_disabled_nodes or len(
+            active_nodes
+        ) < len(self.nodes)
+        return active

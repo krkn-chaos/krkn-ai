@@ -210,7 +210,10 @@ class KrknRunner:
             else:
                 if isinstance(scenario, CompositeScenario):
                     command = build_graph_command(
-                        scenario, self.config.kubeconfig_file_path, self.output_dir
+                        scenario,
+                        self.config.kubeconfig_file_path,
+                        self.output_dir,
+                        self.config.elastic,
                     )
                 elif isinstance(scenario, Scenario):
                     command = build_scenario_command(
@@ -387,5 +390,8 @@ class KrknRunner:
 
     def graph_command(self, scenario: CompositeScenario) -> str:
         return build_graph_command(
-            scenario, self.config.kubeconfig_file_path, self.output_dir
+            scenario,
+            self.config.kubeconfig_file_path,
+            self.output_dir,
+            self.config.elastic,
         )

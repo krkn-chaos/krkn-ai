@@ -6,13 +6,20 @@ import os
 import json
 import yaml
 import datetime
+from pathlib import Path
 
 import pytest
 from unittest.mock import patch
 
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
-from krkn_ai.models.scenario.base import BaseScenario, ScenarioOrigin
+from krkn_ai.models.scenario.base import (
+    BaseScenario,
+    CompositeDependency,
+    CompositeScenario,
+    ScenarioOrigin,
+)
+from krkn_ai.models.scenario.parameters import DummyEndParameter
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
 from krkn_ai.models.scenario.scenario_pod import PodScenario
 from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Pod
@@ -209,6 +216,52 @@ class TestGenerationsReporter:
         self._assert_matching_report_parameters(
             genetic_algorithm, run_result, temp_output_dir, fmt, expected_params
         )
+
+    @pytest.mark.parametrize("fmt", ["yaml", "json"])
+    @pytest.mark.parametrize("best_report", [True, False])
+    def test_composite_scenario_report_includes_child_parameters(
+        self,
+        temp_output_dir,
+        genetic_algorithm,
+        mock_command_run_result,
+        fmt,
+        best_report,
+    ):
+        mock_command_run_result.scenario = CompositeScenario(
+            scenario_a=DummyScenario(
+                cluster_components=ClusterComponents(),
+                end=DummyEndParameter(value=7),
+            ),
+            scenario_b=DummyScenario(
+                cluster_components=ClusterComponents(),
+                end=DummyEndParameter(value=11),
+            ),
+            dependency=CompositeDependency.A_ON_B,
+        )
+        loader = json.load if fmt == "json" else yaml.safe_load
+        output_dir = Path(temp_output_dir)
+        if best_report:
+            reporter = GenerationsReporter(output_dir=temp_output_dir, format=fmt)
+            reporter.save_best_generations([mock_command_run_result])
+            with (output_dir / "reports" / f"best_scenarios.{fmt}").open() as f:
+                result = loader(f)[0]
+        else:
+            genetic_algorithm.format = fmt
+            genetic_algorithm.save_scenario_result(mock_command_run_result)
+            result_path = output_dir / fmt / "generation_0" / f"scenario_1.{fmt}"
+            with result_path.open() as f:
+                result = loader(f)
+
+        scenario = result["scenario"]
+        assert scenario["name"] == "composite-scenario"
+        assert scenario["dependency"] == 1
+        assert "parameters" not in scenario
+        for child, duration in [("scenario_a", 7), ("scenario_b", 11)]:
+            assert scenario[child]["name"] == "dummy-scenario"
+            assert scenario[child]["parameters"] == [
+                {"name": "duration", "value": duration},
+                {"name": "exit-status", "value": 0},
+            ]
 
     @pytest.mark.parametrize("fmt", ["yaml", "json"])
     def test_save_best_generations_without_scenario_parameters(

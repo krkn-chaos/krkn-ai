@@ -128,7 +128,10 @@ class FitnessCalculator:
         for retry in range(retries):
             try:
                 if fitness_type == FitnessFunctionType.point:
-                    return self.calculate_point_fitness(start, end, query)
+                    offset = datetime.timedelta(seconds=retry * retry_delay)
+                    return self.calculate_point_fitness(
+                        start + offset, end + offset, query
+                    )
                 elif fitness_type == FitnessFunctionType.range:
                     return self.calculate_range_fitness(start, end, query)
             except FitnessFunctionConfigurationError:

@@ -375,7 +375,15 @@ class TestCalculateFitnessValueRetries:
             FitnessFunctionType.point,
         )
         assert score == 5.0
-        assert mock_prom_client.process_prom_query_in_range.call_count == 4
+        query_calls = mock_prom_client.process_prom_query_in_range.call_args_list
+        assert [
+            (call.kwargs["start_time"], call.kwargs["end_time"]) for call in query_calls
+        ] == [
+            (start, start),
+            (start + datetime.timedelta(seconds=10),) * 2,
+            (start + datetime.timedelta(seconds=20),) * 2,
+            (end + datetime.timedelta(seconds=20),) * 2,
+        ]
 
     @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled", return_value=False)
     def test_retries_with_backoff_when_cancellation_is_already_set(

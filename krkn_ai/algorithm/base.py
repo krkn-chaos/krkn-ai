@@ -291,17 +291,20 @@ class BaseEngine(ABC):
         destination = os.path.join(output_dir, filename)
         key = f"{generation_id}:{scenario_id}"
         if key not in self._score_query_metadata:
-            configured_items = {
-                str(item.id): {
-                    "query": item.query,
-                    "query_type": item.type.value,
+            if self.config.fitness_function.query is not None:
+                configured_items = {
+                    "0": {
+                        "query": self.config.fitness_function.query,
+                        "query_type": self.config.fitness_function.type.value,
+                    }
                 }
-                for item in self.config.fitness_function.items
-            }
-            if self.config.fitness_function.query is not None and not configured_items:
-                configured_items["0"] = {
-                    "query": self.config.fitness_function.query,
-                    "query_type": self.config.fitness_function.type.value,
+            else:
+                configured_items = {
+                    str(item.id): {
+                        "query": item.query,
+                        "query_type": item.type.value,
+                    }
+                    for item in self.config.fitness_function.items
                 }
             self._score_query_metadata[key] = {
                 str(score["id"]): configured_items.get(

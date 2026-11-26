@@ -161,6 +161,7 @@ class TestGeneticAlgorithmCoreMethods:
     ):
         engine = genetic_algorithm
         query = FitnessFunctionItem(query="up")
+        engine.config.fitness_function.query = None
         engine.config.fitness_function.items = [query]
         mock_command_run_result.fitness_result.scores = [
             FitnessScoreResult(id=query.id, fitness_score=4.0, weighted_score=0.5)
@@ -262,10 +263,36 @@ class TestGeneticAlgorithmCoreMethods:
         assert finalized_detail["fitnessResult"]["scores"][0]["normalizedScore"] == 0.5
         assert finalized_detail["fitnessResult"]["scores"][0]["query"] == "up"
 
+    def test_top_level_query_metadata_wins_when_items_are_also_configured(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        engine.config.fitness_function.items = [
+            FitnessFunctionItem(id=99, query="inactive_item_query")
+        ]
+        mock_command_run_result.fitness_result.scores = [
+            FitnessScoreResult(id=0, fitness_score=42.0, weighted_score=42.0)
+        ]
+
+        engine.set_current_generation(0)
+        engine.save_scenario_result(mock_command_run_result)
+
+        result_path = Path(engine.output_dir) / "yaml/generation_0/scenario_1.yaml"
+        saved = yaml.safe_load(result_path.read_text())
+        scores = saved["fitness_result"]["scores"]
+        assert len(scores) == 1
+        score = scores[0]
+        assert score["id"] == 0
+        assert score["id"] != engine.config.fitness_function.items[0].id
+        assert score["query"] == "test_query"
+        assert score["query"] != engine.config.fitness_function.items[0].query
+        assert score["query_type"] == "point"
+
     def test_no_item_fitness_waits_for_generation_completion(
         self, genetic_algorithm, mock_command_run_result
     ):
         engine = genetic_algorithm
+        engine.config.fitness_function.query = None
         engine.config.fitness_function.items = []
         engine.set_current_generation(0)
         engine.save_scenario_result(mock_command_run_result)
@@ -332,6 +359,7 @@ class TestGeneticAlgorithmCoreMethods:
         engine.run_baseline = Mock()
         engine.create_population = Mock(return_value=[mock_scenario])
         engine._check_and_stop = Mock(return_value=False)
+        engine.config.fitness_function.query = None
         engine.config.fitness_function.items = [FitnessFunctionItem(query="up")]
         result = mock_command_run_result.model_copy(deep=True)
         result.generation_id = 0
@@ -407,6 +435,7 @@ class TestGeneticAlgorithmCoreMethods:
         engine = genetic_algorithm
         CANCELLATION_EVENT.clear()
         query = FitnessFunctionItem(query="up")
+        engine.config.fitness_function.query = None
         engine.config.fitness_function.items = [query]
         cached = mock_command_run_result.model_copy(deep=True)
         cached.fitness_result.scores = [
@@ -425,6 +454,53 @@ class TestGeneticAlgorithmCoreMethods:
         assert current.fitness_result.scores[0].normalized_score is None
         assert cached.fitness_result.scores[0].normalized_score == 0.5
         assert current.fitness_result.scores[0].weighted_score == 4.0
+
+    def test_cached_mixed_config_preserves_top_level_query_score(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        engine.config.fitness_function.items = [
+            FitnessFunctionItem(id=99, query="inactive_item_query", weight=0.0)
+        ]
+        cached = mock_command_run_result.model_copy(deep=True)
+        cached.fitness_result.scores = [
+            FitnessScoreResult(
+                id=0,
+                fitness_score=42.0,
+                weighted_score=42.0,
+                normalized_score=None,
+            )
+        ]
+        engine.seen_population[cached.scenario] = cached
+
+        current = engine.calculate_fitness(cached.scenario, generation_id=1)
+
+        assert current.fitness_result.scores[0].fitness_score == 42.0
+        assert current.fitness_result.scores[0].weighted_score == 42.0
+        assert current.fitness_result.scores[0].normalized_score is None
+
+    def test_mixed_config_does_not_learn_weights_from_inactive_items(
+        self, genetic_algorithm, mock_command_run_result
+    ):
+        engine = genetic_algorithm
+        engine.config.fitness_function.items = [
+            FitnessFunctionItem(id=0, query="inactive_item_query")
+        ]
+        first = mock_command_run_result.model_copy(deep=True)
+        first.fitness_result.scores = [
+            FitnessScoreResult(id=0, fitness_score=10.0, weighted_score=10.0)
+        ]
+        second = mock_command_run_result.model_copy(deep=True)
+        second.fitness_result.scores = [
+            FitnessScoreResult(id=0, fitness_score=42.0, weighted_score=42.0)
+        ]
+        engine.seen_population = {Mock(): first, Mock(): second}
+
+        with patch("krkn_ai.algorithm.genetic.engine.learn_weights") as learn_weights:
+            engine._save_learned_weights()
+
+        learn_weights.assert_not_called()
+        assert not (Path(engine.output_dir) / "learned_weights.json").exists()
 
     def test_baseline_cancellation_stops_before_population_creation(
         self, genetic_algorithm

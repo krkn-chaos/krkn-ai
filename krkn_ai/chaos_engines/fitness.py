@@ -56,11 +56,11 @@ class FitnessCalculator:
             self._validate_query(
                 self.fitness_function.query, "fitness_function.query", start, now
             )
-
-        for item in getattr(self.fitness_function, "items", []):
-            self._validate_query(
-                item.query, f"fitness_function.items[{item.id}]", start, now
-            )
+        else:
+            for item in getattr(self.fitness_function, "items", []):
+                self._validate_query(
+                    item.query, f"fitness_function.items[{item.id}]", start, now
+                )
 
     def _validate_query(
         self, query: str, context: str, start: datetime.datetime, end: datetime.datetime

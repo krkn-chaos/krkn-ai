@@ -102,6 +102,24 @@ class TestPreflightCheck:
         assert self.mock_prom_client.process_prom_query_in_range.call_count == 2
 
     @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
+    def test_top_level_query_skips_items(self, mock_env_is_truthy):
+        mock_env_is_truthy.return_value = False
+        self.mock_prom_client.process_prom_query_in_range.return_value = [
+            {"metric": {}, "values": [[1620000000, "1"]]}
+        ]
+        fitness_function = FitnessFunction(
+            query="active_query",
+            items=[FitnessFunctionItem(id=99, query="inactive_item_query")],
+        )
+        calculator = FitnessCalculator(self.mock_prom_client, fitness_function)
+
+        calculator.preflight_check()
+
+        self.mock_prom_client.process_prom_query_in_range.assert_called_once()
+        args, _ = self.mock_prom_client.process_prom_query_in_range.call_args
+        assert args[0] == "active_query"
+
+    @patch("krkn_ai.chaos_engines.fitness.is_mock_enabled")
     def test_empty_query_fails_preflight(self, mock_env_is_truthy):
         mock_env_is_truthy.return_value = False
         self.mock_prom_client.process_prom_query_in_range.return_value = []

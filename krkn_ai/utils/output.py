@@ -1,10 +1,37 @@
 import glob
 import re
+from typing import Any
 
 from krkn_ai.models.app import CommandRunResult
+from krkn_ai.models.scenario.base import BaseScenario, CompositeScenario
 
 _INVALID_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _PLACEHOLDERS = ("%g", "%s", "%c")
+
+
+def serialize_scenario_result(run_result: CommandRunResult) -> dict[str, Any]:
+    result = run_result.model_dump(mode="json")
+    result["scenario"] = _serialize_scenario(run_result.scenario)
+    return result
+
+
+def _serialize_scenario(scenario: BaseScenario) -> dict[str, Any]:
+    # Keep the report schema explicit rather than exposing all subclass fields.
+    result = scenario.model_dump(mode="json", include=set(BaseScenario.model_fields))
+    if isinstance(scenario, CompositeScenario):
+        result["dependency"] = scenario.dependency.value
+        result["scenario_a"] = _serialize_scenario(scenario.scenario_a)
+        result["scenario_b"] = _serialize_scenario(scenario.scenario_b)
+    parameters = getattr(scenario, "parameters", None)
+    if parameters is not None:
+        result["parameters"] = [
+            {
+                "name": parameter.get_name(),
+                "value": parameter.model_dump(mode="json")["value"],
+            }
+            for parameter in parameters
+        ]
+    return result
 
 
 def _sanitize_filename_component(value: str) -> str:

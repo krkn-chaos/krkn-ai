@@ -13,6 +13,7 @@ from matplotlib.ticker import MaxNLocator
 
 from krkn_ai.models.app import CommandRunResult
 from krkn_ai.utils.logger import get_logger
+from krkn_ai.utils.output import serialize_scenario_result
 
 logger = get_logger(__name__)
 
@@ -59,7 +60,7 @@ class GenerationsReporter:
             for i in range(len(best_generations)):
                 # JSON mode turns enums (scenario.origin) and timestamps into plain
                 # values, so the YAML writer never emits Python-specific tags.
-                scenario_result = best_generations[i].model_dump(mode="json")
+                scenario_result = serialize_scenario_result(best_generations[i])
                 del scenario_result["log"]
                 results.append(scenario_result)
             if self.format == "json":

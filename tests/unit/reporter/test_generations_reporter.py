@@ -6,13 +6,23 @@ import os
 import json
 import yaml
 import datetime
+from pathlib import Path
+
+import pytest
 from unittest.mock import patch
 
 from krkn_ai.reporter.generations_reporter import GenerationsReporter
 from krkn_ai.models.app import CommandRunResult, FitnessResult
-from krkn_ai.models.scenario.base import ScenarioOrigin
+from krkn_ai.models.scenario.base import (
+    BaseScenario,
+    CompositeDependency,
+    CompositeScenario,
+    ScenarioOrigin,
+)
+from krkn_ai.models.scenario.parameters import DummyEndParameter
 from krkn_ai.models.scenario.scenario_dummy import DummyScenario
-from krkn_ai.models.cluster_components import ClusterComponents
+from krkn_ai.models.scenario.scenario_pod import PodScenario
+from krkn_ai.models.cluster_components import ClusterComponents, Namespace, Pod
 
 
 class TestGenerationsReporter:
@@ -167,3 +177,126 @@ class TestGenerationsReporter:
                 temp_output_dir, "reports", "graphs", "best_generation.png"
             )
             assert not os.path.exists(graph_path)
+
+    @pytest.mark.parametrize("fmt", ["yaml", "json"])
+    def test_save_best_generations_includes_scenario_parameters(
+        self, temp_output_dir, genetic_algorithm, fmt
+    ):
+        """Best-scenario and per-scenario reports preserve the same parameter values."""
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(
+                    name="shop",
+                    pods=[Pod(name="cart-0", labels={"app": "cart"})],
+                )
+            ]
+        )
+        scenario = PodScenario(cluster_components=cluster)
+        now = datetime.datetime(2026, 11, 8, 12, 0, 0)
+        run_result = CommandRunResult(
+            generation_id=0,
+            scenario_id=1,
+            scenario=scenario,
+            cmd="test-cmd",
+            log="test-log",
+            returncode=0,
+            start_time=now,
+            end_time=now,
+            fitness_result=FitnessResult(fitness_score=25.0),
+        )
+        expected_params = [
+            {"name": "namespace", "value": "shop"},
+            {"name": "pod-label", "value": "app=cart"},
+            {"name": "name-pattern", "value": ".*"},
+            {"name": "disruption-count", "value": 1},
+            {"name": "kill-timeout", "value": 60},
+            {"name": "expected-recovery-time", "value": 60},
+        ]
+
+        self._assert_matching_report_parameters(
+            genetic_algorithm, run_result, temp_output_dir, fmt, expected_params
+        )
+
+    @pytest.mark.parametrize("fmt", ["yaml", "json"])
+    @pytest.mark.parametrize("best_report", [True, False])
+    def test_composite_scenario_report_includes_child_parameters(
+        self,
+        temp_output_dir,
+        genetic_algorithm,
+        mock_command_run_result,
+        fmt,
+        best_report,
+    ):
+        mock_command_run_result.scenario = CompositeScenario(
+            scenario_a=DummyScenario(
+                cluster_components=ClusterComponents(),
+                end=DummyEndParameter(value=7),
+            ),
+            scenario_b=DummyScenario(
+                cluster_components=ClusterComponents(),
+                end=DummyEndParameter(value=11),
+            ),
+            dependency=CompositeDependency.A_ON_B,
+        )
+        loader = json.load if fmt == "json" else yaml.safe_load
+        output_dir = Path(temp_output_dir)
+        if best_report:
+            reporter = GenerationsReporter(output_dir=temp_output_dir, format=fmt)
+            reporter.save_best_generations([mock_command_run_result])
+            with (output_dir / "reports" / f"best_scenarios.{fmt}").open() as f:
+                result = loader(f)[0]
+        else:
+            genetic_algorithm.format = fmt
+            genetic_algorithm.save_scenario_result(mock_command_run_result)
+            result_path = output_dir / fmt / "generation_0" / f"scenario_1.{fmt}"
+            with result_path.open() as f:
+                result = loader(f)
+
+        scenario = result["scenario"]
+        assert scenario["name"] == "composite-scenario"
+        assert scenario["dependency"] == 1
+        assert "parameters" not in scenario
+        for child, duration in [("scenario_a", 7), ("scenario_b", 11)]:
+            assert scenario[child]["name"] == "dummy-scenario"
+            assert scenario[child]["parameters"] == [
+                {"name": "duration", "value": duration},
+                {"name": "exit-status", "value": 0},
+            ]
+
+    @pytest.mark.parametrize("fmt", ["yaml", "json"])
+    def test_save_best_generations_without_scenario_parameters(
+        self, temp_output_dir, genetic_algorithm, mock_command_run_result, fmt
+    ):
+        mock_command_run_result.scenario = BaseScenario(
+            name="base-scenario", krknctl_name="", krknhub_image=""
+        )
+        self._assert_matching_report_parameters(
+            genetic_algorithm, mock_command_run_result, temp_output_dir, fmt, None
+        )
+
+    @staticmethod
+    def _assert_matching_report_parameters(
+        engine, run_result, output_dir, fmt, expected_params
+    ):
+        engine.format = fmt
+        engine.save_scenario_result(run_result)
+        reporter = GenerationsReporter(output_dir=output_dir, format=fmt)
+        reporter.save_best_generations([run_result])
+        loader = json.load if fmt == "json" else yaml.safe_load
+        best_path = os.path.join(output_dir, "reports", f"best_scenarios.{fmt}")
+        scenario_path = os.path.join(
+            output_dir, fmt, "generation_0", f"scenario_1.{fmt}"
+        )
+        with open(best_path, encoding="utf-8") as f:
+            best_result = loader(f)[0]
+        with open(scenario_path, encoding="utf-8") as f:
+            scenario_result = loader(f)
+
+        assert best_result["scenario"]["name"] == run_result.scenario.name
+        assert "log" not in best_result
+        if expected_params is None:
+            assert "parameters" not in best_result["scenario"]
+            assert "parameters" not in scenario_result["scenario"]
+        else:
+            assert best_result["scenario"]["parameters"] == expected_params
+            assert scenario_result["scenario"]["parameters"] == expected_params

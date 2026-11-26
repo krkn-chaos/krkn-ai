@@ -15,6 +15,7 @@ from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.cluster_components import ClusterComponents
 from krkn_ai.models.config import (
     FitnessFunction,
+    FitnessFunctionItem,
     FitnessFunctionType,
     HealthCheckConfig,
 )
@@ -273,6 +274,58 @@ class TestKrknRunnerRun:
         assert len(result.fitness_result.scores) == 1
         assert result.fitness_result.scores[0].fitness_score == 4.0
         assert result.fitness_result.scores[0].normalized_score is None
+
+    def test_top_level_query_is_used_when_items_are_also_configured(
+        self, minimal_config, temp_output_dir
+    ):
+        minimal_config.fitness_function.items = [
+            FitnessFunctionItem(id=99, query="inactive_item_query")
+        ]
+        minimal_config.fitness_function.include_krkn_failure = False
+        minimal_config.fitness_function.include_health_check_failure = False
+        minimal_config.fitness_function.include_health_check_response_time = False
+        minimal_config.health_checks = HealthCheckConfig()
+
+        with (
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.is_mock_enabled", return_value=False
+            ),
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.create_prometheus_client"
+            ) as create_prometheus_client,
+            patch("krkn_ai.chaos_engines.krkn_runner.HealthCheckWatcher") as watcher,
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.extract_telemetry_from_log",
+                return_value=TelemetryResult(exit_status=0),
+            ),
+            patch(
+                "krkn_ai.chaos_engines.krkn_runner.run_shell",
+                return_value=("scenario log", 0),
+            ),
+        ):
+            create_prometheus_client.return_value.process_prom_query_in_range.return_value = [
+                {"metric": {}, "values": [[1620000000, "1"]]}
+            ]
+            watcher.return_value.get_results.return_value = {}
+            runner = KrknRunner(
+                minimal_config,
+                temp_output_dir,
+                KrknRunnerType.CLI_RUNNER,
+            )
+            raw_fitness = Mock(return_value=4.0)
+            runner.fitness_calculator.calculate_fitness_value = raw_fitness
+            item_fitness = Mock()
+            runner.fitness_calculator.calculate_fitness_score_for_items = item_fitness
+
+            result = runner.run(
+                DummyScenario(cluster_components=ClusterComponents()), 0
+            )
+
+        assert len(result.fitness_result.scores) == 1
+        assert result.fitness_result.scores[0].id == 0
+        assert result.fitness_result.scores[0].fitness_score == 4.0
+        raw_fitness.assert_called_once()
+        item_fitness.assert_not_called()
 
     @pytest.mark.parametrize("resiliency_score", [100, 20])
     @pytest.mark.parametrize("exit_status", [1, 2])

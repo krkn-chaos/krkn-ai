@@ -186,7 +186,10 @@ class GeneticAlgorithm(BaseEngine):
                 break
 
             raw_score_snapshots = []
-            if len(self.config.fitness_function.items) > 0:
+            if (
+                self.config.fitness_function.items
+                and self.config.fitness_function.query is None
+            ):
                 to_normalize = list(fitness_scores)
                 if cur_generation == 0 and self.baseline_result is not None:
                     to_normalize.append(self.baseline_result)
@@ -367,7 +370,7 @@ class GeneticAlgorithm(BaseEngine):
     def _save_learned_weights(self):
         """Learn per-query weights from this run's scenarios for future runs to seed."""
         items = self.config.fitness_function.items
-        if not items:
+        if self.config.fitness_function.query is not None or not items:
             return
         weights = learn_weights(self.seen_population.values(), items)
         if not weights:
@@ -483,7 +486,11 @@ class GeneticAlgorithm(BaseEngine):
             cached_result = self.seen_population[scenario]
             result = copy.deepcopy(cached_result)
             result.scenario_id = next(auto_id)
-            if result.fitness_result.scores and self.config.fitness_function.items:
+            if (
+                result.fitness_result.scores
+                and self.config.fitness_function.items
+                and self.config.fitness_function.query is None
+            ):
                 item_weights = normalize_weights(
                     item.weight for item in self.config.fitness_function.items
                 )

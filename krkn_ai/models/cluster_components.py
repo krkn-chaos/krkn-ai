@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 from pydantic import BaseModel, PrivateAttr
 
 
@@ -52,6 +52,13 @@ class Namespace(BaseModel):
     pvcs: List[PVC] = []
     vmis: List[VMI] = []
     disabled: bool = False
+    # (label, value, container) of the containers dropped by get_active_components
+    _disabled_containers: Set[Tuple[str, str, str]] = PrivateAttr(default=set())
+
+    def can_target_container(self, pod: Pod, label: str, container: str) -> bool:
+        """Whether no pod sharing this label has the container disabled. Krkn
+        picks among all the pods matching the label."""
+        return (label, pod.labels[label], container) not in self._disabled_containers
 
 
 class Node(BaseModel):
@@ -85,12 +92,29 @@ class ClusterComponents(BaseModel):
             # Create a copy of namespace with filtered sub-components
             active_ns = Namespace(
                 name=ns.name,
-                pods=[p for p in ns.pods if not p.disabled],
+                pods=[
+                    p.model_copy(
+                        update={
+                            "containers": [c for c in p.containers if not c.disabled]
+                        }
+                    )
+                    if any(c.disabled for c in p.containers)
+                    else p
+                    for p in ns.pods
+                    if not p.disabled
+                ],
                 services=[s for s in ns.services if not s.disabled],
                 pvcs=[pvc for pvc in ns.pvcs if not pvc.disabled],
                 vmis=[vmi for vmi in ns.vmis if not vmi.disabled],
                 disabled=ns.disabled,
             )
+            active_ns._disabled_containers = ns._disabled_containers | {
+                (label, value, c.name)
+                for p in ns.pods
+                for c in p.containers
+                if c.disabled or p.disabled
+                for label, value in p.labels.items()
+            }
             active_namespaces.append(active_ns)
 
         active_nodes = [n for n in self.nodes if not n.disabled]

@@ -20,15 +20,16 @@ def _pod_label_targets(
     """Return distinct (namespace, label key, label value) pod selectors.
 
     These scenarios serialize selectors, not pod names, so replicas sharing a
-    selector contribute one target. Container scenarios only use pods that
-    have containers.
+    selector contribute one target. Container scenarios only use selectors
+    that can target at least one container.
     """
     return {
         (namespace.name, key, value)
         for namespace in components.namespaces
         for pod in namespace.pods
-        if pod.labels and (not require_containers or pod.containers)
         for key, value in pod.labels.items()
+        if not require_containers
+        or any(namespace.can_target_container(pod, key, c.name) for c in pod.containers)
     }
 
 

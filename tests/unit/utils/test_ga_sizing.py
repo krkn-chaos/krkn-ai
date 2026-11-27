@@ -120,6 +120,32 @@ class TestCountTargetSpace:
         targets, _ = ga_sizing.count_target_space(cluster, "kubeconfig.yaml")
         assert ga_sizing._tier(targets) == "medium"
 
+    def test_container_targets_skip_selectors_of_a_disabled_container(self):
+        """Mirrors ContainerScenario: app=web reaches a disabled container."""
+        cluster = ClusterComponents(
+            namespaces=[
+                Namespace(
+                    name="ns",
+                    pods=[
+                        Pod(
+                            name="off",
+                            labels={"app": "web"},
+                            containers=[Container(name="c", disabled=True)],
+                        ),
+                        Pod(
+                            name="on",
+                            labels={"app": "web", "pod": "on"},
+                            containers=[Container(name="c")],
+                        ),
+                    ],
+                )
+            ]
+        ).get_active_components()
+
+        counters = ga_sizing.TARGET_SPACE_COUNTERS
+        assert counters["container_scenarios"](cluster) == 1
+        assert counters["pod_scenarios"](cluster) == 2
+
     def test_deterministic_and_rng_free(self):
         """Counting is pure introspection over cluster_components: it must
         never consume entropy from the shared global RNG, and repeated

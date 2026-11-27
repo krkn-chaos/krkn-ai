@@ -35,6 +35,7 @@ from krkn_ai.chaos_engines.commands import build_scenario_command
 from krkn_ai.models.app import KrknRunnerType
 from krkn_ai.models.config import ConfigFile, FitnessFunction
 from krkn_ai.utils.rng import RNG
+from krkn_ai.utils import ga_sizing
 
 
 class TestDummyScenario:
@@ -321,6 +322,9 @@ class TestContainerScenario:
             ("other", "service=cart", "cart"),
             ("other", "service=cart", "proxy"),
         }
+        if pod_disabled:
+            # every container of a disabled pod is protected
+            expected.remove(("shop", "service=cart", "cart"))
         active = cluster.get_active_components()
 
         assert self._container_targets(active) == expected
@@ -352,6 +356,27 @@ class TestContainerScenario:
         assert self._container_targets(cluster.get_active_components()) == {
             ("ns", "pod=b", "c")
         }
+
+    def test_container_scenario_avoids_selectors_of_a_disabled_pod(self):
+        """The containers of a disabled pod are protected too, even when the
+        containers themselves are not marked disabled."""
+        off = Pod(
+            name="a",
+            labels={"app": "web"},
+            containers=[Container(name="c")],
+            disabled=True,
+        )
+        on = Pod(
+            name="b",
+            labels={"app": "web", "pod": "b"},
+            containers=[Container(name="c")],
+        )
+        active = ClusterComponents(
+            namespaces=[Namespace(name="ns", pods=[off, on])]
+        ).get_active_components()
+
+        assert self._container_targets(active) == {("ns", "pod=b", "c")}
+        assert ga_sizing.TARGET_SPACE_COUNTERS["container_scenarios"](active) == 1
 
 
 @pytest.mark.parametrize(

@@ -112,7 +112,7 @@ class ClusterComponents(BaseModel):
                 (label, value, c.name)
                 for p in ns.pods
                 for c in p.containers
-                if c.disabled
+                if c.disabled or p.disabled
                 for label, value in p.labels.items()
             }
             active_namespaces.append(active_ns)
